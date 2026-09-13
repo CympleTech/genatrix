@@ -1,6 +1,7 @@
 # Genatrix · 数据模型
 
-> 状态：草稿 v0.1 · 2026-09-12 · 待品味把关
+> 状态：草稿 v0.2 · 2026-09-13 · 评审后修订，待复核
+> v0.2 变更：Source.external_id 明确为账号内全局唯一的复合 id。
 > 回答的问题：一切数字痕迹如何归一成一个 Item，同时不丢掉任何原始信息。
 
 ## 一个模型，四条理由
@@ -62,11 +63,13 @@ Raw 只增不改不删。同一个源对象被再次拉到，如果 hash 相同�
 Source {
   connector:   "imap" | "telegram" | ...
   account:     账号标识（邮箱地址、Telegram 用户 id）
-  external_id: 源系统内的唯一 id（Message-ID、Telegram message id）
+  external_id: 在该账号下全局唯一的复合 id，由连接器定义，构成写在 05 号
 }
 ```
 
 三元组唯一。连接器重复拉取、断线续传、重装重导，全部靠它做到幂等。
+
+external_id 必须在账号范围内全局唯一，源系统给的单个 id 常常不够：Telegram 的消息 id 只在群与频道内唯一，要带上 chat id；IMAP 的 UID 只在一个文件夹的一个 UIDVALIDITY 周期内唯一，要带上文件夹与 UIDVALIDITY，有 Gmail 全局消息 id 时优先用它。具体构成在 05 号。
 
 ### Item
 
@@ -87,7 +90,7 @@ Item {
   recipients:   [person_id]       // 本条明确的收件人，不是线程全员
   text:         String            // 归一后的纯文本，检索与 AI 读的是它
   blobs:        [blob_id]
-  sensitivity:  Level             // 见 02，默认 Sensitive
+  sensitivity:  Level             // 见 02，默认 Personal
   tombstoned:   bool              // 上游已删除，见"上游删除"一节
   payload:      Payload           // 按 kind 不同
 }
@@ -98,7 +101,7 @@ Item {
 - **direction 是"你"的视角。** Outbound 是你发的，Inbound 是发给你的，Internal 是你自己给自己的（备忘、Saved Messages），Neutral 是没有方向的东西（日程、文件）。这一个字段让"我上周答应过谁什么"这类问题变成一次过滤。
 - **text 是归一纯文本，不是原文。** HTML 邮件剥掉标签，引用的上一封回复剥掉，Telegram 的格式实体展平。原文在 Raw 里。text 存在的唯一目的是让检索和模型读到干净的东西。
 - **recipients 只放本条的收件人。** 群聊一千人，每条消息不复制一千个 id，成员表在 Thread 上。
-- **sensitivity 默认 Sensitive。** 每一条新数据在被判定之前，都当作不能出设备。判定规则在 02。
+- **sensitivity 默认 Personal（私人）。** 每一条新数据在被判定之前，都当作不能出设备。判定规则在 02。
 - **supersedes 而不是原地改。** Telegram 允许编辑消息，笔记会改。每次变化是一个新 Item 指向旧的，时间线默认只显示最新版本，历史随时可看。
 
 ### Payload

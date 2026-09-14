@@ -22,6 +22,7 @@ Design documents are written in Chinese for discussion with the author. Everythi
 | `genatrix-infer`: sandboxed MLX inference over a Unix socket | done |
 | `genatrix-llm`: egress tickets, policy, registry, gateway | done; cloud transport deferred to phase two |
 | `genatrix-gate`: content patterns, rule file, redaction, the egress gate | done |
+| `genatrix-agent`: isolation, tool protocols, output collars, actions, run context | done; concrete pipelines start in M2 |
 | crabllm vendored and patched | done |
 | Model selection against a real evaluation set | not started; needs ingested data |
 
@@ -66,7 +67,7 @@ A Cargo workspace. Crate boundaries follow the design documents; each crate's ro
 | `genatrix-store` | | 01, 08 | SQLCipher persistence, migrations, full-text and vector search, export and import |
 | `genatrix-ledger` | | 02, 03, 08 | Append-only ledger: egress, run, and action records |
 | `genatrix-gate` | | 02 | Content patterns, the rule file, redaction, the egress gate |
-| `genatrix-agent` | | 03 | Task, Run, tools, tool protocols, pipelines, Action |
+| `genatrix-agent` | | 03 | Envelopes, tool protocols, output collars, actions, the run context |
 | `genatrix-profile` | | 07 | Relationships, facts, commitments, style; the least-privilege memory writer |
 | `genatrix-llm` | `genatrix-llm` | 02, 04 | Egress tickets, the cloud policy, the model registry, the gateway binary |
 | `genatrix-infer` | `genatrix-infer` | 04 | Local inference process, runs inside the sandbox with no network |

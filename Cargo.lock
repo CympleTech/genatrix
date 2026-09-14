@@ -702,6 +702,23 @@ dependencies = [
 [[package]]
 name = "genatrix-agent"
 version = "0.0.1"
+dependencies = [
+ "chrono",
+ "genatrix-gate",
+ "genatrix-keys",
+ "genatrix-ledger",
+ "genatrix-llm",
+ "genatrix-model",
+ "hex",
+ "rand",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "ulid",
+]
 
 [[package]]
 name = "genatrix-connector"

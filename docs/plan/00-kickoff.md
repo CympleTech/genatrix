@@ -14,8 +14,8 @@ Design documents are written in Chinese for discussion with the author. Everythi
 
 | Spike | Status | Blocked on |
 |---|---|---|
-| Sandbox | see [spikes/01-sandbox.md](spikes/01-sandbox.md) | nothing |
-| Local model | not started | nothing |
+| Sandbox | **pass**, [spikes/01-sandbox.md](spikes/01-sandbox.md) | |
+| Local model | **pass with conditions**, [spikes/02-local-model.md](spikes/02-local-model.md) | |
 | Telegram login | not started | Telegram application credentials |
 | Gmail IMAP | not started | a mailbox with an app password |
 
@@ -47,6 +47,7 @@ A Cargo workspace. Crate boundaries follow the design documents; each crate's ro
 | Crate | Binary | Design | Responsibility |
 |---|---|---|---|
 | `genatrix-model` | | 01 | Entity types. Pure types plus serde, no storage dependency |
+| `genatrix-keys` | | 08 | Key material types; later HKDF derivation, passphrase wrapping, recovery key |
 | `genatrix-store` | | 01, 08 | SQLCipher persistence, migrations, full-text and vector search, export and import |
 | `genatrix-ledger` | | 02, 03, 08 | Append-only ledger: egress, run, and action records |
 | `genatrix-gate` | | 02 | Sensitivity rules, classification orchestration, redaction, the egress gate, egress tickets |

@@ -12,6 +12,7 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 genatrix-model = { path = "crates/model" }
+genatrix-keys = { path = "crates/keys" }
 genatrix-store = { path = "crates/store" }
 genatrix-ledger = { path = "crates/ledger" }
 genatrix-gate = { path = "crates/gate" }
@@ -30,6 +31,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ulid = { version = "1", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
+hex = "0.4"
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+tempfile = "3"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

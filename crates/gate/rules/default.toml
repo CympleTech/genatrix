@@ -1,0 +1,105 @@
+# Genatrix sensitivity rules.
+#
+# These decide the floor an item sits at. The local model may raise a level;
+# only you may lower one. Everything here is deliberately conservative: an
+# item no rule matches is "personal", which already means it cannot leave the
+# device without being redacted first.
+#
+# You can edit this file. Genatrix refuses to start on a file it cannot parse
+# rather than falling back to something you did not choose.
+#
+# How rules combine:
+#   - A rule that says "secret" escalates. Nothing later can take that back.
+#   - A rule that says "public" or "personal" classifies. Later matches
+#     override earlier ones, so file order is the priority order.
+#   - With no match at all, an item is personal.
+
+version = "1"
+
+# --- where an item came from -------------------------------------------------
+# The first matching source rule classifies the item, so the most specific
+# rules come first.
+
+[[source]]
+connector = "telegram"
+thread_kind = "channel"
+level = "public"
+reason = "public channel"
+
+[[source]]
+connector = "telegram"
+level = "personal"
+reason = "private conversation"
+
+[[source]]
+connector = "imap"
+level = "personal"
+reason = "mail"
+
+# --- what the mail headers say -----------------------------------------------
+
+[[header]]
+name = "list-unsubscribe"
+present = true
+level = "public"
+reason = "bulk mail: has an unsubscribe header"
+
+[[header]]
+name = "list-id"
+present = true
+level = "public"
+reason = "bulk mail: sent to a list"
+
+[[header]]
+name = "precedence"
+equals = "bulk"
+level = "public"
+reason = "bulk mail: marked bulk"
+
+[[header]]
+name = "auto-submitted"
+contains = "auto-"
+level = "public"
+reason = "automated mail"
+
+# --- who sent it -------------------------------------------------------------
+# Domain suffixes match on label boundaries, so "mybank.com" does not match
+# "notmybank.com". Add the senders that matter to you; the shipped list only
+# covers shapes that are secret for almost everyone.
+
+[[sender]]
+domain_suffix = [
+  "gov",
+  "gov.uk",
+  "gov.cn",
+  "govt.nz",
+  "gov.au",
+]
+level = "secret"
+reason = "government sender"
+
+[[sender]]
+domain_suffix = [
+  "irs.gov",
+  "ird.govt.nz",
+  "chase.com",
+  "paypal.com",
+  "stripe.com",
+  "wise.com",
+  "icbc.com.cn",
+  "ccb.com",
+  "alipay.com",
+]
+level = "secret"
+reason = "financial sender"
+
+# --- content -----------------------------------------------------------------
+# Content patterns are built in: they need checksums that a table cannot
+# express, and a regex that silently stops matching is a bad way to lose a
+# guarantee. They are listed here so you can see them and switch one off.
+#
+# Available: verification_code, card_number, bank_account, national_id,
+#            password, api_key, private_key
+
+[patterns]
+disabled = []

@@ -1,0 +1,50 @@
+[package]
+name = "crabllm-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "HTTP proxy server for the crabllm LLM API gateway"
+keywords = ["llm", "proxy", "openai", "streaming", "gateway"]
+categories = ["web-programming::http-server", "network-programming"]
+
+[features]
+default = ["hyper", "native-tls", "http2"]
+hyper = ["crabllm-provider/hyper"]
+reqwest = ["crabllm-provider/reqwest"]
+http2 = ["crabllm-provider/http2"]
+native-tls = ["crabllm-provider/native-tls"]
+rustls = ["crabllm-provider/rustls"]
+sonic = ["crabllm-core/sonic", "crabllm-provider/sonic"]
+storage-redis = ["redis"]
+storage-sqlite = ["sqlx"]
+openapi = ["crabllm-core/openapi", "utoipa"]
+
+[dependencies]
+crabllm-core = { workspace = true, features = ["gateway"] }
+crabllm-provider.workspace = true
+
+# crates-io
+arc-swap.workspace = true
+axum.workspace = true
+parking_lot.workspace = true
+bytes.workspace = true
+http-body-util.workspace = true
+dashmap.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+toml.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+rand.workspace = true
+metrics.workspace = true
+utoipa = { workspace = true, optional = true }
+
+# optional
+redis = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true }

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.0.1"
@@ -8,7 +9,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/cympletech/genatrix"
 authors = ["CympleTech <hi@cympletech.com>"]
-rust-version = "1.85"
+rust-version = "1.88"
 
 [workspace.dependencies]
 genatrix-model = { path = "crates/model" }
@@ -21,6 +22,11 @@ genatrix-profile = { path = "crates/profile" }
 genatrix-llm = { path = "crates/llm" }
 genatrix-connector = { path = "crates/connector" }
 
+# vendored crabllm (see vendor/crabllm/GENATRIX-VENDOR.md)
+crabllm-core = { path = "vendor/crabllm/crates/core" }
+crabllm-provider = { path = "vendor/crabllm/crates/provider", default-features = false, features = ["hyper", "native-tls"] }
+crabllm-mlx = { path = "vendor/crabllm/crates/mlx" }
+
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -31,6 +37,19 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ulid = { version = "1", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
+hmac = "0.12"
+rand = "0.9"
+subtle = "2"
+base64 = "0.22"
+bytes = "1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+futures = "0.3"
+axum = { version = "0.8", features = ["json"] }
+clap = { version = "4", features = ["derive"] }
+toml = "0.9"
+regex = "1"
 hex = "0.4"
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
 tempfile = "3"

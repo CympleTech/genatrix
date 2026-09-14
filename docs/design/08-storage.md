@@ -17,7 +17,7 @@
 ```
 ~/Library/Application Support/Genatrix/
   config.toml           配置。不含任何凭据
-  rules/                敏感分级规则，yaml，用户可读可改
+  rules/                敏感分级规则，toml，用户可读可改
   data.db               主库：Item、Thread、Person、Annotation、画像、检查点
   ledger.db             账本：出境记录、运行记录、动作记录。只增不改
   raw/                  原始记录，内容寻址，逐文件加密

@@ -1,0 +1,90 @@
+--- /tmp/mlx-cargo.toml.orig	2026-09-14 16:41:12
++++ vendor/crabllm/crates/mlx/Cargo.toml	2026-09-14 16:41:12
+@@ -1,5 +1,6 @@
+ [package]
+ name = "crabllm-mlx"
++links = "crabllm_mlx"
+ version.workspace = true
+ edition.workspace = true
+ license.workspace = true
+--- /tmp/mlx-build.rs.orig	2026-09-14 16:41:12
++++ vendor/crabllm/crates/mlx/build.rs	2026-09-14 16:43:52
+@@ -16,6 +16,21 @@
+ 
+ use std::{env, fs, path::Path, path::PathBuf, process::Command};
+ 
++/// Emit a linker argument for this crate's own targets, and remember it so
++/// it can also be published as build metadata.
++///
++/// Cargo scopes `cargo:rustc-link-arg` to the package that emits it, so a
++/// binary in a *dependent* package links without these flags: it finds no
++/// symbols in `libCrabllmMlx.a` and no rpath for the Swift runtime. This
++/// crate declares `links = "crabllm_mlx"`, so everything collected here is
++/// published as `cargo:link_args=...` and arrives in a dependent's build
++/// script as `DEP_CRABLLM_MLX_LINK_ARGS`, newline-separated, to be re-emitted
++/// there.
++fn link_arg(collected: &mut Vec<String>, arg: String) {
++    println!("cargo:rustc-link-arg={arg}");
++    collected.push(arg);
++}
++
+ fn main() {
+     println!("cargo:rerun-if-changed=build.rs");
+     println!("cargo:rerun-if-env-changed=SDKROOT");
+@@ -30,9 +45,11 @@
+             "pub const MODEL_REGISTRY: &[ModelEntry] = &[];\n",
+         )
+         .expect("write empty model_registry.rs");
++        println!("cargo:link_args=");
+         return;
+     }
+ 
++    let mut link_args: Vec<String> = Vec::new();
+     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+     let workspace_root = manifest_dir
+         .parent()
+@@ -97,9 +114,9 @@
+     // MLXLLM's TrampolineModelFactory at runtime. Without this, the
+     // linker dead-strips the unreferenced ObjC classes and
+     // ModelFactoryRegistry returns noModelFactoryAvailable.
+-    println!(
+-        "cargo:rustc-link-arg=-Wl,-force_load,{}/libCrabllmMlx.a",
+-        build_dir.display()
++    link_arg(
++        &mut link_args,
++        format!("-Wl,-force_load,{}/libCrabllmMlx.a", build_dir.display()),
+     );
+ 
+     // Swift runtime: the dylibs live under the platform SDK's
+@@ -188,7 +205,7 @@
+ 
+     // MLX requires macOS 14+. Force the deployment target so the
+     // linker doesn't warn about version mismatches with the Swift .a.
+-    println!("cargo:rustc-link-arg=-mmacosx-version-min=14.0");
++    link_arg(&mut link_args, "-mmacosx-version-min=14.0".to_string());
+     // Link compiler-rt for __isPlatformVersionAtLeast used by MLX's
+     // C++ @available checks. Rust's default linker invocation omits
+     // this since it doesn't know about the C++ objects in our .a.
+@@ -196,7 +213,7 @@
+         "{dev_dir}/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/17/lib/darwin/libclang_rt.osx.a"
+     );
+     if std::path::Path::new(&clang_rt).exists() {
+-        println!("cargo:rustc-link-arg={clang_rt}");
++        link_arg(&mut link_args, clang_rt.clone());
+     }
+ 
+     // Runtime rpath for the OS-bundled Swift stdlib. Only applies on
+@@ -207,8 +224,12 @@
+     // produce iOS artifacts; text-only Phase 5 is macOS-only in
+     // practice because nothing drives iOS builds yet.
+     if target_os == "macos" {
+-        println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
++        link_arg(&mut link_args, "-Wl,-rpath,/usr/lib/swift".to_string());
+     }
++
++    // Published for dependents; see `link_arg` above. Cargo metadata values
++    // are single-line, so the list is escaped rather than joined on newlines.
++    println!("cargo:link_args={}", link_args.join("\u{1f}"));
+ }
+ 
+ /// Compile MLX's `.metal` shaders into `default.metallib` in OUT_DIR.

@@ -2,3 +2,4 @@
 **/*.rs.bk
 .DS_Store
 /vendor/**/target
+/vendor/crabllm/mlx/.build

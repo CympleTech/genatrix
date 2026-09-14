@@ -1,0 +1,44 @@
+[package]
+name = "crabllm-llamacpp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Managed llama.cpp server with Ollama registry support"
+keywords = ["llm", "llamacpp", "gguf", "local", "inference"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "crabllm-llamacpp"
+path = "src/bin/main.rs"
+
+[dependencies]
+crabllm-core.workspace = true
+crabllm-provider.workspace = true
+axum.workspace = true
+clap.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# llamacpp process management
+ureq = { workspace = true }
+which = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+zip = { workspace = true }
+dirs = { workspace = true }
+
+[features]
+default = ["hyper", "sonic", "http2", "native-tls"]
+hyper = ["crabllm-provider/hyper"]
+reqwest = ["crabllm-provider/reqwest"]
+http2 = ["crabllm-provider/http2"]
+native-tls = ["crabllm-provider/native-tls"]
+rustls = ["crabllm-provider/rustls"]
+sonic = ["crabllm-provider/sonic"]

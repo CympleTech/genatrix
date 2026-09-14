@@ -1,0 +1,17 @@
+/target
+/dist
+spec
+docs/book
+results
+__pycache__
+
+# swift package manager
+mlx/.build
+mlx/Package.resolved
+mlx/.swiftpm
+
+# local files
+crabllm.toml
+*.local.md
+*.local.json
+crates/bench/summary.json

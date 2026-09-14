@@ -9,6 +9,25 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+genatrix-model.workspace = true
+genatrix-keys.workspace = true
+genatrix-ledger.workspace = true
+genatrix-llm.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+bytes.workspace = true
+ulid.workspace = true
+sha2.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+bytes.workspace = true
 
 [lints]
 workspace = true

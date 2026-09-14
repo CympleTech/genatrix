@@ -10,6 +10,21 @@ Design documents are written in Chinese for discussion with the author. Everythi
 2. **Phase 0**: this machine, model selection, repository skeleton, gateway, storage. No real data enters the system during Phase 0.
 3. **M1 · Collect**: the IMAP connector and the timeline. Product code starts here.
 
+## Phase 0 status
+
+| Task | State |
+|---|---|
+| Repository skeleton, CI, lints | done |
+| `genatrix-model`: entities, sensitivity, effective level | done |
+| `genatrix-keys`: database and ticket keys | done |
+| `genatrix-store`: SQLCipher, migrations, FTS5 trigram, timeline queries, export/import | done |
+| `genatrix-ledger`: append-only hash-chained ledger with a head file | done |
+| `genatrix-infer`: sandboxed MLX inference over a Unix socket | done |
+| `genatrix-llm`: egress tickets, policy, registry, gateway | done; cloud transport deferred to phase two |
+| `genatrix-gate`: content patterns, rule file, redaction, the egress gate | done |
+| crabllm vendored and patched | done |
+| Model selection against a real evaluation set | not started; needs ingested data |
+
 ## Spike status
 
 | Spike | Status | Blocked on |
@@ -50,19 +65,21 @@ A Cargo workspace. Crate boundaries follow the design documents; each crate's ro
 | `genatrix-keys` | | 08 | Key material types; later HKDF derivation, passphrase wrapping, recovery key |
 | `genatrix-store` | | 01, 08 | SQLCipher persistence, migrations, full-text and vector search, export and import |
 | `genatrix-ledger` | | 02, 03, 08 | Append-only ledger: egress, run, and action records |
-| `genatrix-gate` | | 02 | Sensitivity rules, classification orchestration, redaction, the egress gate, egress tickets |
+| `genatrix-gate` | | 02 | Content patterns, the rule file, redaction, the egress gate |
 | `genatrix-agent` | | 03 | Task, Run, tools, tool protocols, pipelines, Action |
 | `genatrix-profile` | | 07 | Relationships, facts, commitments, style; the least-privilege memory writer |
-| `genatrix-llm` | `genatrix-llm` | 04 | Roles and the model registry; the gateway binary embedding crabllm |
+| `genatrix-llm` | `genatrix-llm` | 02, 04 | Egress tickets, the cloud policy, the model registry, the gateway binary |
 | `genatrix-infer` | `genatrix-infer` | 04 | Local inference process, runs inside the sandbox with no network |
 | `genatrix-connector` | | 05 | Connector protocol, account capabilities, IPC |
 | `genatrix-connector-imap` | `genatrix-imap` | 05 | Mail connector (IMAP + SMTP) |
 | `genatrix-connector-telegram` | `genatrix-telegram` | 05 | Telegram connector (user-account protocol) |
 | `genatrix-daemon` | `genatrix` | 06, 09 | The core process: assembles the layers, serves the local web UI and the approval endpoint |
 
-Dependencies point downward only: daemon → agent → gate → ledger/store → model. Connectors and the LLM crates depend only on `model` and their own protocol crates. CI rejects anything that violates this direction.
+Dependencies point downward only: daemon → agent → gate → ledger/store → model, with `keys` at the bottom beside `model`. The gate also depends on `llm`, because the ticket type is part of the model layer's protocol: the gate mints what the gateway checks. Connectors depend only on `model` and their own protocol crate.
 
-The frontend (design 06), the menu bar shell (design 09), and the vendored crabllm tree are added when their Phase 0 task begins.
+`vendor/crabllm/` holds a pinned copy of crabllm with provenance and patches recorded in `vendor/crabllm/GENATRIX-VENDOR.md`. It is outside the workspace (`exclude = ["vendor"]`) and reached by path dependencies. Its Swift build output under `mlx/.build/` is not committed and is rebuilt on a clean checkout, which takes several minutes.
+
+The frontend (design 06) and the menu bar shell (design 09) are added when their milestone begins.
 
 License: MIT OR Apache-2.0, following the ESSE convention.
 

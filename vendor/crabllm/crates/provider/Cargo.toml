@@ -1,0 +1,35 @@
+[package]
+name = "crabllm-provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "Provider dispatch for the crabllm LLM API gateway"
+keywords = ["llm", "openai", "anthropic", "gemini", "gateway"]
+categories = ["web-programming::http-client", "network-programming"]
+
+[features]
+default = ["hyper", "native-tls", "http2"]
+hyper = ["crabllm-http/hyper"]
+reqwest = ["crabllm-http/reqwest"]
+http2 = ["crabllm-http/http2"]
+native-tls = ["crabllm-http/native-tls"]
+rustls = ["crabllm-http/rustls"]
+sonic = ["crabllm-core/sonic"]
+
+[dependencies]
+crabllm-core.workspace = true
+crabllm-http.workspace = true
+
+# crates-io
+bytes.workspace = true
+futures.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+http = { workspace = true, optional = true }
+
+[dev-dependencies]
+crabllm-core.workspace = true

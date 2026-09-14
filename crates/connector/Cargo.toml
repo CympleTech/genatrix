@@ -1,0 +1,14 @@
+[package]
+name = "genatrix-connector"
+description = "Connector protocol and capabilities"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

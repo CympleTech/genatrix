@@ -1,0 +1,18 @@
+[package]
+name = "genatrix-connector-telegram"
+description = "Telegram connector"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "genatrix-telegram"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

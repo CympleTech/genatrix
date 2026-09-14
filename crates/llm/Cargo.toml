@@ -1,0 +1,18 @@
+[package]
+name = "genatrix-llm"
+description = "Model registry and gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "genatrix-llm"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

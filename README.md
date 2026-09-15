@@ -65,11 +65,168 @@ sensitivity rules, redaction, the egress gate, the local inference process,
 the gateway, and the agent layer. The mail and chat connectors come next,
 followed by the interface.
 
+There is no installer and no application yet. What follows is how to run the
+pieces that exist, from a source checkout. When it ships, none of this will be
+necessary: design 09 describes a signed app, seven screens, and no terminal.
+
 - [Design documents](docs/design/), written in Chinese. Start with
   [00 Vision and Principles](docs/design/00-vision.md).
 - [Implementation plan](docs/plan/) and spike results, in English.
 
-Runs on Apple Silicon Macs. 16 GB of memory or more.
+## Requirements
+
+An Apple Silicon Mac with 16 GB of memory or more, running one of the last two
+macOS releases. Apple's Metal toolchain, which the local inference build needs:
+
+```sh
+xcodebuild -downloadComponent MetalToolchain
+```
+
+Around 20 GB free: model weights, and a first build that compiles SQLCipher,
+OpenSSL and the MLX Swift package. That first build takes several minutes;
+later ones are quick.
+
+## Running it
+
+**Build.**
+
+```sh
+cargo build --release -p genatrix-infer -p genatrix-llm
+```
+
+**Get a model.** Any MLX model directory works; this is the one the local
+model spike measured, about 4.3 GB.
+
+```sh
+mkdir -p ~/.genatrix-dev/run
+uvx --from huggingface_hub hf download mlx-community/Qwen3-8B-4bit \
+  --local-dir ~/.genatrix-dev/models/qwen3-8b-4bit
+```
+
+(`uvx` runs it without installing anything. With the Hugging Face CLI already
+on your machine, `hf download` on its own does the same.)
+
+**Write a gateway configuration** at `~/.genatrix-dev/gateway.toml`. Keep the
+socket paths short: macOS caps a Unix socket path at 104 bytes.
+
+```toml
+socket = "/Users/you/.genatrix-dev/run/gateway.sock"
+
+[[models]]
+name = "local"                     # what callers ask for, and what a ticket names
+model = "qwen3-8b-4bit"            # what the inference process is serving
+context_length = 32768
+purposes = ["classify", "extract", "embed", "identity_suggestion",
+            "summarize", "draft", "translate", "search_rewrite", "plan"]
+endpoint = { kind = "local_socket", path = "/Users/you/.genatrix-dev/run/infer.sock" }
+```
+
+Check it before starting anything. A configuration that would send
+classification to a cloud model, or that leaves a purpose with no local model
+to fall back to, is refused here rather than at the first request.
+
+```sh
+./target/release/genatrix-llm --config ~/.genatrix-dev/gateway.toml --check
+```
+
+**Start the inference process**, inside a sandbox that removes its network
+access. It prints the profile it wants; hand that to `sandbox-exec`.
+
+Run these from the checkout. `$DEV` is just shorthand for the data directory.
+
+```sh
+DEV=~/.genatrix-dev
+
+./target/release/genatrix-infer \
+  --model-dir $DEV/models/qwen3-8b-4bit --model-name qwen3-8b-4bit \
+  --socket $DEV/run/infer.sock --print-sandbox-profile > $DEV/infer.sb
+
+sandbox-exec -f $DEV/infer.sb ./target/release/genatrix-infer \
+  --model-dir $DEV/models/qwen3-8b-4bit --model-name qwen3-8b-4bit \
+  --socket $DEV/run/infer.sock
+```
+
+It loads the model in a few seconds and logs `listening`. From inside that
+sandbox it can reach its own socket and nothing else: not the network, not
+another program's socket, and neither can anything it starts.
+
+**Start the gateway**, in another terminal. It shares a secret with whatever
+mints tickets, read from the environment so it never appears in the process
+list. The gateway refuses every request without it, so it will not start
+without one either.
+
+```sh
+export GENATRIX_TICKET_KEY=$(openssl rand -hex 32)
+./target/release/genatrix-llm --config ~/.genatrix-dev/gateway.toml
+```
+
+**Try it.** The gateway answers only to a ticket that covers these exact
+bytes, so a request without one is refused:
+
+```sh
+curl --unix-socket ~/.genatrix-dev/run/gateway.sock \
+  http://localhost/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"local","messages":[{"role":"user","content":"hello"}]}'
+# {"error":{"type":"ticket_rejected", ...}}   401
+```
+
+To mint one by hand, there is a development example. In the finished system
+only the egress gate mints tickets, after it has judged the content, redacted
+it, and written the ledger entry.
+
+```sh
+cargo build --release -p genatrix-llm --example mint_ticket
+
+BODY='{"model":"local","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}'
+TICKET=$(printf '%s' "$BODY" | ./target/release/examples/mint_ticket \
+  --target local --purpose summarize --level personal)
+
+curl --unix-socket ~/.genatrix-dev/run/gateway.sock \
+  http://localhost/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -H "x-genatrix-ticket: $TICKET" \
+  -d "$BODY"
+```
+
+Change one byte of the body and the same ticket stops working. Send the same
+ticket twice and the second is refused. Ask a cloud model for something marked
+secret and it never leaves.
+
+## Configuring it
+
+**`gateway.toml`** lists the models and where each one runs. `local_socket` is
+the sandboxed process on this machine; `openai` and `anthropic` are cloud
+endpoints, which this build accepts in configuration but has no transport for:
+the cloud opens in phase two, and an untested path out of the machine is the
+one thing this gateway exists to prevent.
+
+**`GENATRIX_TICKET_KEY`** is the secret the gate and the gateway share, 64 hex
+characters. Generate a fresh one per run. It authenticates permission to send,
+not data at rest.
+
+**The sensitivity rules** live in
+[`crates/gate/rules/default.toml`](crates/gate/rules/default.toml), and that
+file is worth reading: it is where "what counts as private" is written down in
+a form you can argue with. Rules that say *secret* escalate and nothing can
+take that back; rules that say *public* or *personal* classify, and later ones
+override earlier ones. An item no rule matches is personal. Content patterns
+are built in, because a card number needs a checksum and a regex you can break
+by accident is a poor place to keep a guarantee, but every one of them can be
+switched off in that file.
+
+**Nothing configures the cloud on.** There is no switch yet, and when there is
+one it will be off by default.
+
+## Development
+
+```sh
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+All three should be clean.
 
 ## License
 

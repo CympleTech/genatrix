@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Genatrix</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Genatrix</h1>
+  <nav>
+    <button class="tab is-on" data-pane="timeline">Timeline</button>
+    <button class="tab" data-pane="records">Records</button>
+  </nav>
+  <p id="status" class="status"></p>
+</header>
+
+<main>
+  <section id="timeline" class="pane is-on">
+    <form id="filters" autocomplete="off">
+      <input id="q" type="search" placeholder="Search mail and messages">
+      <select id="level">
+        <option value="">Any sensitivity</option>
+        <option value="public">Public</option>
+        <option value="personal">Personal</option>
+        <option value="secret">Secret</option>
+      </select>
+      <select id="connector">
+        <option value="">Any source</option>
+        <option value="imap">Mail</option>
+        <option value="telegram">Telegram</option>
+      </select>
+    </form>
+    <ol id="rows" class="rows"></ol>
+    <p id="timeline-empty" class="empty" hidden></p>
+  </section>
+
+  <section id="records" class="pane">
+    <p id="headline" class="headline"></p>
+    <p id="chain" class="note"></p>
+    <ol id="calls" class="rows"></ol>
+    <p id="records-empty" class="empty" hidden></p>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

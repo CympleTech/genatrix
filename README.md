@@ -62,14 +62,14 @@ else follows from that.
 
 Early, but the whole path works. Storage, the ledger, the sensitivity rules,
 redaction, the egress gate, the local inference process, the gateway, the
-agent layer, and a core that assembles them. With synthetic items in the
-store, the classification pipeline judges them on this machine and the ledger
-reports that nothing left the device. The mail and chat connectors come next,
-then the interface.
+agent layer, a core that assembles them, and a local web interface. With
+synthetic items in the store, the classification pipeline judges them on this
+machine and the records page reports that nothing left the device. The mail
+and chat connectors come next.
 
-There is no installer and no web interface yet. What follows is how to run the
-pieces that exist, from a source checkout. When it ships, none of this will be
-necessary: design 09 describes a signed app, seven screens, and no terminal.
+There is no installer yet. What follows is how to run the pieces that exist,
+from a source checkout. When it ships, none of this will be necessary: design
+09 describes a signed app, seven screens, and no terminal.
 
 - [Design documents](docs/design/), written in Chinese. Start with
   [00 Vision and Principles](docs/design/00-vision.md).
@@ -223,6 +223,32 @@ needed the model. `ledger` opens with the line design 06 asks for:
 ```text
 0 bytes have left this device.
 ```
+
+**Open the interface.**
+
+```sh
+./target/release/genatrix --data-dir $DEV serve
+# Genatrix is at http://127.0.0.1:7717
+```
+
+A timeline you can search and filter, each item expanding to show its full
+text and every judgement made about it, with who made it and when; and a
+records page that opens with how many bytes have left the device and lists
+every model call.
+
+To look at it from a phone, bind somewhere else. That needs an access token,
+which is generated per run and printed inside the link:
+
+```sh
+./target/release/genatrix --data-dir $DEV serve --bind 0.0.0.0
+# Genatrix is at http://192.168.1.20:7717/?token=6a5915554214...
+```
+
+Loopback needs no token, because anyone who can reach it already has an
+account on the machine. Any other address does, because the page has no login
+and everything in it is your mail. It is still plain HTTP with one shared
+secret: fine on a network you trust, not fine on one you do not. Pass
+`--token` to keep a link working across restarts.
 
 ## Configuring it
 

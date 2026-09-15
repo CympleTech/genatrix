@@ -21,6 +21,7 @@ genatrix-llm.workspace = true
 genatrix-model.workspace = true
 genatrix-store.workspace = true
 anyhow.workspace = true
+axum = { workspace = true, features = ["query"] }
 bytes.workspace = true
 chrono.workspace = true
 clap.workspace = true

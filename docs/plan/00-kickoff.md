@@ -23,7 +23,8 @@ Design documents are written in Chinese for discussion with the author. Everythi
 | `genatrix-llm`: egress tickets, policy, registry, gateway | done; cloud transport deferred to phase two |
 | `genatrix-gate`: content patterns, rule file, redaction, the egress gate | done |
 | `genatrix-agent`: isolation, tool protocols, output collars, actions, run context | done |
-| `genatrix-daemon`: the layers assembled, the gate-to-gateway caller, the classification pipeline | done; no web interface yet |
+| `genatrix-daemon`: the layers assembled, the gate-to-gateway caller, the classification pipeline | done |
+| Local web interface: timeline, search, item detail, records | done; read-only until there are actions to approve |
 | crabllm vendored and patched | done |
 | Model selection against a real evaluation set | not started; needs ingested data |
 

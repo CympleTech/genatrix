@@ -16,6 +16,7 @@ mod names;
 mod pipeline;
 mod seed;
 mod system;
+mod web;
 
 use std::path::PathBuf;
 
@@ -59,6 +60,21 @@ enum Command {
     },
     /// Show what has left this device.
     Ledger,
+    /// Serve the local interface.
+    Serve {
+        /// Address to listen on. Loopback by default, which only this machine
+        /// can reach. Anything else needs an access token, which is generated
+        /// and printed with the link.
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: std::net::IpAddr,
+        /// Port.
+        #[arg(long, default_value_t = 7717)]
+        port: u16,
+        /// Reuse this access token instead of a fresh one, so a link keeps
+        /// working across restarts. Ignored on loopback.
+        #[arg(long)]
+        token: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -80,6 +96,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Classify => classify(&config).await,
         Command::Timeline { limit } => timeline(&config, limit),
         Command::Ledger => ledger(&config),
+        Command::Serve { bind, port, token } => {
+            serve(&config, &web::Serving { bind, port, token }).await
+        }
     }
 }
 
@@ -183,6 +202,11 @@ async fn classify(config: &Config) -> anyhow::Result<()> {
         println!("  {level:<24} {count}");
     }
     Ok(())
+}
+
+async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
+    let system = std::sync::Arc::new(System::open(config.clone(), ticket_key(false)?)?);
+    web::serve(system, serving).await
 }
 
 fn timeline(config: &Config, limit: u32) -> anyhow::Result<()> {

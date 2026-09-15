@@ -22,7 +22,8 @@ Design documents are written in Chinese for discussion with the author. Everythi
 | `genatrix-infer`: sandboxed MLX inference over a Unix socket | done |
 | `genatrix-llm`: egress tickets, policy, registry, gateway | done; cloud transport deferred to phase two |
 | `genatrix-gate`: content patterns, rule file, redaction, the egress gate | done |
-| `genatrix-agent`: isolation, tool protocols, output collars, actions, run context | done; concrete pipelines start in M2 |
+| `genatrix-agent`: isolation, tool protocols, output collars, actions, run context | done |
+| `genatrix-daemon`: the layers assembled, the gate-to-gateway caller, the classification pipeline | done; no web interface yet |
 | crabllm vendored and patched | done |
 | Model selection against a real evaluation set | not started; needs ingested data |
 
@@ -74,7 +75,7 @@ A Cargo workspace. Crate boundaries follow the design documents; each crate's ro
 | `genatrix-connector` | | 05 | Connector protocol, account capabilities, IPC |
 | `genatrix-connector-imap` | `genatrix-imap` | 05 | Mail connector (IMAP + SMTP) |
 | `genatrix-connector-telegram` | `genatrix-telegram` | 05 | Telegram connector (user-account protocol) |
-| `genatrix-daemon` | `genatrix` | 06, 09 | The core process: assembles the layers, serves the local web UI and the approval endpoint |
+| `genatrix-daemon` | `genatrix` | 02, 03, 06, 09 | Assembles the layers, carries out model calls, runs pipelines; will serve the local web UI and the approval endpoint |
 
 Dependencies point downward only: daemon → agent → gate → ledger/store → model, with `keys` at the bottom beside `model`. The gate also depends on `llm`, because the ticket type is part of the model layer's protocol: the gate mints what the gateway checks. Connectors depend only on `model` and their own protocol crate.
 

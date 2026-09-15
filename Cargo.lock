@@ -735,6 +735,30 @@ version = "0.0.1"
 [[package]]
 name = "genatrix-daemon"
 version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "chrono",
+ "clap",
+ "genatrix-agent",
+ "genatrix-gate",
+ "genatrix-keys",
+ "genatrix-ledger",
+ "genatrix-llm",
+ "genatrix-model",
+ "genatrix-store",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
+]
 
 [[package]]
 name = "genatrix-gate"

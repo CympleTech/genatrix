@@ -25,6 +25,7 @@ pub mod local;
 pub mod policy;
 pub mod registry;
 pub mod server;
+pub mod socket;
 pub mod ticket;
 
 pub use config::{Config, ConfigError};
@@ -33,4 +34,5 @@ pub use local::LocalClient;
 pub use policy::{PolicyError, check_request};
 pub use registry::{Location, ModelEntry, Registry};
 pub use server::{Gateway, TICKET_HEADER, router, serve};
+pub use socket::SocketPathError;
 pub use ticket::{Purpose, Ticket, TicketError, TicketLevel, TicketStore};

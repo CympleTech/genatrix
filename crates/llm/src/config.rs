@@ -39,6 +39,9 @@ pub enum ConfigError {
     /// The registry itself is inconsistent.
     #[error(transparent)]
     Registry(#[from] crate::registry::RegistryError),
+    /// A socket path cannot be used.
+    #[error(transparent)]
+    SocketPath(#[from] crate::socket::SocketPathError),
 }
 
 impl Config {
@@ -53,7 +56,23 @@ impl Config {
             source,
         })?;
         config.registry.validate()?;
+        config.check_paths()?;
         Ok(config)
+    }
+
+    /// Check every socket this configuration names.
+    ///
+    /// Done at load, so `--check` refuses a configuration that could not
+    /// bind. Without it the first thing a user sees is `Permission denied`
+    /// from deep inside the runtime, with no clue which path it meant.
+    pub fn check_paths(&self) -> Result<(), crate::socket::SocketPathError> {
+        crate::socket::check(&self.socket)?;
+        for model in &self.registry.models {
+            if let crate::registry::Endpoint::LocalSocket { path } = &model.endpoint {
+                crate::socket::check(Path::new(path))?;
+            }
+        }
+        Ok(())
     }
 }
 

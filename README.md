@@ -60,12 +60,14 @@ else follows from that.
 
 ## Status
 
-Early. The foundations are built and tested: storage, the ledger, the
-sensitivity rules, redaction, the egress gate, the local inference process,
-the gateway, and the agent layer. The mail and chat connectors come next,
-followed by the interface.
+Early, but the whole path works. Storage, the ledger, the sensitivity rules,
+redaction, the egress gate, the local inference process, the gateway, the
+agent layer, and a core that assembles them. With synthetic items in the
+store, the classification pipeline judges them on this machine and the ledger
+reports that nothing left the device. The mail and chat connectors come next,
+then the interface.
 
-There is no installer and no application yet. What follows is how to run the
+There is no installer and no web interface yet. What follows is how to run the
 pieces that exist, from a source checkout. When it ships, none of this will be
 necessary: design 09 describes a signed app, seven screens, and no terminal.
 
@@ -106,28 +108,34 @@ uvx --from huggingface_hub hf download mlx-community/Qwen3-8B-4bit \
 (`uvx` runs it without installing anything. With the Hugging Face CLI already
 on your machine, `hf download` on its own does the same.)
 
-**Write a gateway configuration** at `~/.genatrix-dev/gateway.toml`. Keep the
-socket paths short: macOS caps a Unix socket path at 104 bytes.
+**Write a gateway configuration.** Socket paths have to be absolute, and
+macOS caps them at 104 bytes, so let the shell fill in your home directory
+rather than typing it:
 
-```toml
-socket = "/Users/you/.genatrix-dev/run/gateway.sock"
+```sh
+cat > ~/.genatrix-dev/gateway.toml <<EOF
+socket = "$HOME/.genatrix-dev/run/gateway.sock"
 
 [[models]]
-name = "local"                     # what callers ask for, and what a ticket names
-model = "qwen3-8b-4bit"            # what the inference process is serving
+name = "local"                 # what callers ask for, and what a ticket names
+model = "qwen3-8b-4bit"        # what the inference process is serving
 context_length = 32768
 purposes = ["classify", "extract", "embed", "identity_suggestion",
             "summarize", "draft", "translate", "search_rewrite", "plan"]
-endpoint = { kind = "local_socket", path = "/Users/you/.genatrix-dev/run/infer.sock" }
+endpoint = { kind = "local_socket", path = "$HOME/.genatrix-dev/run/infer.sock" }
+EOF
 ```
 
-Check it before starting anything. A configuration that would send
-classification to a cloud model, or that leaves a purpose with no local model
-to fall back to, is refused here rather than at the first request.
+Check it before starting anything:
 
 ```sh
 ./target/release/genatrix-llm --config ~/.genatrix-dev/gateway.toml --check
 ```
+
+The check refuses a configuration that could not work, rather than letting it
+fail later with something cryptic: a socket path that is relative, too long,
+or in a directory that cannot be created; a purpose routed to a cloud model
+that may never serve it; a purpose with no local model to fall back to.
 
 **Start the inference process**, inside a sandbox that removes its network
 access. It prints the profile it wants; hand that to `sandbox-exec`.
@@ -150,10 +158,11 @@ It loads the model in a few seconds and logs `listening`. From inside that
 sandbox it can reach its own socket and nothing else: not the network, not
 another program's socket, and neither can anything it starts.
 
-**Start the gateway**, in another terminal. It shares a secret with whatever
-mints tickets, read from the environment so it never appears in the process
-list. The gateway refuses every request without it, so it will not start
-without one either.
+**Start the gateway**, in another terminal. It needs a secret, which it shares
+with whatever mints tickets. It is read from the environment rather than the
+command line so it never appears in the process list, and the gateway will not
+start without one: with no key every request would be refused, so there would
+be nothing to serve.
 
 ```sh
 export GENATRIX_TICKET_KEY=$(openssl rand -hex 32)
@@ -192,6 +201,28 @@ curl --unix-socket ~/.genatrix-dev/run/gateway.sock \
 Change one byte of the body and the same ticket stops working. Send the same
 ticket twice and the second is refused. Ask a cloud model for something marked
 secret and it never leaves.
+
+**See the whole thing work.** With the gateway and the inference process
+running, in a third terminal:
+
+```sh
+export GENATRIX_TICKET_KEY=<the same key the gateway got>
+DEV=~/.genatrix-dev
+
+cp ~/.genatrix-dev/gateway.toml $DEV/          # the core reads the same registry
+./target/release/genatrix --data-dir $DEV init
+./target/release/genatrix --data-dir $DEV seed        # synthetic mail and chat
+./target/release/genatrix --data-dir $DEV classify    # judge them, on this machine
+./target/release/genatrix --data-dir $DEV timeline
+./target/release/genatrix --data-dir $DEV ledger
+```
+
+`classify` reports how many items the rules settled on their own and how many
+needed the model. `ledger` opens with the line design 06 asks for:
+
+```text
+0 bytes have left this device.
+```
 
 ## Configuring it
 

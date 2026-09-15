@@ -72,9 +72,11 @@ async fn main() -> anyhow::Result<()> {
         Ok(hex) => TicketKey::from_hex(&hex)?,
         Err(_) => {
             anyhow::bail!(
-                "{KEY_ENV} is not set. The gateway refuses every request without the \
-                 ticket key it shares with the egress gate, so starting without it \
-                 would serve nothing."
+                "{KEY_ENV} is not set. Set it before starting the gateway:\n\n  \
+                 export {KEY_ENV}=$(openssl rand -hex 32)\n\n\
+                 It is the secret the gateway shares with whatever mints egress \
+                 tickets. Without it every request would be refused, so there \
+                 would be nothing to serve."
             );
         }
     };

@@ -62,6 +62,12 @@ pub enum Payload {
         references: Vec<String>,
         /// Source-side labels or folder names.
         labels: Vec<String>,
+        /// The handful of headers the sensitivity rules read, names
+        /// lowercased. Not every header: a mailbox's worth of `Received`
+        /// lines is a lot of noise to carry for the few that mean something,
+        /// and the original is in the raw record either way.
+        #[serde(default)]
+        headers: Vec<(String, String)>,
     },
     /// Chat message specifics.
     Message {

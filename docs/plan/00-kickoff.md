@@ -25,6 +25,11 @@ Design documents are written in Chinese for discussion with the author. Everythi
 | `genatrix-agent`: isolation, tool protocols, output collars, actions, run context | done |
 | `genatrix-daemon`: the layers assembled, the gate-to-gateway caller, the classification pipeline | done |
 | Local web interface: timeline, search, item detail, records | done; read-only until there are actions to approve |
+| `genatrix-keys`: HKDF derivation from one master key | done |
+| `genatrix-store`: encrypted content-addressed files for raw records and attachments | done |
+| `genatrix-connector`: capabilities, checkpoints, backfill, fault severity | done |
+| `genatrix-connector-imap`: normalization, the sync engine against a fake server, the IMAP wire layer | done; unverified against a real server |
+| Accounts, mail ingestion, `account` and `sync` commands | done |
 | crabllm vendored and patched | done |
 | Model selection against a real evaluation set | not started; needs ingested data |
 
@@ -35,14 +40,22 @@ Design documents are written in Chinese for discussion with the author. Everythi
 | Sandbox | **pass**, [spikes/01-sandbox.md](spikes/01-sandbox.md) | |
 | Local model | **pass with conditions**, [spikes/02-local-model.md](spikes/02-local-model.md) | |
 | Telegram login | not started | Telegram application credentials |
-| Gmail IMAP | not started | a mailbox with an app password |
+| Gmail IMAP | the connector is written and tested against a fake server; only the real-server run is left | a mailbox with an app password |
 
 ## What the spikes need
 
 Development machine prerequisites: an Apple Silicon Mac with the Xcode Metal toolchain installed (`xcodebuild -downloadComponent MetalToolchain`) and enough free disk for model weights and build artifacts.
 
 1. **Telegram application credentials.** Log in at my.telegram.org with your phone number, create an application, and note the `api_id` and `api_hash`. This is the pair design doc 05 describes as Genatrix's own; for now it is only used by the spike.
-2. **An IMAP test account.** Ideally your own Gmail with two-step verification enabled and an app password generated. The password can be revoked after the spike.
+2. **An IMAP test account.** Ideally your own Gmail with two-step verification enabled and an app password generated. The password can be revoked afterwards. With it:
+
+   ```sh
+   genatrix account --add you@gmail.com
+   export GENATRIX_IMAP_PASSWORD=<the app password>
+   genatrix sync
+   ```
+
+   Nothing writes the password down: it is read from the environment each run until the keychain exists.
 
 Never paste credentials into the chat. Put them in a file outside the repository, readable only by your user, for example `~/.config/genatrix-dev/secrets.toml`. Spike scripts read from there and never log them.
 
@@ -65,7 +78,7 @@ A Cargo workspace. Crate boundaries follow the design documents; each crate's ro
 | Crate | Binary | Design | Responsibility |
 |---|---|---|---|
 | `genatrix-model` | | 01 | Entity types. Pure types plus serde, no storage dependency |
-| `genatrix-keys` | | 08 | Key material types; later HKDF derivation, passphrase wrapping, recovery key |
+| `genatrix-keys` | | 08 | The master key and everything derived from it; later passphrase wrapping and the recovery key |
 | `genatrix-store` | | 01, 08 | SQLCipher persistence, migrations, full-text and vector search, export and import |
 | `genatrix-ledger` | | 02, 03, 08 | Append-only ledger: egress, run, and action records |
 | `genatrix-gate` | | 02 | Content patterns, the rule file, redaction, the egress gate |

@@ -21,6 +21,7 @@ genatrix-agent = { path = "crates/agent" }
 genatrix-profile = { path = "crates/profile" }
 genatrix-llm = { path = "crates/llm" }
 genatrix-connector = { path = "crates/connector" }
+genatrix-connector-imap = { path = "crates/connector-imap" }
 
 # vendored crabllm (see vendor/crabllm/GENATRIX-VENDOR.md)
 crabllm-core = { path = "vendor/crabllm/crates/core" }
@@ -37,6 +38,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ulid = { version = "1", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+zeroize = { version = "1", features = ["derive"] }
 hmac = "0.12"
 rand = "0.9"
 subtle = "2"

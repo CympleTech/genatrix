@@ -11,6 +11,9 @@ rust-version.workspace = true
 [dependencies]
 hex.workspace = true
 rand.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

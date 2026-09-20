@@ -12,7 +12,7 @@ use genatrix_model::{
     Connector, Direction, HandleKind, Item, ItemId, Payload, Raw, Source, Thread, ThreadId,
     ThreadKind,
 };
-use genatrix_store::Store;
+use genatrix_store::{FileStore, Store};
 
 struct Sample {
     connector: Connector,
@@ -160,7 +160,7 @@ pub const fn count() -> usize {
 ///
 /// Returns how many were new. Running it twice adds nothing, because it goes
 /// through the same idempotence a connector relies on.
-pub fn run(store: &Store) -> anyhow::Result<usize> {
+pub fn run(store: &Store, raw_files: &FileStore) -> anyhow::Result<usize> {
     let me = store.person_for_handle(HandleKind::Email, "me@example.com", "Neo")?;
     if store.self_person()?.is_none() {
         store.set_self(me)?;
@@ -179,6 +179,9 @@ pub fn run(store: &Store) -> anyhow::Result<usize> {
         if !store.insert_raw(&raw)? {
             continue;
         }
+        // The bytes themselves go beside the database, encrypted and named by
+        // their hash. This is the path a connector takes too.
+        raw_files.put(sample.text.as_bytes())?;
 
         let thread_source = Source::new(sample.connector, sample.account, sample.thread);
         let thread_id = store.upsert_thread(&Thread {
@@ -217,6 +220,11 @@ pub fn run(store: &Store) -> anyhow::Result<usize> {
                 in_reply_to: None,
                 references: vec![],
                 labels: vec!["INBOX".to_owned()],
+                headers: sample
+                    .headers
+                    .iter()
+                    .map(|(n, v)| ((*n).to_lowercase(), (*v).to_owned()))
+                    .collect(),
             },
             Connector::Telegram => Payload::Message {
                 reply_to: None,
@@ -249,32 +257,6 @@ pub fn run(store: &Store) -> anyhow::Result<usize> {
         added += 1;
     }
     Ok(added)
-}
-
-/// Headers for an item, as the classifier needs them. A connector will get
-/// these from the source; the seed keeps them beside the sample.
-#[must_use]
-pub fn headers_for(external_id: &str) -> Vec<(String, String)> {
-    SAMPLES
-        .iter()
-        .find(|s| s.external_id == external_id)
-        .map(|s| {
-            s.headers
-                .iter()
-                .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// The sender's domain for an item, when it has one.
-#[must_use]
-pub fn sender_domain_for(external_id: &str) -> Option<String> {
-    SAMPLES
-        .iter()
-        .find(|s| s.external_id == external_id)
-        .and_then(|s| s.from.split_once('@'))
-        .map(|(_, domain)| domain.to_lowercase())
 }
 
 const fn content_type(connector: Connector) -> &'static str {

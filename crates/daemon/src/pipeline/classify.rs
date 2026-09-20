@@ -77,8 +77,6 @@ pub async fn run<C: ModelCaller>(
     store: &Store,
     rules: &RuleSet,
     ctx: &mut RunContext<'_, C>,
-    headers_of: &dyn Fn(&Item) -> Vec<(String, String)>,
-    domain_of: &dyn Fn(&Item) -> Option<String>,
 ) -> Result<Report, RunError> {
     let mut report = Report::default();
     let mut pending: Vec<(Item, Level)> = Vec::new();
@@ -100,7 +98,7 @@ pub async fn run<C: ModelCaller>(
             level
         } else {
             let headers = headers_of(&item);
-            let domain = domain_of(&item);
+            let domain = sender_domain_of(&item);
             let judgement = rules.judge(&Candidate {
                 connector: item.source.connector,
                 thread_kind: thread_kind_of(store, &item),
@@ -276,6 +274,28 @@ fn settle(store: &Store, item: &Item, report: &mut Report) -> Result<(), RunErro
         .map_err(|e| RunError::Ledger(store_error(&e)))?;
     *report.levels.entry(level.as_str().to_owned()).or_default() += 1;
     Ok(())
+}
+
+/// The headers the rules read, from the item itself.
+///
+/// They travel on the item rather than being looked up somewhere, so a
+/// message that came from a connector and one that came from anywhere else
+/// are judged by exactly the same evidence.
+fn headers_of(item: &Item) -> Vec<(String, String)> {
+    match &item.payload {
+        genatrix_model::Payload::Mail { headers, .. } => headers.clone(),
+        _ => Vec::new(),
+    }
+}
+
+/// The sender's domain, for the sender rules.
+fn sender_domain_of(item: &Item) -> Option<String> {
+    match &item.payload {
+        genatrix_model::Payload::Mail { from, .. } => from
+            .rsplit_once('@')
+            .map(|(_, domain)| domain.trim_end_matches('>').trim().to_lowercase()),
+        _ => None,
+    }
 }
 
 fn all_items(store: &Store) -> Result<Vec<Item>, RunError> {

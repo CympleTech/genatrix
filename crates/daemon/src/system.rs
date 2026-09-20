@@ -11,7 +11,7 @@ use genatrix_gate::rules::RuleSet;
 use genatrix_keys::TicketKey;
 use genatrix_ledger::Ledger;
 use genatrix_llm::config::Config as GatewayConfig;
-use genatrix_store::Store;
+use genatrix_store::{FileStore, Store};
 
 use crate::caller::GatewayCaller;
 use crate::config::Config;
@@ -24,6 +24,10 @@ pub struct System {
     pub config: Config,
     /// The main database.
     pub store: Arc<Store>,
+    /// Raw records as fetched, encrypted, one file each.
+    pub raw_files: Arc<FileStore>,
+    /// Attachments and other binaries, encrypted, one file each.
+    pub blob_files: Arc<FileStore>,
     /// The append-only ledger.
     pub ledger: Arc<Ledger>,
     /// The egress gate.
@@ -51,13 +55,18 @@ impl System {
         config.create_dirs()?;
         let master = keys::load_or_create(&config.key_path())?;
 
-        let store = Arc::new(Store::open(
-            config.store_path(),
-            &keys::db_key(&master, "store"),
-        )?);
+        let store = Arc::new(Store::open(config.store_path(), &master.db_key("store"))?);
         let ledger = Arc::new(Ledger::open(
             config.ledger_path(),
-            &keys::db_key(&master, "ledger"),
+            &master.db_key("ledger"),
+        )?);
+        let raw_files = Arc::new(FileStore::open(
+            config.data_dir.join("raw"),
+            master.clone(),
+        )?);
+        let blob_files = Arc::new(FileStore::open(
+            config.data_dir.join("blobs"),
+            master.clone(),
         )?);
 
         let rules = if config.rules_path().exists() {
@@ -88,6 +97,8 @@ impl System {
         Ok(Self {
             config,
             store,
+            raw_files,
+            blob_files,
             ledger,
             gate,
             caller,

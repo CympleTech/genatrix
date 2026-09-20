@@ -14,6 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 genatrix-agent.workspace = true
+genatrix-connector.workspace = true
+genatrix-connector-imap.workspace = true
 genatrix-gate.workspace = true
 genatrix-keys.workspace = true
 genatrix-ledger.workspace = true

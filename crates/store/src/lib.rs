@@ -7,6 +7,9 @@
 //! hand it a 32-byte key; deriving that key from the master key in the
 //! keychain is the daemon's job.
 //!
+//! Item bodies live in the database; raw records and attachments live beside
+//! it as encrypted, content-addressed files (see [`FileStore`]).
+//!
 //! Vector search (`sqlite-vec`) arrives with milestone M2; phase one is
 //! full-text only.
 
@@ -16,6 +19,7 @@ mod annotation;
 mod blob;
 mod error;
 mod export;
+mod files;
 mod item;
 mod migrate;
 mod person;
@@ -26,6 +30,7 @@ mod time;
 
 pub use error::{Error, Result};
 pub use export::ExportSummary;
+pub use files::FileStore;
 pub use genatrix_keys::DbKey;
 pub use item::{ItemQuery, ItemVersion};
 pub use store::Store;

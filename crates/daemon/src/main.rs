@@ -9,8 +9,10 @@
 
 #![forbid(unsafe_code)]
 
+mod accounts;
 mod caller;
 mod config;
+mod ingest;
 mod keys;
 mod names;
 mod pipeline;
@@ -60,6 +62,27 @@ enum Command {
     },
     /// Show what has left this device.
     Ledger,
+    /// Add a mailbox.
+    Account {
+        /// The address. For a well-known provider that is all it takes.
+        #[arg(long)]
+        add: String,
+        /// The IMAP server, when it cannot be worked out from the address.
+        #[arg(long)]
+        imap_host: Option<String>,
+    },
+    /// Fetch mail for every account.
+    Sync {
+        /// Stop after this many messages per account.
+        #[arg(long, default_value_t = 500)]
+        limit: usize,
+    },
+    /// Write everything out in the open format, so it can be read elsewhere.
+    Export {
+        /// Directory to write into. Created if it does not exist.
+        #[arg(long)]
+        to: PathBuf,
+    },
     /// Serve the local interface.
     Serve {
         /// Address to listen on. Loopback by default, which only this machine
@@ -96,6 +119,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Classify => classify(&config).await,
         Command::Timeline { limit } => timeline(&config, limit),
         Command::Ledger => ledger(&config),
+        Command::Export { to } => export(&config, &to),
+        Command::Account { add, imap_host } => account(&config, &add, imap_host),
+        Command::Sync { limit } => sync(&config, limit).await,
         Command::Serve { bind, port, token } => {
             serve(&config, &web::Serving { bind, port, token }).await
         }
@@ -130,6 +156,11 @@ fn init(config: &Config) -> anyhow::Result<()> {
     let system = System::open(config.clone(), ticket_key(false)?)?;
     println!("data directory  {}", config.data_dir.display());
     println!("store           {} item(s)", system.store.count_items()?);
+    println!(
+        "files           {} bytes of raw records, {} bytes of attachments",
+        system.raw_files.size_on_disk()?,
+        system.blob_files.size_on_disk()?
+    );
     println!("ledger          {} entr(ies)", system.ledger.len()?);
     println!("rules           {}", config.rules_path().display());
     println!("gateway socket  {}", config.gateway_socket.display());
@@ -146,11 +177,12 @@ fn init(config: &Config) -> anyhow::Result<()> {
 
 fn seed(config: &Config) -> anyhow::Result<()> {
     let system = System::open(config.clone(), ticket_key(false)?)?;
-    let added = seed::run(&system.store)?;
+    let added = seed::run(&system.store, &system.raw_files)?;
     println!(
-        "added {added} of {} sample item(s); {} in the store",
+        "added {added} of {} sample item(s); {} in the store, {} bytes of raw records on disk",
         seed::count(),
-        system.store.count_items()?
+        system.store.count_items()?,
+        system.raw_files.size_on_disk()?
     );
     Ok(())
 }
@@ -167,19 +199,8 @@ async fn classify(config: &Config) -> anyhow::Result<()> {
 
     let mut ctx = RunContext::begin(&system.ledger, &system.caller, "classify", 64)?;
     let store = system.store.clone();
-    let headers_of = move |item: &genatrix_model::Item| seed::headers_for(&item.source.external_id);
-    let domain_of =
-        move |item: &genatrix_model::Item| seed::sender_domain_for(&item.source.external_id);
-
     let started = std::time::Instant::now();
-    let report = pipeline::classify::run(
-        &store,
-        system.gate.rules(),
-        &mut ctx,
-        &headers_of,
-        &domain_of,
-    )
-    .await;
+    let report = pipeline::classify::run(&store, system.gate.rules(), &mut ctx).await;
     let steps = ctx.steps();
     match &report {
         Ok(_) => ctx.done()?,
@@ -202,6 +223,134 @@ async fn classify(config: &Config) -> anyhow::Result<()> {
         println!("  {level:<24} {count}");
     }
     Ok(())
+}
+
+/// Environment variable carrying a mailbox password, read at sync time and
+/// never written down. Design 08 replaces this with the keychain.
+const PASSWORD_ENV: &str = "GENATRIX_IMAP_PASSWORD";
+
+fn account(config: &Config, address: &str, imap_host: Option<String>) -> anyhow::Result<()> {
+    config.create_dirs()?;
+    let path = config.accounts_path();
+    let mut accounts = accounts::Accounts::load(&path)?;
+    accounts.add_mail(address, imap_host)?;
+    accounts.save(&path)?;
+
+    let account = &accounts.mail[&address.trim().to_lowercase()];
+    println!("added {}", account.address);
+    println!("  reads from  {}:{}", account.imap_host, account.imap_port);
+    match &account.smtp_host {
+        Some(host) => println!("  sends via   {host}:{}", account.smtp_port),
+        None => println!("  sends via   not configured, so this account cannot send"),
+    }
+    println!();
+    println!("No password was stored. Set {PASSWORD_ENV} when syncing:");
+    println!();
+    println!("  export {PASSWORD_ENV}=<your app password>");
+    println!("  genatrix sync");
+    println!();
+    println!("On Gmail that is an app password, not your account password:");
+    println!("turn on two-step verification, then create one under App passwords.");
+    Ok(())
+}
+
+/// Fetch mail for every account: history newest first, then anything new.
+async fn sync(config: &Config, limit: usize) -> anyhow::Result<()> {
+    use genatrix_connector::capability::Host;
+    use genatrix_connector::{Checkpoint, Cursor, Progress};
+    use genatrix_connector_imap::imap::{Credentials, Imap};
+    use genatrix_connector_imap::sync::Sync as MailSync;
+
+    let system = System::open(config.clone(), ticket_key(false)?)?;
+    let accounts = accounts::Accounts::load(&config.accounts_path())?;
+    if accounts.mail.is_empty() {
+        anyhow::bail!("no accounts yet. `genatrix account --add you@example.com` adds one.");
+    }
+    let password = std::env::var(PASSWORD_ENV).map_err(|_| {
+        anyhow::anyhow!(
+            "{PASSWORD_ENV} is not set. It is read each run and never written down:\n\n  \
+             export {PASSWORD_ENV}=<your app password>"
+        )
+    })?;
+    let grant = accounts.grant();
+
+    for account in accounts.mail.values() {
+        let host = Host::new(&account.imap_host, account.imap_port);
+        let capability = grant
+            .account(&account.address)
+            .ok_or_else(|| anyhow::anyhow!("{} has no capability", account.address))?
+            .clone();
+
+        println!("{}", account.address);
+        let credentials = Credentials {
+            account: account.address.clone(),
+            password: password.clone(),
+            imap: host.clone(),
+        };
+        let imap = Imap::connect(&credentials).await?;
+        let mail = MailSync::new(imap, capability);
+        mail.check_host(&host)?;
+
+        let folders = mail.folders().await?;
+        let mut taken = 0usize;
+        for folder in &folders {
+            println!("  {} ({} message(s))", folder.name, folder.count);
+
+            // Anything new first: it is the part the user is waiting for.
+            let mut checkpoint = Checkpoint::new(
+                &account.address,
+                &folder.name,
+                Cursor::ImapUid {
+                    uidvalidity: folder.uidvalidity,
+                    highest: 0,
+                },
+            );
+            let (fresh, _) = mail
+                .catch_up(&folder.name, folder.uidvalidity, &mut checkpoint)
+                .await?;
+            taken += store_batch(&system, &fresh)?;
+
+            // Then history, newest first, until the limit.
+            let mut progress = Progress::default();
+            let mut before = None;
+            while taken < limit {
+                let (batch, oldest, pass) = mail
+                    .backfill(&folder.name, folder.uidvalidity, before, &mut progress)
+                    .await?;
+                taken += store_batch(&system, &batch)?;
+                before = oldest;
+                if !pass.more {
+                    break;
+                }
+                println!("    {}", progress.describe());
+            }
+        }
+        println!("  {taken} new item(s)");
+    }
+
+    println!();
+    println!("{} item(s) in the store", system.store.count_items()?);
+    println!("`genatrix classify` judges the new ones.");
+    Ok(())
+}
+
+/// Store a batch and say how many were new.
+fn store_batch(
+    system: &System,
+    batch: &[genatrix_connector_imap::sync::Incoming],
+) -> anyhow::Result<usize> {
+    let mut added = 0;
+    for incoming in batch {
+        if let ingest::Ingested::Added(_) = ingest::mail(
+            &system.store,
+            &system.raw_files,
+            &system.blob_files,
+            incoming,
+        )? {
+            added += 1;
+        }
+    }
+    Ok(added)
 }
 
 async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
@@ -239,6 +388,64 @@ fn timeline(config: &Config, limit: u32) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// Design 01 fixes the shape of this: the model as JSONL, plus the raw
+/// records and attachments as files. Not the database, the model, so another
+/// implementation can read it. Plain text, which the output says out loud.
+fn export(config: &Config, to: &std::path::Path) -> anyhow::Result<()> {
+    let system = System::open(config.clone(), ticket_key(false)?)?;
+    system.store.checkpoint()?;
+    let summary = system.store.export_to(to)?;
+
+    // The bytes come out decrypted: an export that needed Genatrix to read it
+    // would not be an export.
+    let mut files = 0usize;
+    let mut bytes = 0usize;
+    for (name, store) in [("raw", &system.raw_files), ("blobs", &system.blob_files)] {
+        let dir = to.join(name);
+        std::fs::create_dir_all(&dir)?;
+        for hash in hashes_in(config, name) {
+            let contents = store.get(&hash)?;
+            bytes += contents.len();
+            files += 1;
+            std::fs::write(dir.join(hash.to_string()), contents)?;
+        }
+    }
+
+    println!("wrote {}", to.display());
+    println!(
+        "  {} items, {} threads, {} people, {} annotations",
+        summary.items, summary.threads, summary.persons, summary.annotations
+    );
+    println!("  {files} files, {bytes} bytes");
+    println!();
+    println!("This is your data in the clear, with no encryption. Put it somewhere safe.");
+    Ok(())
+}
+
+/// Which files a store holds. The store is content-addressed, so the names on
+/// disk are the whole index.
+fn hashes_in(config: &Config, which: &str) -> Vec<genatrix_model::ContentHash> {
+    let root = config.data_dir.join(which);
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && let Ok(hash) = name.parse()
+            {
+                out.push(hash);
+            }
+        }
+    }
+    out
 }
 
 fn ledger(config: &Config) -> anyhow::Result<()> {

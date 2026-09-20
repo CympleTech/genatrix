@@ -13,6 +13,21 @@ name = "genatrix-imap"
 path = "src/main.rs"
 
 [dependencies]
+genatrix-connector.workspace = true
+genatrix-model.workspace = true
+mail-parser = "0.11"
+serde.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+async-imap = "0.11"
+async-native-tls = "0.6"
+futures.workspace = true
+tokio = { workspace = true }
+tokio-util = { version = "0.7", features = ["compat"] }
+
+[dev-dependencies]
+tokio = { workspace = true }
 
 [lints]
 workspace = true

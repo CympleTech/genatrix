@@ -9,6 +9,10 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+genatrix-model.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
 
 [lints]
 workspace = true

@@ -74,6 +74,12 @@ impl Config {
         self.data_dir.join("rules").join("sensitivity.toml")
     }
 
+    /// The accounts this copy reads.
+    #[must_use]
+    pub fn accounts_path(&self) -> PathBuf {
+        self.data_dir.join("accounts.toml")
+    }
+
     /// The model registry, shared with the gateway.
     #[must_use]
     pub fn gateway_config_path(&self) -> PathBuf {

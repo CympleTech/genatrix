@@ -58,6 +58,7 @@ struct Status {
     cloud_enabled: bool,
     rules_version: String,
     bytes_left_device: usize,
+    bytes_on_disk: u64,
     data_dir: String,
 }
 
@@ -68,6 +69,7 @@ async fn status(State(system): Shared) -> Result<Json<Status>, ApiError> {
         cloud_enabled: system.gate.cloud_enabled(),
         rules_version: system.gate.rules().version.clone(),
         bytes_left_device: bytes_out(&system)?,
+        bytes_on_disk: system.raw_files.size_on_disk()? + system.blob_files.size_on_disk()?,
         data_dir: system.config.data_dir.display().to_string(),
     }))
 }

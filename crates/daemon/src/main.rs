@@ -12,6 +12,7 @@
 mod accounts;
 mod caller;
 mod config;
+mod connectors;
 mod ingest;
 mod keychain;
 mod keys;
@@ -490,10 +491,13 @@ fn rate_per_minute(count: usize, d: std::time::Duration) -> u64 {
 
 /// Serve the interface and keep every account up to date while it runs.
 ///
-/// Each account gets its own task: connect, take what is new, walk the
-/// history, wait on the server, reconnect when the connection drops. An
-/// account that cannot start, because there is no password or its server is
-/// not allowed, is shown in that state rather than stopping the rest.
+/// The mail connector runs in its own sandboxed process (design 05) when
+/// its binary is beside this one; the core hands it the accounts and their
+/// passwords over the socket and stores what comes back. Without the binary,
+/// as in a partial development build, the engine runs inside this process,
+/// unconfined, and says so. An account that cannot start, because there is
+/// no password or its server is not allowed, is shown in that state rather
+/// than stopping the rest.
 async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
     use genatrix_connector::SyncState;
     use genatrix_connector::capability::Host;
@@ -503,9 +507,10 @@ async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
     let accounts = accounts::Accounts::load(&config.accounts_path())?;
     let grant = accounts.grant();
 
+    let mut assigned = Vec::new();
     for account in accounts.mail.values() {
         let status = system.accounts.track(&account.address);
-        let password = match password_for(&account.address) {
+        let secret = match password_for(&account.address) {
             Ok(Some(password)) => password,
             Ok(None) => {
                 status.send_replace(SyncState::NeedsLogin {
@@ -536,21 +541,50 @@ async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
                 continue;
             }
         };
-        let credentials = Credentials {
-            account: account.address.clone(),
-            password,
-            imap: host,
-        };
-        let sink = syncing::StoreSink::new(system.clone(), &account.address);
-        tokio::spawn(run_account(
+        assigned.push(connectors::Assigned {
             capability,
-            move || {
-                let credentials = credentials.clone();
-                async move { Imap::connect(&credentials).await }
-            },
-            sink,
+            secret,
             status,
-        ));
+        });
+    }
+
+    if let Some(binary) = connectors::mail_binary() {
+        connectors::start_mail(system.clone(), assigned, binary)?;
+    } else {
+        {
+            tracing::warn!(
+                "genatrix-imap was not found beside this binary; running the mail connector \
+                 inside the core, without a sandbox. `cargo build --workspace` builds it."
+            );
+            for connectors::Assigned {
+                capability,
+                secret,
+                status,
+            } in assigned
+            {
+                let Some(imap) = capability.hosts.iter().find(|h| h.port == 993).cloned() else {
+                    status.send_replace(SyncState::Stopped {
+                        detail: "no mail server to read from".to_owned(),
+                    });
+                    continue;
+                };
+                let credentials = Credentials {
+                    account: capability.account.clone(),
+                    password: secret,
+                    imap,
+                };
+                let sink = syncing::StoreSink::new(system.clone(), &capability.account);
+                tokio::spawn(run_account(
+                    capability,
+                    move || {
+                        let credentials = credentials.clone();
+                        async move { Imap::connect(&credentials).await }
+                    },
+                    sink,
+                    status,
+                ));
+            }
+        }
     }
 
     web::serve(system, serving).await

@@ -93,8 +93,12 @@ later ones are quick.
 **Build.**
 
 ```sh
-cargo build --release -p genatrix-infer -p genatrix-llm
+cargo build --release --workspace
 ```
+
+That builds the core (`genatrix`), the mail connector it starts
+(`genatrix-imap`, which has to be beside it), the model gateway and the
+inference process.
 
 **Get a model.** Any MLX model directory works; this is the one the local
 model spike measured, about 4.3 GB.

@@ -44,8 +44,28 @@ impl StoreSink {
     }
 }
 
+impl StoreSink {
+    /// The cursor as stored, for the socket, which carries it as is.
+    pub fn load_json(&self, scope: &str) -> Result<Option<String>, Fault> {
+        Ok(self
+            .system
+            .store
+            .get_sync_cursor(Connector::Imap, &self.account, scope)
+            .map_err(|e| self.fault("could not read the sync cursor", e))?
+            .map(|stored| stored.cursor))
+    }
+
+    /// A cursor from the socket, stored as is.
+    pub fn save_json(&self, scope: &str, cursor_json: &str) -> Result<(), Fault> {
+        self.system
+            .store
+            .put_sync_cursor(Connector::Imap, &self.account, scope, cursor_json)
+            .map_err(|e| self.fault("could not write the sync cursor", e))
+    }
+}
+
 impl Sink for StoreSink {
-    fn store(&self, batch: &[Incoming]) -> Result<usize, Fault> {
+    async fn store(&self, batch: &[Incoming]) -> Result<usize, Fault> {
         let mut new = 0;
         for incoming in batch {
             match ingest::mail(
@@ -62,16 +82,11 @@ impl Sink for StoreSink {
         Ok(new)
     }
 
-    fn load(&self, scope: &str) -> Result<Option<Cursor>, Fault> {
-        let stored = self
-            .system
-            .store
-            .get_sync_cursor(Connector::Imap, &self.account, scope)
-            .map_err(|e| self.fault("could not read the sync cursor", e))?;
-        let Some(stored) = stored else {
+    async fn load(&self, scope: &str) -> Result<Option<Cursor>, Fault> {
+        let Some(json) = self.load_json(scope)? else {
             return Ok(None);
         };
-        match serde_json::from_str(&stored.cursor) {
+        match serde_json::from_str(&json) {
             Ok(cursor) => Ok(Some(cursor)),
             Err(e) => {
                 // A cursor this build cannot read is a cursor from another
@@ -89,13 +104,10 @@ impl Sink for StoreSink {
         }
     }
 
-    fn save(&self, scope: &str, cursor: &Cursor) -> Result<(), Fault> {
+    async fn save(&self, scope: &str, cursor: &Cursor) -> Result<(), Fault> {
         let json = serde_json::to_string(cursor)
             .map_err(|e| self.fault("could not encode the sync cursor", e))?;
-        self.system
-            .store
-            .put_sync_cursor(Connector::Imap, &self.account, scope, &json)
-            .map_err(|e| self.fault("could not write the sync cursor", e))
+        self.save_json(scope, &json)
     }
 }
 

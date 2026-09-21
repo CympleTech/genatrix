@@ -49,29 +49,29 @@ fn history_scope(folder: &str) -> String {
 /// In the finished layout this is the connector protocol over IPC (design
 /// 05). In-process for now, and the shape is the same either way: the
 /// connector decides what to fetch, the core decides what it means.
-pub trait Sink {
+pub trait Sink: Send + std::marker::Sync {
     /// Store a batch. Returns how many were new; the rest were already held,
     /// which is the ordinary result of refetching.
-    fn store(&self, batch: &[Incoming]) -> Result<usize, Fault>;
+    fn store(&self, batch: &[Incoming]) -> impl Future<Output = Result<usize, Fault>> + Send;
 
     /// The cursor last saved for a scope, if any.
-    fn load(&self, scope: &str) -> Result<Option<Cursor>, Fault>;
+    fn load(&self, scope: &str) -> impl Future<Output = Result<Option<Cursor>, Fault>> + Send;
 
     /// Save a cursor. Called after the batch it describes has been stored.
-    fn save(&self, scope: &str, cursor: &Cursor) -> Result<(), Fault>;
+    fn save(&self, scope: &str, cursor: &Cursor) -> impl Future<Output = Result<(), Fault>> + Send;
 }
 
 impl<K: Sink> Sink for &K {
-    fn store(&self, batch: &[Incoming]) -> Result<usize, Fault> {
-        (**self).store(batch)
+    async fn store(&self, batch: &[Incoming]) -> Result<usize, Fault> {
+        (**self).store(batch).await
     }
 
-    fn load(&self, scope: &str) -> Result<Option<Cursor>, Fault> {
-        (**self).load(scope)
+    async fn load(&self, scope: &str) -> Result<Option<Cursor>, Fault> {
+        (**self).load(scope).await
     }
 
-    fn save(&self, scope: &str, cursor: &Cursor) -> Result<(), Fault> {
-        (**self).save(scope, cursor)
+    async fn save(&self, scope: &str, cursor: &Cursor) -> Result<(), Fault> {
+        (**self).save(scope, cursor).await
     }
 }
 
@@ -95,7 +95,7 @@ pub struct Watcher<S, K> {
     primary: Option<String>,
 }
 
-impl<S: MailSource, K: Sink> Watcher<S, K> {
+impl<S: MailSource + Send + std::marker::Sync, K: Sink> Watcher<S, K> {
     /// Watch the account `sync` reads, storing through `sink`, reporting
     /// through `status`.
     pub fn new(sync: Sync<S>, sink: K, status: watch::Sender<SyncState>) -> Self {
@@ -130,7 +130,7 @@ impl<S: MailSource, K: Sink> Watcher<S, K> {
         // a cursor.
         let mut histories = Vec::with_capacity(folders.len());
         for folder in &folders {
-            histories.push(self.history_of(folder)?);
+            histories.push(self.history_of(folder).await?);
         }
 
         let mut done: u64 = 0;
@@ -149,13 +149,7 @@ impl<S: MailSource, K: Sink> Watcher<S, K> {
             done += u64::from(folder.count).saturating_sub(remaining as u64);
         }
 
-        let complete = !worked
-            || self
-                .sink
-                .load(&history_scope(&folders[0].name))
-                .ok()
-                .flatten()
-                .is_some_and(|_| self.all_complete(&folders).unwrap_or(false));
+        let complete = !worked || self.all_complete(&folders).await.unwrap_or(false);
 
         self.progress.total = Some(folders.iter().map(|f| u64::from(f.count)).sum());
         self.progress.done = done;
@@ -205,7 +199,7 @@ impl<S: MailSource, K: Sink> Watcher<S, K> {
     /// renumbered it, set the cursors up instead and fetch nothing.
     async fn catch_up(&mut self, folder: &Folder) -> Result<usize, Fault> {
         let scope = folder.name.clone();
-        let known = match self.sink.load(&scope)? {
+        let known = match self.sink.load(&scope).await? {
             Some(cursor @ Cursor::ImapUid { uidvalidity, .. })
                 if uidvalidity == folder.uidvalidity =>
             {
@@ -216,21 +210,25 @@ impl<S: MailSource, K: Sink> Watcher<S, K> {
 
         let Some(cursor) = known else {
             let newest = self.sync.newest_uid(&folder.name).await?;
-            self.sink.save(
-                &scope,
-                &Cursor::ImapUid {
-                    uidvalidity: folder.uidvalidity,
-                    highest: newest,
-                },
-            )?;
-            self.sink.save(
-                &history_scope(&folder.name),
-                &Cursor::ImapHistory {
-                    uidvalidity: folder.uidvalidity,
-                    oldest: None,
-                    complete: newest == 0,
-                },
-            )?;
+            self.sink
+                .save(
+                    &scope,
+                    &Cursor::ImapUid {
+                        uidvalidity: folder.uidvalidity,
+                        highest: newest,
+                    },
+                )
+                .await?;
+            self.sink
+                .save(
+                    &history_scope(&folder.name),
+                    &Cursor::ImapHistory {
+                        uidvalidity: folder.uidvalidity,
+                        oldest: None,
+                        complete: newest == 0,
+                    },
+                )
+                .await?;
             return Ok(0);
         };
 
@@ -239,8 +237,8 @@ impl<S: MailSource, K: Sink> Watcher<S, K> {
             .sync
             .catch_up(&folder.name, folder.uidvalidity, &mut checkpoint)
             .await?;
-        let new = self.sink.store(&mails)?;
-        self.sink.save(&scope, &checkpoint.cursor)?;
+        let new = self.sink.store(&mails).await?;
+        self.sink.save(&scope, &checkpoint.cursor).await?;
         Ok(new)
     }
 
@@ -256,15 +254,17 @@ impl<S: MailSource, K: Sink> Watcher<S, K> {
             .sync
             .backfill(&folder.name, folder.uidvalidity, before, &mut pass_progress)
             .await?;
-        let new = self.sink.store(&batch)?;
-        self.sink.save(
-            &history_scope(&folder.name),
-            &Cursor::ImapHistory {
-                uidvalidity: folder.uidvalidity,
-                oldest,
-                complete: !pass.more,
-            },
-        )?;
+        let new = self.sink.store(&batch).await?;
+        self.sink
+            .save(
+                &history_scope(&folder.name),
+                &Cursor::ImapHistory {
+                    uidvalidity: folder.uidvalidity,
+                    oldest,
+                    complete: !pass.more,
+                },
+            )
+            .await?;
         if pass_progress.reached.is_some() {
             self.progress.reached = pass_progress.reached;
         }
@@ -274,8 +274,8 @@ impl<S: MailSource, K: Sink> Watcher<S, K> {
     /// A folder's history position. Always present after `catch_up`, and
     /// always for the folder's current validity, because `catch_up` resets
     /// both cursors when the validity moves.
-    fn history_of(&self, folder: &Folder) -> Result<History, Fault> {
-        match self.sink.load(&history_scope(&folder.name))? {
+    async fn history_of(&self, folder: &Folder) -> Result<History, Fault> {
+        match self.sink.load(&history_scope(&folder.name)).await? {
             Some(Cursor::ImapHistory {
                 uidvalidity,
                 oldest,
@@ -288,9 +288,9 @@ impl<S: MailSource, K: Sink> Watcher<S, K> {
         }
     }
 
-    fn all_complete(&self, folders: &[Folder]) -> Result<bool, Fault> {
+    async fn all_complete(&self, folders: &[Folder]) -> Result<bool, Fault> {
         for folder in folders {
-            if !self.history_of(folder)?.complete {
+            if !self.history_of(folder).await?.complete {
                 return Ok(false);
             }
         }
@@ -318,7 +318,7 @@ pub async fn run_account<S, K, C, F>(
     status: watch::Sender<SyncState>,
 ) -> Fault
 where
-    S: MailSource,
+    S: MailSource + Send + std::marker::Sync,
     K: Sink + Clone,
     C: Fn() -> F,
     F: Future<Output = Result<S, Fault>>,
@@ -386,7 +386,7 @@ mod tests {
     }
 
     impl Sink for Memory {
-        fn store(&self, batch: &[Incoming]) -> Result<usize, Fault> {
+        async fn store(&self, batch: &[Incoming]) -> Result<usize, Fault> {
             let mut items = self.items.lock().unwrap();
             let mut new = 0;
             for incoming in batch {
@@ -400,11 +400,11 @@ mod tests {
             Ok(new)
         }
 
-        fn load(&self, scope: &str) -> Result<Option<Cursor>, Fault> {
+        async fn load(&self, scope: &str) -> Result<Option<Cursor>, Fault> {
             Ok(self.cursors.lock().unwrap().get(scope).cloned())
         }
 
-        fn save(&self, scope: &str, cursor: &Cursor) -> Result<(), Fault> {
+        async fn save(&self, scope: &str, cursor: &Cursor) -> Result<(), Fault> {
             self.cursors
                 .lock()
                 .unwrap()

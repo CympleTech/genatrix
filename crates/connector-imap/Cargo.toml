@@ -25,6 +25,10 @@ async-native-tls = "0.6"
 futures.workspace = true
 tokio = { workspace = true }
 tokio-util = { version = "0.7", features = ["compat"] }
+clap = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+anyhow.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

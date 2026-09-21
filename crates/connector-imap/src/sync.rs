@@ -32,7 +32,7 @@ use crate::source::{Fetched, MailSource, Wake};
 pub const BATCH: usize = 50;
 
 /// One message, ready for the core to turn into an item.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Incoming {
     /// The account it belongs to.
     pub account: String,

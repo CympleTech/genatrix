@@ -34,7 +34,7 @@ Design documents are written in Chinese for discussion with the author. Everythi
 | Sign-in: `account --add` verifies the password against the server and keeps it in the keychain; `--forget` removes it; the address becomes a handle of the user's own person | done; via `/usr/bin/security` until the signed application shell |
 | `service install`: a launchd agent that runs `serve` from login onwards and restarts it | done; the menu bar icon waits for the application shell (design 09) |
 | Master key in the keychain | not started; still a file in the data directory, see `crates/daemon/src/keys.rs` |
-| Connector in its own sandboxed process | not started; the sync engine runs inside the daemon |
+| Connector in its own sandboxed process: length-prefixed protobuf over `run/core.sock`, a one-time token, a `sandbox-exec` profile that allows only the granted ports | done; the OS enforces ports, the connector checks hosts (design 05 says so); file access is still `(allow default)` |
 | crabllm vendored and patched | done |
 | Model selection against a real evaluation set | not started; needs ingested data |
 

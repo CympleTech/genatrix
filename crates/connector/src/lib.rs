@@ -26,6 +26,7 @@ pub mod backfill;
 pub mod capability;
 pub mod checkpoint;
 pub mod error;
+pub mod protocol;
 pub mod status;
 
 pub use backfill::{Backfill, Progress};

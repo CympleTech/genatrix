@@ -47,6 +47,20 @@ async fn main() -> anyhow::Result<()> {
         anyhow::anyhow!("{TOKEN_ENV} is not set; this process is started by the core")
     })?;
 
+    // The core is the parent. When it dies without warning, nothing tells
+    // this process, and an account that has stopped makes no calls that
+    // would notice; so ask, and leave when the answer is launchd.
+    let parent = std::os::unix::process::parent_id();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            if std::os::unix::process::parent_id() != parent {
+                tracing::warn!("the core is gone; leaving");
+                std::process::exit(3);
+            }
+        }
+    });
+
     let mut client = Client::connect(&args.core_socket).await?;
     let assign = client.hello("imap", &token).await?;
     let client = Arc::new(Mutex::new(client));

@@ -12,10 +12,14 @@
 //! build. The signed application (design 09) can move to the framework
 //! without changing what is stored.
 //!
-//! Secrets travel over the tool's standard input, hex-encoded, never on the
-//! command line where every process on the machine could read them.
+//! The secret goes to the tool on its command line. That is a compromise,
+//! named here: for the moment the process runs, another process of the same
+//! user could read it from the process table. The alternative, the tool's
+//! interactive mode over standard input, disables the user interaction the
+//! keychain needs to add an item, and fails. Design 08 puts a malicious
+//! process of the same user outside the threat model; the signed
+//! application will use the framework and close this gap.
 
-use std::io::Write;
 use std::process::{Command, Stdio};
 
 /// What `security` reports when there is no such item.
@@ -44,25 +48,21 @@ impl Keychain {
 
     /// Store a secret for an account, replacing any earlier one.
     pub fn store(&self, account: &str, secret: &str) -> anyhow::Result<()> {
-        quoted_safe(account)?;
-        quoted_safe(&self.service)?;
-        let script = format!(
-            "add-generic-password -U -a \"{account}\" -s \"{}\" -X {}\n",
-            self.service,
-            hex::encode(secret.as_bytes())
-        );
-        let mut child = Command::new("/usr/bin/security")
-            .arg("-i")
-            .stdin(Stdio::piped())
+        let out = Command::new("/usr/bin/security")
+            .args([
+                "add-generic-password",
+                "-U",
+                "-a",
+                account,
+                "-s",
+                &self.service,
+                "-w",
+                secret,
+            ])
+            .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
-            .spawn()?;
-        child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("no stdin on the security tool"))?
-            .write_all(script.as_bytes())?;
-        let out = child.wait_with_output()?;
+            .output()?;
         if !out.status.success() {
             anyhow::bail!(
                 "the keychain refused to store the password: {}",
@@ -123,27 +123,9 @@ impl Keychain {
     }
 }
 
-/// The interactive tool takes these inside double quotes, so the two
-/// characters that would break out of them are refused rather than escaped.
-fn quoted_safe(value: &str) -> anyhow::Result<()> {
-    if value.contains(['"', '\\']) || value.contains(char::is_control) {
-        anyhow::bail!("{value:?} cannot be a keychain account or service name");
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn names_that_would_break_the_quoting_are_refused() {
-        assert!(quoted_safe("me@example.com").is_ok());
-        assert!(quoted_safe("Genatrix mail").is_ok());
-        assert!(quoted_safe("a\"b").is_err());
-        assert!(quoted_safe("a\\b").is_err());
-        assert!(quoted_safe("a\nb").is_err());
-    }
 
     /// Touches the login keychain, so it is not part of the ordinary run:
     /// `cargo test -p genatrix-daemon -- --ignored keychain`.

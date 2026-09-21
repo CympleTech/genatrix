@@ -201,6 +201,9 @@ fn element_text(html: &str, from: usize, name: &str) -> (String, usize) {
 fn push_text(out: &mut String, raw: &str) {
     let decoded = decode_entities(raw);
     for ch in decoded.chars() {
+        if is_invisible(ch) {
+            continue;
+        }
         if ch.is_whitespace() && ch != '\n' {
             if !out.ends_with([' ', '\n']) {
                 out.push(' ');
@@ -215,6 +218,15 @@ fn push_text(out: &mut String, raw: &str) {
     }
 }
 
+/// Zero-width and joining characters: present in the bytes, absent on the
+/// screen, so absent from the text too.
+fn is_invisible(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{00AD}' | '\u{034F}' | '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}'
+    )
+}
+
 fn decode_entities(text: &str) -> String {
     if !text.contains('&') {
         return text.to_owned();
@@ -224,7 +236,10 @@ fn decode_entities(text: &str) -> String {
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         let tail = &rest[at..];
-        let Some(end) = tail[..tail.len().min(12)].find(';') else {
+        // Byte positions, because a fixed byte window can end inside a
+        // multi-byte character; a `;` is ASCII, so its position is always a
+        // boundary.
+        let Some(end) = tail.bytes().take(12).position(|b| b == b';') else {
             out.push('&');
             rest = &tail[1..];
             continue;
@@ -237,6 +252,9 @@ fn decode_entities(text: &str) -> String {
             "quot" => Some('"'),
             "apos" | "#39" => Some('\''),
             "nbsp" => Some(' '),
+            // Invisible joiners, which marketing mail pads its preview text
+            // with. They render as nothing, so they become nothing.
+            "zwnj" | "zwj" | "shy" => Some('\u{200B}'),
             "mdash" => Some('—'),
             "ndash" => Some('–'),
             "hellip" => Some('…'),
@@ -281,6 +299,18 @@ fn tidy(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_ampersand_followed_by_multibyte_text_does_not_panic() {
+        // The twelve-byte window after `&` used to be sliced by byte, which
+        // panicked when it landed inside a character.
+        assert_eq!(
+            from_html("a &b\u{200c}\u{200c}\u{200c}\u{200c} c"),
+            "a &b c"
+        );
+        assert_eq!(from_html("&中文中文中文;"), "&中文中文中文;");
+        assert_eq!(from_html("&zwnj;&#847;x"), "x");
+    }
 
     #[test]
     fn markup_becomes_lines_and_text() {

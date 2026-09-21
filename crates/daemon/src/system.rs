@@ -52,6 +52,21 @@ impl System {
     /// the way in; until then the two are started separately and the key
     /// comes from the environment on both sides.
     pub fn open(config: Config, ticket_key: TicketKey) -> anyhow::Result<Self> {
+        // The one file nobody writes for you, read before anything is
+        // created: a run that fails here leaves the directory as it found it,
+        // rather than half made.
+        let gateway_path = config.gateway_config_path();
+        if !gateway_path.exists() {
+            anyhow::bail!(
+                "no gateway configuration at {}.\n\
+                 Write one first; the README has a template. It says which models \
+                 exist and where each one runs, and this process needs to agree \
+                 with the gateway about that.",
+                gateway_path.display()
+            );
+        }
+        let gateway = GatewayConfig::load(&gateway_path)?;
+
         config.create_dirs()?;
         let master = keys::load_or_create(&config.key_path())?;
 
@@ -78,7 +93,6 @@ impl System {
             RuleSet::builtin()
         };
 
-        let gateway = GatewayConfig::load(&config.gateway_config_path())?;
         // The gateway's own configuration is the authority on where it
         // listens. Deriving that path here as well would be two places
         // computing the same thing, which is how they come to disagree.

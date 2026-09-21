@@ -8,8 +8,11 @@
 //! wrong, it is wrong in a way a real server reveals immediately, which is
 //! the kind of wrong worth having in the part that cannot be tested offline.
 //!
-//! Not verified against a real server yet: that needs an account, and is the
-//! one step of this milestone that does.
+//! Verified against Gmail. What that run taught: the server offers its
+//! extensions, `async-imap` parses `X-GM-MSGID` but has no accessor for
+//! `X-GM-THRID`, so threads fall back to the `References` chain until it
+//! does; and "All Mail" alone holds every message, so it is the only Gmail
+//! folder read.
 
 use std::collections::HashSet;
 
@@ -148,7 +151,7 @@ impl MailSource for Imap {
 
         let mut folders = Vec::with_capacity(listed.len());
         for (name, attributes) in listed {
-            let wanted = self.worth_reading(&name, &attributes);
+            let wanted = worth_reading(self.gmail, &name, &attributes);
             if !wanted {
                 folders.push(Folder {
                     name,
@@ -227,7 +230,11 @@ impl MailSource for Imap {
             };
             out.push(Fetched {
                 uid,
-                gmail_message_id: None,
+                gmail_message_id: message.gmail_msg_id().copied(),
+                // Requested, and the server sends it, but the library
+                // exposes no way to read it. Threading falls back to the
+                // References chain, which is what every non-Gmail server
+                // gets anyway.
                 gmail_thread_id: None,
                 raw: body.to_vec(),
             });
@@ -236,26 +243,26 @@ impl MailSource for Imap {
     }
 }
 
-impl Imap {
-    /// Whether a folder should be read.
-    ///
-    /// On Gmail every message is in "All Mail" exactly once, and the label
-    /// folders are views onto it. Reading the labels as well would fetch each
-    /// message as many times as it has labels, for nothing. Drafts and spam
-    /// are skipped because they are not correspondence.
-    fn worth_reading(&self, name: &str, attributes: &[String]) -> bool {
-        let lower = name.to_lowercase();
-        let has = |attribute: &str| attributes.iter().any(|a| a.contains(attribute));
+/// Whether a folder should be read.
+///
+/// On Gmail every message, sent ones included, is in "All Mail" exactly
+/// once, and every other folder is a label, a view onto it. Reading any label
+/// as well would fetch each message once more per label, for nothing. Drafts
+/// and spam are skipped because they are not correspondence.
+///
+/// `attributes` are the folder's special-use markers as the library prints
+/// them, such as `All`, `Sent`, `Junk`.
+fn worth_reading(gmail: bool, name: &str, attributes: &[String]) -> bool {
+    let lower = name.to_lowercase();
+    let has = |attribute: &str| attributes.iter().any(|a| a.contains(attribute));
 
-        if has("Junk") || has("Trash") || has("Drafts") {
-            return false;
-        }
-        if self.gmail {
-            // All Mail and Sent between them hold everything once.
-            return has("All") || has("Sent") || lower.ends_with("all mail");
-        }
-        !lower.contains("junk") && !lower.contains("spam") && !lower.contains("trash")
+    if has("Junk") || has("Trash") || has("Drafts") {
+        return false;
     }
+    if gmail {
+        return has("All") || lower.ends_with("all mail");
+    }
+    !lower.contains("junk") && !lower.contains("spam") && !lower.contains("trash")
 }
 
 /// Collapse a list of UIDs into IMAP's range syntax, so a batch of fifty
@@ -331,6 +338,30 @@ mod tests {
         assert_eq!(uid_set(&[1, 2, 3, 7, 9, 10, 11]), "1:3,7,9:11");
         assert_eq!(uid_set(&[42]), "42");
         assert_eq!(uid_set(&[]), "");
+    }
+
+    fn attrs(list: &[&str]) -> Vec<String> {
+        list.iter().map(|a| (*a).to_owned()).collect()
+    }
+
+    #[test]
+    fn on_gmail_only_all_mail_is_read_because_it_holds_everything_once() {
+        assert!(worth_reading(true, "[Gmail]/All Mail", &attrs(&["All"])));
+        assert!(!worth_reading(true, "[Gmail]/Sent Mail", &attrs(&["Sent"])));
+        assert!(!worth_reading(true, "INBOX", &attrs(&[])));
+        assert!(!worth_reading(true, "Receipts", &attrs(&[])));
+        assert!(!worth_reading(true, "[Gmail]/Spam", &attrs(&["Junk"])));
+        assert!(!worth_reading(true, "[Gmail]/Trash", &attrs(&["Trash"])));
+    }
+
+    #[test]
+    fn elsewhere_every_folder_is_read_except_the_bins() {
+        assert!(worth_reading(false, "INBOX", &attrs(&[])));
+        assert!(worth_reading(false, "Sent", &attrs(&["Sent"])));
+        assert!(worth_reading(false, "Receipts", &attrs(&[])));
+        assert!(!worth_reading(false, "Junk", &attrs(&["Junk"])));
+        assert!(!worth_reading(false, "Spam", &attrs(&[])));
+        assert!(!worth_reading(false, "Drafts", &attrs(&["Drafts"])));
     }
 
     #[test]

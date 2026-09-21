@@ -143,16 +143,6 @@ fn ticket_key(required: bool) -> anyhow::Result<TicketKey> {
 }
 
 fn init(config: &Config) -> anyhow::Result<()> {
-    config.create_dirs()?;
-    if !config.gateway_config_path().exists() {
-        anyhow::bail!(
-            "no gateway configuration at {}.\n\
-             Write one first; the README has a template. It says which models \
-             exist and where each one runs, and this process needs to agree \
-             with the gateway about that.",
-            config.gateway_config_path().display()
-        );
-    }
     let system = System::open(config.clone(), ticket_key(false)?)?;
     println!("data directory  {}", config.data_dir.display());
     println!("store           {} item(s)", system.store.count_items()?);
@@ -273,6 +263,11 @@ async fn sync(config: &Config, limit: usize) -> anyhow::Result<()> {
         )
     })?;
     let grant = accounts.grant();
+    let started = std::time::Instant::now();
+    let mut total = 0usize;
+    // Where the time goes: waiting on the server, or working locally.
+    let mut fetching = std::time::Duration::ZERO;
+    let mut storing = std::time::Duration::ZERO;
 
     for account in accounts.mail.values() {
         let host = Host::new(&account.imap_host, account.imap_port);
@@ -305,19 +300,27 @@ async fn sync(config: &Config, limit: usize) -> anyhow::Result<()> {
                     highest: 0,
                 },
             );
+            let at = std::time::Instant::now();
             let (fresh, _) = mail
                 .catch_up(&folder.name, folder.uidvalidity, &mut checkpoint)
                 .await?;
+            fetching += at.elapsed();
+            let at = std::time::Instant::now();
             taken += store_batch(&system, &fresh)?;
+            storing += at.elapsed();
 
             // Then history, newest first, until the limit.
             let mut progress = Progress::default();
             let mut before = None;
             while taken < limit {
+                let at = std::time::Instant::now();
                 let (batch, oldest, pass) = mail
                     .backfill(&folder.name, folder.uidvalidity, before, &mut progress)
                     .await?;
+                fetching += at.elapsed();
+                let at = std::time::Instant::now();
                 taken += store_batch(&system, &batch)?;
+                storing += at.elapsed();
                 before = oldest;
                 if !pass.more {
                     break;
@@ -326,12 +329,42 @@ async fn sync(config: &Config, limit: usize) -> anyhow::Result<()> {
             }
         }
         println!("  {taken} new item(s)");
+        total += taken;
     }
 
+    let elapsed = started.elapsed();
     println!();
+    println!(
+        "{total} new item(s) in {}, {} per minute",
+        describe_duration(elapsed),
+        rate_per_minute(total, elapsed)
+    );
+    println!(
+        "  {} waiting on the server, {} storing locally",
+        describe_duration(fetching),
+        describe_duration(storing)
+    );
     println!("{} item(s) in the store", system.store.count_items()?);
     println!("`genatrix classify` judges the new ones.");
     Ok(())
+}
+
+/// `1m 23s`, or `4s` when it was quick.
+fn describe_duration(d: std::time::Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        format!("{}m {:02}s", secs / 60, secs % 60)
+    }
+}
+
+/// Whole items per minute, for the backfill threshold in design 10.
+fn rate_per_minute(count: usize, d: std::time::Duration) -> u64 {
+    let millis = d.as_millis().max(1);
+    (count as u128 * 60_000 / millis)
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 /// Store a batch and say how many were new.
@@ -381,7 +414,9 @@ fn timeline(config: &Config, limit: u32) -> anyhow::Result<()> {
         };
         println!(
             "{}  {mark}  {:<9} {:<18} {}",
-            item.occurred_at.format("%m-%d %H:%M"),
+            item.occurred_at
+                .with_timezone(&chrono::Local)
+                .format("%m-%d %H:%M"),
             item.source.connector.as_str(),
             truncate(&who, 18),
             truncate(&item.text.replace('\n', " "), 64)

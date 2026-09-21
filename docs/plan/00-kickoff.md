@@ -28,7 +28,7 @@ Design documents are written in Chinese for discussion with the author. Everythi
 | `genatrix-keys`: HKDF derivation from one master key | done |
 | `genatrix-store`: encrypted content-addressed files for raw records and attachments | done |
 | `genatrix-connector`: capabilities, checkpoints, backfill, fault severity | done |
-| `genatrix-connector-imap`: normalization, the sync engine against a fake server, the IMAP wire layer | done; unverified against a real server |
+| `genatrix-connector-imap`: normalization, the sync engine against a fake server, the IMAP wire layer | done; verified against Gmail |
 | Accounts, mail ingestion, `account` and `sync` commands | done |
 | crabllm vendored and patched | done |
 | Model selection against a real evaluation set | not started; needs ingested data |
@@ -40,7 +40,7 @@ Design documents are written in Chinese for discussion with the author. Everythi
 | Sandbox | **pass**, [spikes/01-sandbox.md](spikes/01-sandbox.md) | |
 | Local model | **pass with conditions**, [spikes/02-local-model.md](spikes/02-local-model.md) | |
 | Telegram login | not started | Telegram application credentials |
-| Gmail IMAP | the connector is written and tested against a fake server; only the real-server run is left | a mailbox with an app password |
+| Gmail IMAP | **pass on function**, [spikes/03-gmail-imap.md](spikes/03-gmail-imap.md); the speed threshold is proposed for revision | a decision on the design 10 threshold |
 
 ## What the spikes need
 

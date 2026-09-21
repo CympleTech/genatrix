@@ -10,7 +10,7 @@
 //! does the rest.
 
 use chrono::{DateTime, FixedOffset};
-use mail_parser::{Address, MessageParser, MimeHeaders};
+use mail_parser::{Address, MessageParser, MimeHeaders, PartType};
 
 use crate::text;
 
@@ -98,10 +98,16 @@ pub fn normalize(raw: &[u8]) -> Result<Mail, NormalizeError> {
         .ok_or(NormalizeError::Unparsable)?;
 
     // Prefer what the sender wrote as text. Fall back to converting the HTML
-    // part, which is what most mail now is.
+    // part, which is what most mail now is. Only a real text part counts as
+    // text: with no alternative, the parser hands back its own rendering of
+    // the HTML, which leaves stylesheets and entities in, so that case goes
+    // through our converter instead.
     let body = parsed
-        .body_text(0)
-        .map(std::borrow::Cow::into_owned)
+        .text_bodies()
+        .find_map(|part| match &part.body {
+            PartType::Text(text) => Some(text.to_string()),
+            _ => None,
+        })
         .filter(|t| !t.trim().is_empty())
         .or_else(|| parsed.body_html(0).map(|h| text::from_html(&h)))
         .unwrap_or_default();
@@ -304,12 +310,14 @@ On Mon, 1 Sep 2026 at 09:00, Neo <me@example.com> wrote:\r\n\
 Subject: Digest\r\n\
 Content-Type: text/html; charset=utf-8\r\n\
 \r\n\
-<html><body><style>p{color:red}</style><p>This week:</p>\
+<html><head><style>:root { color-scheme: light dark; }</style></head>\
+<body><style>p{color:red}</style>&#847;&zwnj; &#847;&zwnj;<p>This week:</p>\
 <ul><li>a Rust release</li></ul>\
 <img src=\"https://tracker.example/p.gif\"></body></html>";
         let mail = normalize(raw).unwrap();
         assert_eq!(mail.text, "This week:\na Rust release");
         assert!(!mail.text.contains("tracker.example"));
+        assert!(!mail.text.contains("color-scheme"), "{:?}", mail.text);
     }
 
     #[test]

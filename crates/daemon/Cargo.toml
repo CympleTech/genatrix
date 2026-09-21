@@ -37,6 +37,7 @@ tracing-subscriber.workspace = true
 hex.workspace = true
 sha2.workspace = true
 ulid.workspace = true
+rpassword = "7"
 
 [dev-dependencies]
 tempfile.workspace = true

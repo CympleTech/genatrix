@@ -31,6 +31,10 @@ Design documents are written in Chinese for discussion with the author. Everythi
 | `genatrix-connector-imap`: normalization, the sync engine against a fake server, the IMAP wire layer | done; verified against Gmail |
 | Accounts, mail ingestion, `account` and `sync` commands | done |
 | Realtime sync: persisted cursors, one connection alternating catch-up and backfill, IDLE with a polling fallback, reconnection with backoff, per-account state in `serve` and the page | done; the seven-day soak has not started |
+| Sign-in: `account --add` verifies the password against the server and keeps it in the keychain; `--forget` removes it; the address becomes a handle of the user's own person | done; via `/usr/bin/security` until the signed application shell |
+| `service install`: a launchd agent that runs `serve` from login onwards and restarts it | done; the menu bar icon waits for the application shell (design 09) |
+| Master key in the keychain | not started; still a file in the data directory, see `crates/daemon/src/keys.rs` |
+| Connector in its own sandboxed process | not started; the sync engine runs inside the daemon |
 | crabllm vendored and patched | done |
 | Model selection against a real evaluation set | not started; needs ingested data |
 
@@ -51,12 +55,11 @@ Development machine prerequisites: an Apple Silicon Mac with the Xcode Metal too
 2. **An IMAP test account.** Ideally your own Gmail with two-step verification enabled and an app password generated. The password can be revoked afterwards. With it:
 
    ```sh
-   genatrix account --add you@gmail.com
-   export GENATRIX_IMAP_PASSWORD=<the app password>
-   genatrix sync
+   genatrix account --add you@gmail.com     # asks for the app password, checks it, keeps it in the keychain
+   genatrix serve                            # or: genatrix service install
    ```
 
-   Nothing writes the password down: it is read from the environment each run until the keychain exists.
+   The password lives in the login keychain under "Genatrix mail" and nowhere else. `GENATRIX_IMAP_PASSWORD` in the environment overrides it, for development. `genatrix account --forget you@gmail.com` removes both the account and the password; what was fetched stays.
 
 Never paste credentials into the chat. Put them in a file outside the repository, readable only by your user, for example `~/.config/genatrix-dev/secrets.toml`. Spike scripts read from there and never log them.
 

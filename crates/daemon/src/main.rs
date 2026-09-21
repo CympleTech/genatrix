@@ -13,10 +13,12 @@ mod accounts;
 mod caller;
 mod config;
 mod ingest;
+mod keychain;
 mod keys;
 mod names;
 mod pipeline;
 mod seed;
+mod service;
 mod syncing;
 mod system;
 mod web;
@@ -63,14 +65,23 @@ enum Command {
     },
     /// Show what has left this device.
     Ledger,
-    /// Add a mailbox.
+    /// Add a mailbox, or sign in to one again. Asks for the app password,
+    /// checks it against the server, and keeps it in the keychain.
     Account {
         /// The address. For a well-known provider that is all it takes.
-        #[arg(long)]
-        add: String,
+        #[arg(long, required_unless_present = "forget")]
+        add: Option<String>,
         /// The IMAP server, when it cannot be worked out from the address.
         #[arg(long)]
         imap_host: Option<String>,
+        /// Remove a mailbox and its password. What was fetched stays.
+        #[arg(long, conflicts_with = "add")]
+        forget: Option<String>,
+    },
+    /// Run in the background from login onwards, or stop doing so.
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
     },
     /// Fetch mail for every account.
     Sync {
@@ -101,6 +112,20 @@ enum Command {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum ServiceAction {
+    /// Install a launch agent that runs `serve` for this data directory.
+    Install {
+        /// Port for the interface.
+        #[arg(long, default_value_t = 47600)]
+        port: u16,
+    },
+    /// Stop it and remove the launch agent.
+    Uninstall,
+    /// Say whether it is installed.
+    Status,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -121,7 +146,17 @@ async fn main() -> anyhow::Result<()> {
         Command::Timeline { limit } => timeline(&config, limit),
         Command::Ledger => ledger(&config),
         Command::Export { to } => export(&config, &to),
-        Command::Account { add, imap_host } => account(&config, &add, imap_host),
+        Command::Account {
+            add: Some(address),
+            imap_host,
+            ..
+        } => account(&config, &address, imap_host).await,
+        Command::Account {
+            forget: Some(address),
+            ..
+        } => forget_account(&config, &address),
+        Command::Account { .. } => anyhow::bail!("say which address: --add or --forget"),
+        Command::Service { action } => service(&config, &action),
         Command::Sync { limit } => sync(&config, limit).await,
         Command::Serve { bind, port, token } => {
             serve(&config, &web::Serving { bind, port, token }).await
@@ -220,28 +255,140 @@ async fn classify(config: &Config) -> anyhow::Result<()> {
 /// never written down. Design 08 replaces this with the keychain.
 const PASSWORD_ENV: &str = "GENATRIX_IMAP_PASSWORD";
 
-fn account(config: &Config, address: &str, imap_host: Option<String>) -> anyhow::Result<()> {
-    config.create_dirs()?;
+/// Where a mail password comes from: the environment for development,
+/// otherwise the keychain. Nothing else, and never a file.
+fn password_for(address: &str) -> anyhow::Result<Option<String>> {
+    if let Ok(password) = std::env::var(PASSWORD_ENV) {
+        return Ok(Some(password));
+    }
+    keychain::Keychain::mail().read(address)
+}
+
+/// Add a mailbox, or sign in to one again (design 05, "接入").
+///
+/// The password is asked for, tried against the server, and only then kept
+/// in the keychain. A refused password is not stored, because storing it
+/// would just move the same failure to the background where nobody sees
+/// it. The account's address becomes a handle of the user's own person, so
+/// direction is known from the first message.
+async fn account(config: &Config, address: &str, imap_host: Option<String>) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    use genatrix_connector::capability::Host;
+    use genatrix_connector_imap::{Credentials, Imap};
+    use genatrix_model::HandleKind;
+
+    let system = System::open(config.clone(), ticket_key(false)?)?;
     let path = config.accounts_path();
     let mut accounts = accounts::Accounts::load(&path)?;
     accounts.add_mail(address, imap_host)?;
-    accounts.save(&path)?;
+    let account = accounts.mail[&address.trim().to_lowercase()].clone();
 
-    let account = &accounts.mail[&address.trim().to_lowercase()];
-    println!("added {}", account.address);
+    println!("{}", account.address);
     println!("  reads from  {}:{}", account.imap_host, account.imap_port);
     match &account.smtp_host {
         Some(host) => println!("  sends via   {host}:{}", account.smtp_port),
         None => println!("  sends via   not configured, so this account cannot send"),
     }
+
+    let password = if let Ok(p) = std::env::var(PASSWORD_ENV) {
+        p
+    } else {
+        println!();
+        println!("On Gmail this is an app password, not your account password:");
+        println!("turn on two-step verification, then create one under App passwords.");
+        rpassword::prompt_password(format!("App password for {}: ", account.address))?
+    };
+    let password = password.trim().to_owned();
+    if password.is_empty() {
+        anyhow::bail!("no password given; nothing was changed");
+    }
+
+    print!("  checking    ");
+    std::io::stdout().flush()?;
+    let credentials = Credentials {
+        account: account.address.clone(),
+        password: password.clone(),
+        imap: Host::new(&account.imap_host, account.imap_port),
+    };
+    match Imap::connect(&credentials).await {
+        Ok(imap) => {
+            let _ = imap.logout().await;
+            println!("signed in");
+        }
+        Err(fault) => {
+            println!("failed");
+            anyhow::bail!("{}\nThe password was not stored.", fault.detail);
+        }
+    }
+
+    keychain::Keychain::mail().store(&account.address, &password)?;
+    println!("  password    in the keychain");
+    accounts.save(&path)?;
+
+    // The address is the user's own.
+    let me = system
+        .store
+        .person_for_handle(HandleKind::Email, &account.address, "")?;
+    if system.store.self_person()?.is_none() {
+        system.store.set_self(me)?;
+    }
+
     println!();
-    println!("No password was stored. Set {PASSWORD_ENV} when syncing:");
-    println!();
-    println!("  export {PASSWORD_ENV}=<your app password>");
-    println!("  genatrix sync");
-    println!();
-    println!("On Gmail that is an app password, not your account password:");
-    println!("turn on two-step verification, then create one under App passwords.");
+    println!("`genatrix serve` keeps this mailbox up to date while it runs;");
+    println!("`genatrix service install` makes that happen from login onwards.");
+    Ok(())
+}
+
+/// Remove a mailbox from the list and its password from the keychain. Items
+/// already fetched stay, as design 05 says for a stopped account.
+fn forget_account(config: &Config, address: &str) -> anyhow::Result<()> {
+    let path = config.accounts_path();
+    let mut accounts = accounts::Accounts::load(&path)?;
+    let address = address.trim().to_lowercase();
+    let listed = accounts.mail.remove(&address).is_some();
+    accounts.save(&path)?;
+    let had_password = keychain::Keychain::mail().forget(&address)?;
+    match (listed, had_password) {
+        (false, false) => println!("{address} was not known"),
+        _ => println!("{address} removed; what it fetched stays"),
+    }
+    Ok(())
+}
+
+fn service(config: &Config, action: &ServiceAction) -> anyhow::Result<()> {
+    match action {
+        ServiceAction::Install { port } => {
+            if !config.gateway_config_path().exists() {
+                anyhow::bail!(
+                    "nothing to install yet: {} has not been initialised",
+                    config.data_dir.display()
+                );
+            }
+            let path = service::install(&config.data_dir, *port)?;
+            println!("installed  {}", path.display());
+            println!("serving    http://127.0.0.1:{port}");
+            println!(
+                "log        {}",
+                config.data_dir.join("logs/genatrix.log").display()
+            );
+            println!("It starts now and at every login. `genatrix service uninstall` stops it.");
+        }
+        ServiceAction::Uninstall => {
+            if service::uninstall()? {
+                println!("stopped and removed");
+            } else {
+                println!("it was not installed");
+            }
+        }
+        ServiceAction::Status => {
+            if service::installed() {
+                println!("installed and known to launchd: {}", service::LABEL);
+            } else {
+                println!("not installed");
+            }
+        }
+    }
     Ok(())
 }
 
@@ -260,17 +407,19 @@ async fn sync(config: &Config, limit: usize) -> anyhow::Result<()> {
     if accounts.mail.is_empty() {
         anyhow::bail!("no accounts yet. `genatrix account --add you@example.com` adds one.");
     }
-    let password = std::env::var(PASSWORD_ENV).map_err(|_| {
-        anyhow::anyhow!(
-            "{PASSWORD_ENV} is not set. It is read each run and never written down:\n\n  \
-             export {PASSWORD_ENV}=<your app password>"
-        )
-    })?;
     let grant = accounts.grant();
     let started = std::time::Instant::now();
     let mut total = 0usize;
 
     for account in accounts.mail.values() {
+        let Some(password) = password_for(&account.address)? else {
+            anyhow::bail!(
+                "no password for {}. `genatrix account --add {}` asks for one and keeps it \
+                 in the keychain.",
+                account.address,
+                account.address
+            );
+        };
         let host = Host::new(&account.imap_host, account.imap_port);
         let capability = grant
             .account(&account.address)
@@ -283,7 +432,7 @@ async fn sync(config: &Config, limit: usize) -> anyhow::Result<()> {
         println!("{}", account.address);
         let credentials = Credentials {
             account: account.address.clone(),
-            password: password.clone(),
+            password,
             imap: host,
         };
         let imap = Imap::connect(&credentials).await?;
@@ -352,16 +501,30 @@ async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
 
     let system = std::sync::Arc::new(System::open(config.clone(), ticket_key(false)?)?);
     let accounts = accounts::Accounts::load(&config.accounts_path())?;
-    let password = std::env::var(PASSWORD_ENV).ok();
     let grant = accounts.grant();
 
     for account in accounts.mail.values() {
         let status = system.accounts.track(&account.address);
-        let Some(password) = password.clone() else {
-            status.send_replace(SyncState::NeedsLogin {
-                detail: format!("no password: set {PASSWORD_ENV} before `genatrix serve`"),
-            });
-            continue;
+        let password = match password_for(&account.address) {
+            Ok(Some(password)) => password,
+            Ok(None) => {
+                status.send_replace(SyncState::NeedsLogin {
+                    detail: format!(
+                        "no password stored; run `genatrix account --add {}`",
+                        account.address
+                    ),
+                });
+                continue;
+            }
+            Err(e) => {
+                status.send_replace(SyncState::Retrying {
+                    detail: format!("the keychain could not be read: {e}"),
+                    attempt: 0,
+                    next_in_secs: 0,
+                });
+                tracing::warn!(account = %account.address, error = %e, "keychain");
+                continue;
+            }
         };
         let host = Host::new(&account.imap_host, account.imap_port);
         let capability = match grant.account(&account.address) {

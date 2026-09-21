@@ -28,7 +28,7 @@ pub enum Ingested {
     AlreadyHad,
 }
 
-/// Store one fetched message.
+/// Turn one fetched message into an item, unless it is already here.
 pub fn mail(
     store: &Store,
     raw_files: &FileStore,
@@ -46,8 +46,89 @@ pub fn mail(
     }
     raw_files.put(&incoming.raw)?;
 
-    let mail = &incoming.mail;
+    let item = build(
+        store,
+        blob_files,
+        source,
+        raw.id,
+        &incoming.mail,
+        &incoming.thread_key,
+        None,
+    )?;
+    store.insert_item(&item)?;
+    Ok(Ingested::Added(item.id))
+}
 
+/// What reading a raw record again did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reprocessed {
+    /// Not mail, or the item it would produce is the one already there.
+    Unchanged,
+    /// The item was brought up to date in place; or created, when a crash
+    /// had left the raw record without one.
+    Updated(ItemId),
+    /// The bytes no longer parse. The old item stays.
+    Unreadable(String),
+}
+
+/// Derive an item from a raw record again, with today's normalization.
+///
+/// Design 01: the item is what the core makes of the raw record, and a
+/// better way of making it replaces the item in place. A version, one item
+/// superseding another, is reserved for a change upstream, which arrives as
+/// a new raw record. Sensitivity and identity stay; the text, the people,
+/// the conversation and the attachments are taken from the bytes again.
+/// This is how a better parser reaches mail fetched before it existed,
+/// without fetching anything twice.
+pub fn reprocess(
+    store: &Store,
+    raw_files: &FileStore,
+    blob_files: &FileStore,
+    raw: &Raw,
+) -> anyhow::Result<Reprocessed> {
+    if raw.content_type != "message/rfc822" {
+        return Ok(Reprocessed::Unchanged);
+    }
+    let bytes = raw_files.get(&raw.hash)?;
+    let mail = match genatrix_connector_imap::normalize(&bytes) {
+        Ok(mail) => mail,
+        Err(e) => return Ok(Reprocessed::Unreadable(e.to_string())),
+    };
+    let current = store.current_item(&raw.source)?;
+    let thread_key = genatrix_connector_imap::thread_key(&mail, None);
+    let mut item = build(
+        store,
+        blob_files,
+        raw.source.clone(),
+        raw.id,
+        &mail,
+        &thread_key,
+        None,
+    )?;
+    let Some(current) = current else {
+        store.insert_item(&item)?;
+        return Ok(Reprocessed::Updated(item.id));
+    };
+    if current.text == item.text && current.payload == item.payload && current.blobs == item.blobs {
+        return Ok(Reprocessed::Unchanged);
+    }
+    item.id = current.id;
+    store.rederive_item(&item)?;
+    Ok(Reprocessed::Updated(item.id))
+}
+
+/// The item a normalized message becomes: its people, its conversation,
+/// its attachments, its text. Idempotent in everything it touches besides
+/// the item itself, which the caller inserts.
+fn build(
+    store: &Store,
+    blob_files: &FileStore,
+    source: Source,
+    raw_id: genatrix_model::RawId,
+    mail: &genatrix_connector_imap::Mail,
+    thread_key: &str,
+    supersedes: Option<ItemId>,
+) -> anyhow::Result<Item> {
     // Everyone this message names. A first sighting of an address makes a
     // person; the core never guesses that two addresses are one person.
     let author = match &mail.from {
@@ -76,8 +157,8 @@ pub fn mail(
         kind: ThreadKind::MailThread,
         source: Source::new(
             Connector::Imap,
-            incoming.account.clone(),
-            incoming.thread_key.clone(),
+            source.account.clone(),
+            thread_key.to_owned(),
         ),
         title: Some(mail.subject.clone()),
         members: author
@@ -100,11 +181,11 @@ pub fn mail(
         blobs.push(hash);
     }
 
-    let item = Item {
+    Ok(Item {
         id: ItemId::new(),
         source,
-        raw_id: raw.id,
-        supersedes: None,
+        raw_id,
+        supersedes,
         thread_id,
         // A message with no date at all is dated when we first saw it, which
         // is wrong but knowable, rather than being dropped or dated zero.
@@ -134,7 +215,119 @@ pub fn mail(
             labels: vec![],
             headers: mail.headers.clone(),
         },
-    };
-    store.insert_item(&item)?;
-    Ok(Ingested::Added(item.id))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use genatrix_keys::{DbKey, MasterKey};
+    use genatrix_store::ItemQuery;
+
+    use super::*;
+
+    const RAW: &[u8] = b"From: Ann <ann@example.com>\r\n\
+To: me@example.com\r\n\
+Subject: lunch\r\n\
+Date: Mon, 1 Sep 2026 10:00:00 +0800\r\n\
+Message-ID: <a1@example.com>\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+Friday?\r\n";
+
+    fn stores() -> (tempfile::TempDir, Store, FileStore, FileStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let master = MasterKey::from_bytes([9; 32]);
+        let store = Store::open_in_memory(&DbKey::from_bytes([1; 32])).unwrap();
+        let raw_files = FileStore::open(dir.path().join("raw"), master.clone()).unwrap();
+        let blob_files = FileStore::open(dir.path().join("blobs"), master).unwrap();
+        (dir, store, raw_files, blob_files)
+    }
+
+    fn incoming(text: &str) -> Incoming {
+        let mut mail = genatrix_connector_imap::normalize(RAW).unwrap();
+        // As an older normalization might have left it.
+        mail.text = text.to_owned();
+        Incoming {
+            account: "me@example.com".into(),
+            external_id: "mid:a1@example.com".into(),
+            thread_key: "mid:a1@example.com".into(),
+            raw: RAW.to_vec(),
+            mail,
+        }
+    }
+
+    #[test]
+    fn reprocessing_a_clean_item_changes_nothing() {
+        let (_dir, store, raw_files, blob_files) = stores();
+        let clean = incoming("Friday?");
+        assert!(matches!(
+            mail(&store, &raw_files, &blob_files, &clean).unwrap(),
+            Ingested::Added(_)
+        ));
+        let raw = &store.all_raw().unwrap()[0];
+        assert_eq!(
+            reprocess(&store, &raw_files, &blob_files, raw).unwrap(),
+            Reprocessed::Unchanged
+        );
+        assert_eq!(store.all_items().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_better_parser_brings_the_item_up_to_date_in_place() {
+        let (_dir, store, raw_files, blob_files) = stores();
+        let dirty = incoming(":root { color-scheme: light } Friday?");
+        let Ingested::Added(id) = mail(&store, &raw_files, &blob_files, &dirty).unwrap() else {
+            panic!("first sight");
+        };
+        store
+            .set_item_sensitivity(id, Level::Secret)
+            .expect("a judgement, to see that it survives");
+        let raw = &store.all_raw().unwrap()[0];
+        assert_eq!(
+            reprocess(&store, &raw_files, &blob_files, raw).unwrap(),
+            Reprocessed::Updated(id),
+            "the same item, brought up to date"
+        );
+
+        let current = store
+            .query_items(&ItemQuery {
+                limit: 10,
+                version: genatrix_store::ItemVersion::Current,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].id, id);
+        assert_eq!(current[0].text, "Friday?");
+        assert_eq!(current[0].sensitivity, Level::Secret, "the judgement stays");
+        assert_eq!(store.all_items().unwrap().len(), 1, "no version was made");
+        assert_eq!(store.all_raw().unwrap().len(), 1, "raw is never touched");
+        assert_eq!(
+            store.search_items("Friday", 10).unwrap().len(),
+            1,
+            "the search index followed the text"
+        );
+
+        assert_eq!(
+            reprocess(&store, &raw_files, &blob_files, raw).unwrap(),
+            Reprocessed::Unchanged,
+            "and doing it again is a no-op"
+        );
+    }
+
+    #[test]
+    fn a_raw_record_without_an_item_gets_one() {
+        let (_dir, store, raw_files, blob_files) = stores();
+        // As a crash between storing the raw record and its item leaves it.
+        let clean = incoming("Friday?");
+        let source = Source::new(Connector::Imap, "me@example.com", "mid:a1@example.com");
+        let raw = Raw::describe(source, "message/rfc822", &clean.raw);
+        assert!(store.insert_raw(&raw).unwrap());
+        raw_files.put(&clean.raw).unwrap();
+        assert!(matches!(
+            reprocess(&store, &raw_files, &blob_files, &raw).unwrap(),
+            Reprocessed::Updated(_)
+        ));
+        assert_eq!(store.all_items().unwrap().len(), 1);
+    }
 }

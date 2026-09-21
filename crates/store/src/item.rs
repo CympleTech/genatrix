@@ -236,6 +236,37 @@ impl Store {
         Ok(())
     }
 
+    /// Replace what was derived from the raw record: conversation, people,
+    /// time, text, attachments, payload. Identity, source, raw record,
+    /// sensitivity and tombstone stay. This is what a better normalization
+    /// does to an existing item (design 01: a version is a new raw record,
+    /// a re-derivation is not).
+    pub fn rederive_item(&self, item: &Item) -> Result<()> {
+        let n = self.conn().execute(
+            "UPDATE item SET thread_id = ?2, occurred_at = ?3, occurred_ms = ?4,
+                 direction = ?5, author = ?6, recipients = ?7, text = ?8, blobs = ?9,
+                 kind = ?10, payload = ?11
+             WHERE id = ?1",
+            params![
+                item.id.to_string(),
+                item.thread_id.to_string(),
+                offset_to_col(item.occurred_at),
+                item.occurred_at.timestamp_millis(),
+                direction_to_col(item.direction),
+                item.author.map(|a| a.to_string()),
+                serde_json::to_string(&item.recipients)?,
+                item.text,
+                serde_json::to_string(&item.blobs)?,
+                kind_to_col(item.kind()),
+                serde_json::to_string(&item.payload)?,
+            ],
+        )?;
+        if n == 0 {
+            return Err(crate::error::Error::NotFound(format!("item {}", item.id)));
+        }
+        Ok(())
+    }
+
     /// Fetch an item by id.
     pub fn get_item(&self, id: ItemId) -> Result<Option<Item>> {
         self.conn()

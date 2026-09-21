@@ -58,6 +58,9 @@ enum Command {
     Seed,
     /// Judge the sensitivity of every item that has none yet.
     Classify,
+    /// Read every raw record again with today's normalization. An item
+    /// whose text or payload changes gets a new version; nothing is fetched.
+    Reprocess,
     /// Show the timeline.
     Timeline {
         /// How many items.
@@ -144,6 +147,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Init => init(&config),
         Command::Seed => seed(&config),
         Command::Classify => classify(&config).await,
+        Command::Reprocess => reprocess(&config),
         Command::Timeline { limit } => timeline(&config, limit),
         Command::Ledger => ledger(&config),
         Command::Export { to } => export(&config, &to),
@@ -255,6 +259,33 @@ async fn classify(config: &Config) -> anyhow::Result<()> {
 /// Environment variable carrying a mailbox password, read at sync time and
 /// never written down. Design 08 replaces this with the keychain.
 const PASSWORD_ENV: &str = "GENATRIX_IMAP_PASSWORD";
+
+/// Derive every item again from its raw record.
+fn reprocess(config: &Config) -> anyhow::Result<()> {
+    let system = System::open(config.clone(), ticket_key(false)?)?;
+    let raws = system.store.all_raw()?;
+    let (mut unchanged, mut updated, mut unreadable) = (0usize, 0usize, 0usize);
+    for raw in &raws {
+        match ingest::reprocess(&system.store, &system.raw_files, &system.blob_files, raw)? {
+            ingest::Reprocessed::Unchanged => unchanged += 1,
+            ingest::Reprocessed::Updated(_) => updated += 1,
+            ingest::Reprocessed::Unreadable(why) => {
+                unreadable += 1;
+                tracing::warn!(source = %raw.source.external_id, %why, "raw record no longer parses");
+            }
+        }
+    }
+    println!("{} raw record(s) read again", raws.len());
+    println!("  {updated} item(s) brought up to date");
+    println!("  {unchanged} unchanged");
+    if unreadable > 0 {
+        println!("  {unreadable} could not be parsed; their items stay as they were");
+    }
+    if updated > 0 {
+        println!("Their sensitivity was kept; `genatrix classify --again` is not a thing yet.");
+    }
+    Ok(())
+}
 
 /// Where a mail password comes from: the environment for development,
 /// otherwise the keychain. Nothing else, and never a file.

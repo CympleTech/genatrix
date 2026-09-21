@@ -70,7 +70,7 @@ impl System {
         let gateway = GatewayConfig::load(&gateway_path)?;
 
         config.create_dirs()?;
-        let master = keys::load_or_create(&config.key_path())?;
+        let master = keys::obtain(&config)?;
 
         let store = Arc::new(Store::open(config.store_path(), &master.db_key("store"))?);
         let ledger = Arc::new(Ledger::open(

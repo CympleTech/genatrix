@@ -218,6 +218,34 @@ fn push_text(out: &mut String, raw: &str) {
     }
 }
 
+/// Tidy a text part the sender wrote as text.
+///
+/// Plain text is taken as it is, with one exception: marketing mail pads
+/// its preview line with HTML entities for invisible characters, and puts
+/// the same padding in the plain-text part, where nothing will ever decode
+/// it. Those entities, and only those, are removed here. An entity that
+/// stands for something visible is left alone, because in plain text it is
+/// what the sender typed.
+#[must_use]
+pub fn clean_plain(text: &str) -> String {
+    const INVISIBLE_ENTITIES: &[&str] = &[
+        "&zwnj;", "&zwj;", "&shy;", "&nbsp;", "&#847;", "&#8203;", "&#8204;", "&#8205;", "&#8288;",
+        "&#65279;", "&#x34f;", "&#x34F;", "&#x200b;", "&#x200B;", "&#x200c;", "&#x200C;",
+        "&#x200d;", "&#x200D;", "&#xfeff;", "&#xFEFF;",
+    ];
+    let mut out = text.to_owned();
+    for entity in INVISIBLE_ENTITIES {
+        if out.contains(entity) {
+            out = out.replace(entity, if *entity == "&nbsp;" { " " } else { "" });
+        }
+    }
+    let out: String = out.chars().filter(|c| !is_invisible(*c)).collect();
+    // Only the padding's own blank lines go; the sender's layout stays.
+    out.trim_start_matches(['\n', '\r', ' ', '\t'])
+        .trim_end()
+        .to_owned()
+}
+
 /// Zero-width and joining characters: present in the bytes, absent on the
 /// screen, so absent from the text too.
 fn is_invisible(ch: char) -> bool {
@@ -299,6 +327,18 @@ fn tidy(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_padding_in_a_plain_text_part_is_removed_and_nothing_else_is() {
+        let padded =
+            "&#847;&zwnj; &#847;&zwnj; &#847;&zwnj;\n\nBig sale on now.\nTom &amp; Jerry &lt;3";
+        assert_eq!(
+            clean_plain(padded),
+            "Big sale on now.\nTom &amp; Jerry &lt;3",
+            "visible entities are the sender's text"
+        );
+        assert_eq!(clean_plain("a\u{200c}b\u{feff}"), "ab");
+    }
 
     #[test]
     fn an_ampersand_followed_by_multibyte_text_does_not_panic() {

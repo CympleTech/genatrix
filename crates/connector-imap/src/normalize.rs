@@ -105,7 +105,7 @@ pub fn normalize(raw: &[u8]) -> Result<Mail, NormalizeError> {
     let body = parsed
         .text_bodies()
         .find_map(|part| match &part.body {
-            PartType::Text(text) => Some(text.to_string()),
+            PartType::Text(text) => Some(text::clean_plain(text)),
             _ => None,
         })
         .filter(|t| !t.trim().is_empty())

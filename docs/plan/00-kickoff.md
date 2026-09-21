@@ -41,6 +41,20 @@ Design documents are written in Chinese for discussion with the author. Everythi
 | crabllm vendored and patched | done |
 | Model selection against a real evaluation set | not started; needs ingested data |
 
+## M2 status
+
+Design 10, "理解". Done when every item has a level and a summary, vector search works, the records page shows that nothing has left the device, and the author agrees with more than 90 of 100 sampled judgements.
+
+| Task | State |
+|---|---|
+| The core starts and supervises the inference process (sandboxed) and the gateway; the ticket key is generated per run and left in `run/ticket.key` for the other commands | done |
+| Classification runs inside `serve` as mail arrives | done. Measured on the real mailbox: the model reads about 150 prompt tokens a second, so the prompt carries sender, subject and the first 200 characters without links, about 1,300 tokens for a batch of ten, 9 seconds a batch, under a second an item; whole bodies took 18 seconds a batch. Quality not yet measured |
+| Model selection against a real evaluation set: the author's mailbox, 100 sampled judgements | not started; the first pass over the real mailbox is the input |
+| Chunking, embedder role, `sqlite-vec`, vector search on the page | not started |
+| Summarizer role; summary shown per item | not started |
+| Records page backed by the ledger for every model call | partly: the page reads the ledger; the item count of model calls will grow with the pipelines |
+| Telegram connector (non-blocking; due by the end of M3) | not started; the login spike needs application credentials |
+
 ## Spike status
 
 | Spike | Status | Blocked on |

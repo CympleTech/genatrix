@@ -242,6 +242,18 @@ uvx --from huggingface_hub hf download mlx-community/Qwen3-8B-4bit \
 (`uvx` runs it without installing anything. With the Hugging Face CLI already
 on your machine, `hf download` on its own does the same.)
 
+**That is all `serve` needs.** When the weights are at
+`$DEV/models/<model>`, with `<model>` the name `gateway.toml` gives the local
+model, the core starts the inference process under its no-network sandbox and
+the gateway with a fresh ticket key, restarts either when it stops, and
+judges new mail as it arrives. The status line on the page says `model
+ready`, or what is missing. `genatrix classify` from a terminal uses the
+same gateway while `serve` runs: the core leaves its key in
+`$DEV/run/ticket.key`, readable by you alone.
+
+The rest of this section runs the two processes by hand, for working on
+them.
+
 **Check the gateway configuration** before starting anything:
 
 ```sh
@@ -315,10 +327,10 @@ ticket twice and the second is refused. Ask a cloud model for something marked
 secret and it never leaves.
 
 **Judge what you collected.** With the gateway and the inference process
-running, and the same key in this terminal:
+running, whether by `serve` or by hand (in which case the same key has to be
+in this terminal):
 
 ```sh
-export GENATRIX_TICKET_KEY=<the same key the gateway got>
 ./target/release/genatrix --data-dir $DEV classify    # judge them, on this machine
 ./target/release/genatrix --data-dir $DEV timeline
 ./target/release/genatrix --data-dir $DEV ledger

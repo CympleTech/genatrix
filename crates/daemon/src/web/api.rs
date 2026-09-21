@@ -74,10 +74,15 @@ struct Status {
     bytes_left_device: usize,
     bytes_on_disk: u64,
     data_dir: String,
+    model: crate::models::ModelState,
+    model_text: String,
 }
 
 async fn status(State(system): Shared) -> Result<Json<Status>, ApiError> {
+    let model = system.model_state.borrow().clone();
     Ok(Json(Status {
+        model_text: model.describe(),
+        model,
         items: system.store.count_items()?,
         ledger_entries: system.ledger.len()?,
         cloud_enabled: system.gate.cloud_enabled(),

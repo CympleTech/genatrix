@@ -102,9 +102,24 @@ async fn chat(State(app): State<Arc<App>>, Json(mut req): Json<ChatCompletionReq
             Err(e) => error(StatusCode::BAD_GATEWAY, "inference_error", e.to_string()),
         }
     } else {
+        let started = std::time::Instant::now();
         match app.provider.chat_completion(&req).await {
             Ok(mut resp) => {
                 resp.model = name;
+                // Design 04 gives every role a latency budget; this is where
+                // the truth about it is written down. Counts only, never
+                // content.
+                let (prompt, completion) = resp
+                    .usage
+                    .as_ref()
+                    .map_or((0, 0), |u| (u.prompt_tokens, u.completion_tokens));
+                tracing::info!(
+                    prompt_tokens = prompt,
+                    completion_tokens = completion,
+                    max_tokens = req.max_tokens.unwrap_or(0),
+                    secs = started.elapsed().as_secs_f32(),
+                    "completion"
+                );
                 Json(resp).into_response()
             }
             Err(e) => error(StatusCode::BAD_GATEWAY, "inference_error", e.to_string()),

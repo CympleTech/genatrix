@@ -86,6 +86,12 @@ impl Config {
         self.data_dir.join("gateway.toml")
     }
 
+    /// Where a running daemon leaves its ticket key for the other commands.
+    #[must_use]
+    pub fn ticket_key_path(&self) -> PathBuf {
+        self.data_dir.join("run").join("ticket.key")
+    }
+
     /// Create the directories this layout needs.
     pub fn create_dirs(&self) -> std::io::Result<()> {
         for dir in [

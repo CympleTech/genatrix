@@ -42,7 +42,7 @@ async function loadStatus() {
       ? 'nothing has left this device'
       : `${s.bytes_left_device} bytes have left this device`;
     $('#status').textContent =
-      `${s.items} items · cloud ${s.cloud_enabled ? 'on' : 'off'} · ${bytes}`;
+      `${s.items} items · model ${s.model_text} · cloud ${s.cloud_enabled ? 'on' : 'off'} · ${bytes}`;
     // New mail shows up on the timeline without a reload.
     if (knownItems !== null && s.items !== knownItems && $('#timeline').classList.contains('is-on')) {
       loadTimeline();

@@ -22,6 +22,7 @@ use genatrix_agent::run::{ModelCaller, RunContext, RunError};
 use genatrix_gate::gate::{Initiator, Message, Request};
 use genatrix_gate::rules::{Candidate, RuleSet};
 use genatrix_llm::ticket::Purpose;
+use genatrix_model::Payload;
 use genatrix_model::{
     Annotation, AnnotationKind, Item, Level, Producer, annotation::effective_level,
 };
@@ -169,7 +170,7 @@ async fn ask<C: ModelCaller>(
         .map(|(i, (item, _))| EnvelopeSource {
             id: (i + 1).to_string(),
             label: format!("message {}", i + 1),
-            body: item.text.clone(),
+            body: excerpt(item),
         })
         .collect();
     let zone = envelope::data_zone(&sources);
@@ -204,6 +205,62 @@ async fn ask<C: ModelCaller>(
         parse_labels(&reply.text, expected)
     })
     .await
+}
+
+/// How much of a message the model sees. Design 04 gives the classifier a
+/// budget of a few hundred milliseconds per item, and on this hardware the
+/// model reads about 160 prompt tokens a second, so a batch of ten can carry
+/// roughly 800 tokens in all: a few dozen per message. Whole bodies of
+/// marketing mail run to thousands of tokens each and blew that budget by
+/// two orders of magnitude on the first real mailbox. The rules have already
+/// read the whole text for the patterns that matter most; the model's
+/// question is coarser, and who wrote it, what it is about and how it opens
+/// answer it. Links go: they are the most token-dense and least telling
+/// part of a message.
+const EXCERPT_CHARS: usize = 200;
+
+/// Sender, subject and the opening of the text, without links.
+fn excerpt(item: &Item) -> String {
+    let mut out = String::new();
+    if let Payload::Mail { subject, from, .. } = &item.payload {
+        if !from.is_empty() {
+            out.push_str("From: ");
+            out.push_str(from);
+            out.push('\n');
+        }
+        if !subject.is_empty() {
+            out.push_str("Subject: ");
+            out.push_str(subject);
+            out.push('\n');
+        }
+    }
+    let without_links = without_links(&item.text);
+    let body: String = without_links.chars().take(EXCERPT_CHARS).collect();
+    out.push_str(body.trim());
+    if without_links.chars().count() > EXCERPT_CHARS {
+        out.push_str(" …");
+    }
+    out
+}
+
+/// The text with every `http(s)://…` run removed and whitespace collapsed.
+fn without_links(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("http") {
+        let (before, tail) = rest.split_at(at);
+        if tail.starts_with("http://") || tail.starts_with("https://") {
+            out.push_str(before);
+            let end = tail.find(char::is_whitespace).unwrap_or(tail.len());
+            rest = &tail[end..];
+        } else {
+            out.push_str(before);
+            out.push_str("http");
+            rest = &tail[4..];
+        }
+    }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Read `N: label` lines. Missing lines are not invented: an item the model
@@ -337,6 +394,16 @@ fn store_error(e: &genatrix_store::Error) -> genatrix_ledger::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn links_go_and_the_opening_stays() {
+        let text = "Sale ends midnight ( https://click.example/u/?qs=abc123 ) View in browser https://x.example/y\nKia ora";
+        assert_eq!(
+            without_links(text),
+            "Sale ends midnight ( ) View in browser Kia ora"
+        );
+        assert_eq!(without_links("an http proxy"), "an http proxy");
+    }
 
     #[test]
     fn labels_are_read_by_position() {

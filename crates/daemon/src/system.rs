@@ -36,6 +36,10 @@ pub struct System {
     pub caller: GatewayCaller<StoreNames>,
     /// How each account's sync is doing, for the interface.
     pub accounts: crate::syncing::Accounts,
+    /// The gateway's configuration: which models exist and where they run.
+    pub gateway_config: GatewayConfig,
+    /// How the model side is doing, for the interface and the pipelines.
+    pub model_state: tokio::sync::watch::Sender<crate::models::ModelState>,
 }
 
 impl std::fmt::Debug for System {
@@ -119,6 +123,8 @@ impl System {
             gate,
             caller,
             accounts: crate::syncing::Accounts::default(),
+            gateway_config: gateway,
+            model_state: crate::models::idle_state(),
         })
     }
 }

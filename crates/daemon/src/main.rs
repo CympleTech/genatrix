@@ -16,6 +16,7 @@ mod connectors;
 mod ingest;
 mod keychain;
 mod keys;
+mod models;
 mod names;
 mod pipeline;
 mod seed;
@@ -173,20 +174,47 @@ async fn main() -> anyhow::Result<()> {
 
 /// A key is needed for anything that might call a model. Commands that only
 /// read use a throwaway one: nothing they do can mint a usable ticket.
-fn ticket_key(required: bool) -> anyhow::Result<TicketKey> {
-    match std::env::var(KEY_ENV) {
-        Ok(hex) => Ok(TicketKey::from_hex(&hex)?),
-        Err(_) if !required => Ok(TicketKey::generate()?),
-        Err(_) => anyhow::bail!(
-            "{KEY_ENV} is not set. Set the same value the gateway was started with:\n\n  \
-             export {KEY_ENV}=<the gateway's key>\n\n\
-             It is the secret that lets this process mint permission to send."
-        ),
+/// The ticket key: from the environment, else the one the running daemon
+/// left in `run/ticket.key`, else a fresh one, or an error when a command
+/// cannot do without the gateway's.
+fn ticket_key(config: &Config, required: bool) -> anyhow::Result<TicketKey> {
+    if let Ok(hex) = std::env::var(KEY_ENV) {
+        return Ok(TicketKey::from_hex(&hex)?);
     }
+    let left_behind = config.ticket_key_path();
+    if let Ok(hex) = std::fs::read_to_string(&left_behind) {
+        return Ok(TicketKey::from_hex(hex.trim())?);
+    }
+    if !required {
+        return Ok(TicketKey::generate()?);
+    }
+    anyhow::bail!(
+        "{KEY_ENV} is not set and {} does not exist. Either `genatrix serve` is running, \
+         which leaves its key there, or set the same value the gateway was started with:\n\n  \
+         export {KEY_ENV}=<the gateway's key>\n\n\
+         It is the secret that lets this process mint permission to send.",
+        left_behind.display()
+    )
+}
+
+/// Leave the key where the other commands of this user can find it while
+/// the daemon runs. Readable by this user only, like the sockets beside it.
+fn leave_ticket_key(config: &Config, key: &TicketKey) -> anyhow::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = config.ticket_key_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut file = std::fs::File::create(&path)?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    writeln!(file, "{}", key.to_hex())?;
+    Ok(())
 }
 
 fn init(config: &Config) -> anyhow::Result<()> {
-    let system = System::open(config.clone(), ticket_key(false)?)?;
+    let system = System::open(config.clone(), ticket_key(config, false)?)?;
     println!("data directory  {}", config.data_dir.display());
     println!("store           {} item(s)", system.store.count_items()?);
     println!(
@@ -209,7 +237,7 @@ fn init(config: &Config) -> anyhow::Result<()> {
 }
 
 fn seed(config: &Config) -> anyhow::Result<()> {
-    let system = System::open(config.clone(), ticket_key(false)?)?;
+    let system = System::open(config.clone(), ticket_key(config, false)?)?;
     let added = seed::run(&system.store, &system.raw_files)?;
     println!(
         "added {added} of {} sample item(s); {} in the store, {} bytes of raw records on disk",
@@ -221,7 +249,7 @@ fn seed(config: &Config) -> anyhow::Result<()> {
 }
 
 async fn classify(config: &Config) -> anyhow::Result<()> {
-    let system = System::open(config.clone(), ticket_key(true)?)?;
+    let system = System::open(config.clone(), ticket_key(config, true)?)?;
     if !system.caller.gateway_healthy().await {
         anyhow::bail!(
             "the gateway is not answering at {}. Start it, and the inference \
@@ -235,11 +263,24 @@ async fn classify(config: &Config) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let report = pipeline::classify::run(&store, system.gate.rules(), &mut ctx).await;
     let steps = ctx.steps();
-    match &report {
-        Ok(_) => ctx.done()?,
-        Err(e) => ctx.stopped(e.to_string())?,
+    let report = match report {
+        Ok(report) => {
+            ctx.done()?;
+            report
+        }
+        Err(genatrix_agent::run::RunError::OutOfSteps { max }) => {
+            ctx.stopped("paused at the step budget")?;
+            println!(
+                "paused after {max} model call(s), the budget of one run; \
+                 run `genatrix classify` again to continue where this left off."
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            ctx.stopped(e.to_string())?;
+            return Err(e.into());
+        }
     };
-    let report = report?;
 
     println!(
         "classified {} item(s) in {:.1?}",
@@ -264,7 +305,7 @@ const PASSWORD_ENV: &str = "GENATRIX_IMAP_PASSWORD";
 
 /// Derive every item again from its raw record.
 fn reprocess(config: &Config) -> anyhow::Result<()> {
-    let system = System::open(config.clone(), ticket_key(false)?)?;
+    let system = System::open(config.clone(), ticket_key(config, false)?)?;
     let raws = system.store.all_raw()?;
     let (mut unchanged, mut updated, mut unreadable) = (0usize, 0usize, 0usize);
     for raw in &raws {
@@ -312,7 +353,7 @@ async fn account(config: &Config, address: &str, imap_host: Option<String>) -> a
     use genatrix_connector_imap::{Credentials, Imap};
     use genatrix_model::HandleKind;
 
-    let system = System::open(config.clone(), ticket_key(false)?)?;
+    let system = System::open(config.clone(), ticket_key(config, false)?)?;
     let path = config.accounts_path();
     let mut accounts = accounts::Accounts::load(&path)?;
     accounts.add_mail(address, imap_host)?;
@@ -444,7 +485,7 @@ async fn sync(config: &Config, limit: usize) -> anyhow::Result<()> {
     use genatrix_connector_imap::sync::Sync as MailSync;
     use genatrix_connector_imap::{Credentials, Imap, Watcher};
 
-    let system = std::sync::Arc::new(System::open(config.clone(), ticket_key(false)?)?);
+    let system = std::sync::Arc::new(System::open(config.clone(), ticket_key(config, false)?)?);
     let accounts = accounts::Accounts::load(&config.accounts_path())?;
     if accounts.mail.is_empty() {
         anyhow::bail!("no accounts yet. `genatrix account --add you@example.com` adds one.");
@@ -530,6 +571,63 @@ fn rate_per_minute(count: usize, d: std::time::Duration) -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+/// Judge the sensitivity of new items as they arrive, while the model side
+/// is up. Runs the classification pipeline whenever the item count has
+/// moved since the last pass; the pipeline itself skips what the model has
+/// already judged (design 02: every item gets a level, on this machine).
+async fn judge_as_mail_arrives(system: std::sync::Arc<System>) {
+    let mut judged_at_count: Option<u64> = None;
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+        if !system.model_state.borrow().is_ready() {
+            continue;
+        }
+        let count = match system.store.count_items() {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not count items");
+                continue;
+            }
+        };
+        if judged_at_count == Some(count) {
+            continue;
+        }
+        let mut ctx = match RunContext::begin(&system.ledger, &system.caller, "classify", 64) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not begin a classification run");
+                continue;
+            }
+        };
+        let report = pipeline::classify::run(&system.store, system.gate.rules(), &mut ctx).await;
+        match report {
+            Ok(report) => {
+                let _ = ctx.done();
+                if report.asked > 0 || report.by_rule > 0 {
+                    tracing::info!(
+                        seen = report.seen,
+                        by_rule = report.by_rule,
+                        asked = report.asked,
+                        raised = report.raised,
+                        "classified"
+                    );
+                }
+                judged_at_count = Some(count);
+            }
+            Err(genatrix_agent::run::RunError::OutOfSteps { .. }) => {
+                // The collar, not a failure: a mailbox of thousands takes
+                // several passes, and what this one judged stays judged.
+                let _ = ctx.stopped("paused at the step budget; more next pass");
+                tracing::info!("classification paused at its step budget; continuing next pass");
+            }
+            Err(e) => {
+                let _ = ctx.stopped(e.to_string());
+                tracing::warn!(error = %e, "classification pass failed; will try again");
+            }
+        }
+    }
+}
+
 /// Serve the interface and keep every account up to date while it runs.
 ///
 /// The mail connector runs in its own sandboxed process (design 05) when
@@ -544,7 +642,12 @@ async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
     use genatrix_connector::capability::Host;
     use genatrix_connector_imap::{Credentials, Imap, run_account};
 
-    let system = std::sync::Arc::new(System::open(config.clone(), ticket_key(false)?)?);
+    let key = ticket_key(config, false)?;
+    let system = std::sync::Arc::new(System::open(config.clone(), key.clone())?);
+    leave_ticket_key(config, &key)?;
+    models::start(system.clone(), &key)?;
+    tokio::spawn(judge_as_mail_arrives(system.clone()));
+
     let accounts = accounts::Accounts::load(&config.accounts_path())?;
     let grant = accounts.grant();
 
@@ -632,7 +735,7 @@ async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
 }
 
 fn timeline(config: &Config, limit: u32) -> anyhow::Result<()> {
-    let system = System::open(config.clone(), ticket_key(false)?)?;
+    let system = System::open(config.clone(), ticket_key(config, false)?)?;
     let items = system.store.query_items(&ItemQuery {
         limit,
         version: ItemVersion::Current,
@@ -669,7 +772,7 @@ fn timeline(config: &Config, limit: u32) -> anyhow::Result<()> {
 /// records and attachments as files. Not the database, the model, so another
 /// implementation can read it. Plain text, which the output says out loud.
 fn export(config: &Config, to: &std::path::Path) -> anyhow::Result<()> {
-    let system = System::open(config.clone(), ticket_key(false)?)?;
+    let system = System::open(config.clone(), ticket_key(config, false)?)?;
     system.store.checkpoint()?;
     let summary = system.store.export_to(to)?;
 
@@ -724,7 +827,7 @@ fn hashes_in(config: &Config, which: &str) -> Vec<genatrix_model::ContentHash> {
 }
 
 fn ledger(config: &Config) -> anyhow::Result<()> {
-    let system = System::open(config.clone(), ticket_key(false)?)?;
+    let system = System::open(config.clone(), ticket_key(config, false)?)?;
     let verified = system.ledger.verify()?;
 
     let egress = system.ledger.entries(&EntryFilter {

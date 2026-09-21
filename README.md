@@ -163,7 +163,9 @@ under "Genatrix mail". On Gmail that is an app password: turn on two-step
 verification, then create one under App passwords. A refused password is not
 stored. Run the same command again to sign in again after changing the
 password; `account --forget you@gmail.com` removes the account and its
-password and keeps what was fetched.
+password and keeps what was fetched. Run it in a terminal on the machine
+itself, not over SSH: the login keychain refuses to add an item from a
+session that cannot show a dialog (`User interaction is not allowed`).
 
 **Run it.** For a look, in a terminal:
 

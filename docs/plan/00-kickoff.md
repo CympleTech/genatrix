@@ -30,7 +30,7 @@ Design documents are written in Chinese for discussion with the author. Everythi
 | `genatrix-connector`: capabilities, checkpoints, backfill, fault severity | done |
 | `genatrix-connector-imap`: normalization, the sync engine against a fake server, the IMAP wire layer | done; verified against Gmail |
 | Accounts, mail ingestion, `account` and `sync` commands | done |
-| Realtime sync: persisted cursors, one connection alternating catch-up and backfill, IDLE with a polling fallback, reconnection with backoff, per-account state in `serve` and the page | done; the seven-day soak has not started |
+| Realtime sync: persisted cursors, one connection alternating catch-up and backfill, IDLE with a polling fallback, reconnection with backoff, per-account state in `serve` and the page | done; the seven-day soak runs on the author's machine from the day the service was installed |
 | Sign-in: `account --add` verifies the password against the server and keeps it in the keychain; `--forget` removes it; the address becomes a handle of the user's own person | done; via `/usr/bin/security` until the signed application shell |
 | `service install`: a launchd agent that runs the shell, or `serve` alone, from login onwards; a crash restarts it, a quit from the menu does not | done |
 | Master key in the keychain | done for the default data directory, with a one-time move from the old key file; a `--data-dir` development directory keeps the key in a file and says so |

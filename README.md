@@ -60,12 +60,16 @@ else follows from that.
 
 ## Status
 
-Early, but the whole path works. Storage, the ledger, the sensitivity rules,
-redaction, the egress gate, the local inference process, the gateway, the
-agent layer, a core that assembles them, and a local web interface. With
-synthetic items in the store, the classification pipeline judges them on this
-machine and the records page reports that nothing left the device. The mail
-and chat connectors come next.
+Milestone one, collecting mail, is built and in its soak. A Gmail account
+signs in once, its history arrives newest first, new mail appears within
+seconds, and it all runs from login as a background program with a menu bar
+icon. The connector runs in its own sandboxed process; the core starts it and
+stores what it brings. Storage, the ledger, the sensitivity rules, redaction,
+the egress gate, the local inference process, the gateway, the agent layer
+and a local web interface are in place underneath. With synthetic items in
+the store, the classification pipeline judges them on this machine and the
+records page reports that nothing left the device. Understanding the mail,
+milestone two, comes next; Telegram alongside it.
 
 There is no installer yet. What follows is how to run the pieces that exist,
 from a source checkout. When it ships, none of this will be necessary: design
@@ -90,34 +94,48 @@ later ones are quick.
 
 ## Running it
 
+This is the developer's path: a checkout, a terminal, and the pieces started
+by hand where the finished application (design 09) will do it for you. The
+end state is the same: a background program that starts at login, a menu bar
+icon, and a local page with your mail on it.
+
 **Build.**
 
 ```sh
 cargo build --release --workspace
+swift build -c release --package-path apps/menubar
+cp apps/menubar/.build/release/genatrix-menubar target/release/
 ```
 
-That builds the core (`genatrix`), the mail connector it starts
-(`genatrix-imap`, which has to be beside it), the model gateway and the
-inference process.
+The first build compiles SQLCipher, OpenSSL and the MLX Swift package and
+takes several minutes; later ones are quick. It produces the core
+(`genatrix`), the mail connector it starts (`genatrix-imap`), the model
+gateway (`genatrix-llm`) and the inference process (`genatrix-infer`). The
+Swift build produces the menu bar shell (`genatrix-menubar`). The connector
+and the shell have to sit beside the core: the core starts what it finds
+next to itself.
 
-**Get a model.** Any MLX model directory works; this is the one the local
-model spike measured, about 4.3 GB.
+**Choose a data directory.** Everything Genatrix keeps lives under one
+directory. The default is `~/Library/Application Support/Genatrix`, and there
+the master key lives in the login keychain, so a copy of the directory is
+ciphertext without this account. Any other directory, named with
+`--data-dir`, is a development one: the master key stays in a file beside the
+data, and the core says so when it opens it. The examples below use a
+development directory; drop `--data-dir` for the real one.
 
 ```sh
-mkdir -p ~/.genatrix-dev/run
-uvx --from huggingface_hub hf download mlx-community/Qwen3-8B-4bit \
-  --local-dir ~/.genatrix-dev/models/qwen3-8b-4bit
+DEV=~/.genatrix-dev
+mkdir -p $DEV/run
 ```
 
-(`uvx` runs it without installing anything. With the Hugging Face CLI already
-on your machine, `hf download` on its own does the same.)
-
-**Write a gateway configuration.** Socket paths have to be absolute, and
-macOS caps them at 104 bytes, so let the shell fill in your home directory
-rather than typing it:
+**Write a gateway configuration.** The core insists on this file before it
+creates anything, because it has to agree with the gateway about which
+models exist and where each one runs, even on a day no model is called.
+Socket paths have to be absolute, and macOS caps them at 104 bytes, so let
+the shell fill in your home directory rather than typing it:
 
 ```sh
-cat > ~/.genatrix-dev/gateway.toml <<EOF
+cat > $DEV/gateway.toml <<EOF
 socket = "$HOME/.genatrix-dev/run/gateway.sock"
 
 [[models]]
@@ -130,10 +148,102 @@ endpoint = { kind = "local_socket", path = "$HOME/.genatrix-dev/run/infer.sock" 
 EOF
 ```
 
-Check it before starting anything:
+**Initialise, and add your mailbox.**
 
 ```sh
-./target/release/genatrix-llm --config ~/.genatrix-dev/gateway.toml --check
+./target/release/genatrix --data-dir $DEV init
+./target/release/genatrix --data-dir $DEV account --add you@gmail.com
+```
+
+`init` creates the keys, the two databases and the rules file. `account
+--add` works out the server from the address for the common providers
+(`--imap-host` for the others), asks for the password without echoing it,
+tries it against the server, and only then keeps it, in the login keychain
+under "Genatrix mail". On Gmail that is an app password: turn on two-step
+verification, then create one under App passwords. A refused password is not
+stored. Run the same command again to sign in again after changing the
+password; `account --forget you@gmail.com` removes the account and its
+password and keeps what was fetched.
+
+**Run it.** For a look, in a terminal:
+
+```sh
+./target/release/genatrix --data-dir $DEV serve
+# Genatrix is at http://127.0.0.1:7717
+```
+
+For good, as the background program design 09 describes:
+
+```sh
+./target/release/genatrix --data-dir $DEV service install
+```
+
+That writes a launch agent for your user
+(`~/Library/LaunchAgents/xyz.dpt.genatrix.plist`) and starts it. From then on
+Genatrix starts when you log in. With the shell beside the core the agent
+runs the shell, which puts an icon in the menu bar and runs the core behind
+it; without the shell it runs `serve` alone. The icon has four looks, up to
+date, syncing, needs you, error; clicking it lists each account with what it
+is doing, opens the page, or quits. Quitting from the menu stops the core
+too and stays stopped until the next login; a crash is restarted. The log is
+at `$DEV/logs/genatrix.log`. `service status` says whether it is installed,
+`service uninstall` stops and removes it. After a rebuild, run `service
+install` again: it replaces the agent and restarts.
+
+What happens once it runs: the core starts the mail connector in its own
+process under a macOS sandbox that allows outbound connections only on the
+ports the accounts were granted (993 for IMAP, 587 for submission), name
+resolution, and the core's own socket; the connector cannot read the data
+directory or the keychain files, and cannot start another program. The
+profile it runs under is written to `$DEV/run/imap.sb` for you to read. The
+connector walks the mailbox newest first, so this week's mail is on the page
+within minutes, and takes new mail as it arrives: within seconds on servers
+with IDLE, within a minute elsewhere. Progress and state per account are on
+the page and in the menu.
+
+**Open the interface.** A timeline you can search and filter, each item
+expanding to show its full text and every judgement made about it, with who
+made it and when; a records page that opens with how many bytes have left
+the device and lists every model call; and a line per account at the top.
+
+To look at it from a phone, bind somewhere else. That needs an access token,
+which is generated per run and printed inside the link:
+
+```sh
+./target/release/genatrix --data-dir $DEV serve --bind 0.0.0.0
+# Genatrix is at http://192.168.1.20:7717/?token=6a5915554214...
+```
+
+Loopback needs no token, because anyone who can reach it already has an
+account on the machine. Any other address does, because the page has no login
+and everything in it is your mail. It is still plain HTTP with one shared
+secret: fine on a network you trust, not fine on one you do not. Pass
+`--token` to keep a link working across restarts.
+
+**Read it all again.** When normalization improves, `genatrix reprocess`
+derives every item again from its stored raw record, in place; nothing is
+fetched.
+
+### The model side
+
+Sensitivity judgement, and everything after it, needs the local model. None
+of this is required for collecting and searching mail.
+
+**Get a model.** Any MLX model directory works; this is the one the local
+model spike measured, about 4.3 GB.
+
+```sh
+uvx --from huggingface_hub hf download mlx-community/Qwen3-8B-4bit \
+  --local-dir $DEV/models/qwen3-8b-4bit
+```
+
+(`uvx` runs it without installing anything. With the Hugging Face CLI already
+on your machine, `hf download` on its own does the same.)
+
+**Check the gateway configuration** before starting anything:
+
+```sh
+./target/release/genatrix-llm --config $DEV/gateway.toml --check
 ```
 
 The check refuses a configuration that could not work, rather than letting it
@@ -144,11 +254,7 @@ that may never serve it; a purpose with no local model to fall back to.
 **Start the inference process**, inside a sandbox that removes its network
 access. It prints the profile it wants; hand that to `sandbox-exec`.
 
-Run these from the checkout. `$DEV` is just shorthand for the data directory.
-
 ```sh
-DEV=~/.genatrix-dev
-
 ./target/release/genatrix-infer \
   --model-dir $DEV/models/qwen3-8b-4bit --model-name qwen3-8b-4bit \
   --socket $DEV/run/infer.sock --print-sandbox-profile > $DEV/infer.sb
@@ -170,14 +276,14 @@ be nothing to serve.
 
 ```sh
 export GENATRIX_TICKET_KEY=$(openssl rand -hex 32)
-./target/release/genatrix-llm --config ~/.genatrix-dev/gateway.toml
+./target/release/genatrix-llm --config $DEV/gateway.toml
 ```
 
 **Try it.** The gateway answers only to a ticket that covers these exact
 bytes, so a request without one is refused:
 
 ```sh
-curl --unix-socket ~/.genatrix-dev/run/gateway.sock \
+curl --unix-socket $DEV/run/gateway.sock \
   http://localhost/v1/chat/completions \
   -H 'content-type: application/json' \
   -d '{"model":"local","messages":[{"role":"user","content":"hello"}]}'
@@ -195,7 +301,7 @@ BODY='{"model":"local","max_tokens":64,"messages":[{"role":"user","content":"hel
 TICKET=$(printf '%s' "$BODY" | ./target/release/examples/mint_ticket \
   --target local --purpose summarize --level personal)
 
-curl --unix-socket ~/.genatrix-dev/run/gateway.sock \
+curl --unix-socket $DEV/run/gateway.sock \
   http://localhost/v1/chat/completions \
   -H 'content-type: application/json' \
   -H "x-genatrix-ticket: $TICKET" \
@@ -206,16 +312,11 @@ Change one byte of the body and the same ticket stops working. Send the same
 ticket twice and the second is refused. Ask a cloud model for something marked
 secret and it never leaves.
 
-**See the whole thing work.** With the gateway and the inference process
-running, in a third terminal:
+**Judge what you collected.** With the gateway and the inference process
+running, and the same key in this terminal:
 
 ```sh
 export GENATRIX_TICKET_KEY=<the same key the gateway got>
-DEV=~/.genatrix-dev
-
-cp ~/.genatrix-dev/gateway.toml $DEV/          # the core reads the same registry
-./target/release/genatrix --data-dir $DEV init
-./target/release/genatrix --data-dir $DEV seed        # synthetic mail and chat
 ./target/release/genatrix --data-dir $DEV classify    # judge them, on this machine
 ./target/release/genatrix --data-dir $DEV timeline
 ./target/release/genatrix --data-dir $DEV ledger
@@ -228,31 +329,8 @@ needed the model. `ledger` opens with the line design 06 asks for:
 0 bytes have left this device.
 ```
 
-**Open the interface.**
-
-```sh
-./target/release/genatrix --data-dir $DEV serve
-# Genatrix is at http://127.0.0.1:7717
-```
-
-A timeline you can search and filter, each item expanding to show its full
-text and every judgement made about it, with who made it and when; and a
-records page that opens with how many bytes have left the device and lists
-every model call.
-
-To look at it from a phone, bind somewhere else. That needs an access token,
-which is generated per run and printed inside the link:
-
-```sh
-./target/release/genatrix --data-dir $DEV serve --bind 0.0.0.0
-# Genatrix is at http://192.168.1.20:7717/?token=6a5915554214...
-```
-
-Loopback needs no token, because anyone who can reach it already has an
-account on the machine. Any other address does, because the page has no login
-and everything in it is your mail. It is still plain HTTP with one shared
-secret: fine on a network you trust, not fine on one you do not. Pass
-`--token` to keep a link working across restarts.
+`genatrix seed` puts synthetic mail and chat in, for working on the pipeline
+before an account exists.
 
 ## Configuring it
 

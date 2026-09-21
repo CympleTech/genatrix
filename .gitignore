@@ -3,3 +3,4 @@
 .DS_Store
 /vendor/**/target
 /vendor/crabllm/mlx/.build
+apps/menubar/.build/

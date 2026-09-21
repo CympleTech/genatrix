@@ -104,7 +104,15 @@ pub fn start_mail(
         .flat_map(|a| a.capability.hosts.iter().map(|h| h.port))
         .collect();
     let profile_path = run_dir.join("imap.sb");
-    std::fs::write(&profile_path, sandbox::profile(&ports, &run_dir)?)?;
+    std::fs::write(
+        &profile_path,
+        sandbox::profile(&sandbox::Confinement {
+            ports: &ports,
+            data_dir: &system.config.data_dir,
+            run_dir: &run_dir,
+            binary: &binary,
+        })?,
+    )?;
 
     let server = Arc::new(Server {
         system,

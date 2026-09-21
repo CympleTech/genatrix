@@ -27,7 +27,12 @@ type. Connectors depend only on `model` and the connector protocol crate.
 `vendor/crabllm/` is a pinned third-party tree with its own `CLAUDE.md` and
 style rules. Those apply to that code, not to Genatrix. Local changes to it are
 kept as patches under `vendor/crabllm/patches/` and recorded in
-`vendor/crabllm/GENATRIX-VENDOR.md`.
+`vendor/crabllm/GENATRIX-VENDOR.md`. `vendor/async-imap/` is carried the same
+way, for one accessor, and goes away when upstream ships it.
+
+`apps/menubar/` is the Swift menu bar shell (design 09). It is built with
+`swift build`, not Cargo, and holds no data and no keys: it starts the core
+and shows what the core's local API says.
 
 ## Checks
 

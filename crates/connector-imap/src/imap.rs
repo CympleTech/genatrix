@@ -9,10 +9,9 @@
 //! the kind of wrong worth having in the part that cannot be tested offline.
 //!
 //! Verified against Gmail. What that run taught: the server offers its
-//! extensions, `async-imap` parses `X-GM-MSGID` but has no accessor for
-//! `X-GM-THRID`, so threads fall back to the `References` chain until it
-//! does; and "All Mail" alone holds every message, so it is the only Gmail
-//! folder read.
+//! extensions, and "All Mail" alone holds every message, so it is the only
+//! Gmail folder read. The thread id needs one accessor `async-imap` lacks,
+//! which the vendored copy adds (`vendor/async-imap`).
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -259,11 +258,7 @@ impl MailSource for Imap {
             out.push(Fetched {
                 uid,
                 gmail_message_id: message.gmail_msg_id().copied(),
-                // Requested, and the server sends it, but the library
-                // exposes no way to read it. Threading falls back to the
-                // References chain, which is what every non-Gmail server
-                // gets anyway.
-                gmail_thread_id: None,
+                gmail_thread_id: message.gmail_thr_id().copied(),
                 raw: body.to_vec(),
             });
         }

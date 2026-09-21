@@ -118,10 +118,12 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum ServiceAction {
-    /// Install a launch agent that runs `serve` for this data directory.
+    /// Install a launch agent that runs Genatrix for this data directory
+    /// from login onwards: the menu bar shell when it is beside this binary,
+    /// otherwise `serve` alone.
     Install {
         /// Port for the interface.
-        #[arg(long, default_value_t = 47600)]
+        #[arg(long, default_value_t = 7717)]
         port: u16,
     },
     /// Stop it and remove the launch agent.
@@ -397,8 +399,16 @@ fn service(config: &Config, action: &ServiceAction) -> anyhow::Result<()> {
                     config.data_dir.display()
                 );
             }
-            let path = service::install(&config.data_dir, *port)?;
+            let (path, program) = service::install(&config.data_dir, *port)?;
             println!("installed  {}", path.display());
+            match program {
+                service::Program::Shell { .. } => {
+                    println!("runs       the menu bar shell, with the core behind it");
+                }
+                service::Program::CoreOnly { .. } => {
+                    println!("runs       the core alone; build apps/menubar for the menu bar icon");
+                }
+            }
             println!("serving    http://127.0.0.1:{port}");
             println!(
                 "log        {}",

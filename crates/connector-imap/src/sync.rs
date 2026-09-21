@@ -23,7 +23,7 @@ use genatrix_connector::capability::{AccountCapability, Host};
 use genatrix_connector::{Checkpoint, Cursor, Fault, Progress};
 
 use crate::normalize::{self, Mail};
-use crate::source::{Fetched, MailSource};
+use crate::source::{Fetched, MailSource, Wake};
 
 /// How many messages are asked for at once.
 ///
@@ -53,6 +53,8 @@ pub struct Pass {
     pub taken: usize,
     /// Whether there is more history behind this.
     pub more: bool,
+    /// How many messages are still behind this, for the progress line.
+    pub remaining: usize,
     /// Whether the folder had to be read from the beginning because the
     /// server renumbered it.
     pub restarted: bool,
@@ -82,6 +84,12 @@ impl<S: MailSource> Sync<S> {
         self
     }
 
+    /// The account this engine reads.
+    #[must_use]
+    pub fn account(&self) -> &str {
+        &self.capability.account
+    }
+
     /// Refuse to talk to a host this account was not granted.
     ///
     /// The process sandbox enforces the same thing from outside, which is
@@ -107,6 +115,30 @@ impl<S: MailSource> Sync<S> {
             .into_iter()
             .filter(|f| f.wanted)
             .collect())
+    }
+
+    /// The highest UID in a folder right now, or 0 when it is empty.
+    ///
+    /// Where a live cursor starts on first sight of a folder: everything at
+    /// or below it is history, for the backfill to walk newest first, and
+    /// everything above it is new.
+    pub async fn newest_uid(&self, folder: &str) -> Result<u32, Fault> {
+        Ok(self
+            .source
+            .uids(folder, None)
+            .await?
+            .into_iter()
+            .max()
+            .unwrap_or(0))
+    }
+
+    /// Wait for something to happen in a folder, or for the time to pass.
+    pub async fn wait_for_change(
+        &self,
+        folder: &str,
+        timeout: std::time::Duration,
+    ) -> Result<Wake, Fault> {
+        self.source.wait_for_change(folder, timeout).await
     }
 
     /// Take everything that has arrived since the checkpoint, oldest first.
@@ -154,6 +186,7 @@ impl<S: MailSource> Sync<S> {
             Pass {
                 taken,
                 more: false,
+                remaining: 0,
                 restarted,
             },
         ))
@@ -186,6 +219,7 @@ impl<S: MailSource> Sync<S> {
                 Pass {
                     taken: 0,
                     more: false,
+                    remaining: 0,
                     restarted: false,
                 },
             ));
@@ -193,7 +227,8 @@ impl<S: MailSource> Sync<S> {
 
         let batch = self.take(folder, uidvalidity, &chunk).await?;
         let oldest = chunk.iter().copied().min();
-        let more = uids.len() > chunk.len();
+        let remaining = uids.len() - chunk.len();
+        let more = remaining > 0;
 
         progress.done += batch.len() as u64;
         progress.complete = !more;
@@ -209,6 +244,7 @@ impl<S: MailSource> Sync<S> {
             Pass {
                 taken,
                 more,
+                remaining,
                 restarted: false,
             },
         ))
@@ -246,6 +282,7 @@ impl<S: MailSource> Sync<S> {
                 account: self.capability.account.clone(),
                 external_id: normalize::external_id(
                     fetched.gmail_message_id,
+                    mail.message_id.as_deref(),
                     folder,
                     // The validity marker is part of the identifier only when
                     // there is no account-wide id to use instead.
@@ -322,7 +359,7 @@ mod tests {
                 highest: 10
             }
         );
-        assert!(mails[0].external_id.ends_with("/8"));
+        assert!(mails[0].external_id.ends_with(":8@example.com"));
     }
 
     #[tokio::test]
@@ -337,7 +374,10 @@ mod tests {
             pass.taken, 5,
             "everything again, which duplicates cost nothing and losing mail would"
         );
-        assert!(mails.iter().all(|m| m.external_id.contains("/2/")));
+        assert!(
+            mails.iter().all(|m| m.external_id.starts_with("mid:")),
+            "the identifier is the message's own, so the refetch is recognised"
+        );
     }
 
     #[tokio::test]
@@ -383,7 +423,7 @@ mod tests {
         assert_eq!(pass.taken, 3);
         assert!(pass.more);
         assert!(
-            first[0].external_id.ends_with("/10"),
+            first[0].external_id.ends_with(":10@example.com"),
             "the newest message comes first: {}",
             first[0].external_id
         );
@@ -393,7 +433,7 @@ mod tests {
             .backfill("INBOX", 1, oldest, &mut progress)
             .await
             .unwrap();
-        assert!(second[0].external_id.ends_with("/7"));
+        assert!(second[0].external_id.ends_with(":7@example.com"));
         assert_eq!(progress.done, 6);
     }
 
@@ -435,7 +475,7 @@ mod tests {
         let mut point = checkpoint(1, 6);
         let (new, _) = sync.catch_up("INBOX", 1, &mut point).await.unwrap();
         assert_eq!(new.len(), 1);
-        assert!(new[0].external_id.ends_with("/7"));
+        assert!(new[0].external_id.ends_with(":7@example.com"));
     }
 
     #[tokio::test]
@@ -488,7 +528,7 @@ mod tests {
         let mut point = checkpoint(1, 0);
         let (mails, _) = sync.catch_up("INBOX", 1, &mut point).await.unwrap();
         for mail in &mails {
-            assert!(mail.external_id.starts_with("INBOX/1/"));
+            assert!(mail.external_id.starts_with("mid:"), "{}", mail.external_id);
             assert!(mail.thread_key.starts_with("ref:"));
             assert!(!mail.raw.is_empty(), "the original bytes are carried along");
             assert_eq!(mail.account, "me@example.com");

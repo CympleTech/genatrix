@@ -14,6 +14,8 @@
 //! wrong in the field and are impossible to arrange against a real server.
 
 use std::future::Future;
+use std::sync::Arc;
+use std::time::Duration;
 
 use genatrix_connector::Fault;
 
@@ -46,6 +48,16 @@ pub struct Fetched {
     pub raw: Vec<u8>,
 }
 
+/// Why a wait for new mail ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wake {
+    /// The server said something happened in the folder.
+    Changed,
+    /// Nothing happened before the time was up. Worth checking anyway: a
+    /// server that does not announce changes is one that needs polling.
+    Timeout,
+}
+
 /// A mail server, reduced to what a connector actually does with one.
 pub trait MailSource {
     /// Folders worth reading.
@@ -68,6 +80,37 @@ pub trait MailSource {
         folder: &str,
         uids: &[u32],
     ) -> impl Future<Output = Result<Vec<Fetched>, Fault>> + Send;
+
+    /// Wait until something changes in `folder`, or `timeout` passes.
+    ///
+    /// IDLE where the server has it, so new mail is noticed within seconds.
+    /// Where it does not, this simply waits out the timeout, and the caller
+    /// polls: design 05 says once a minute.
+    fn wait_for_change(
+        &self,
+        folder: &str,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<Wake, Fault>> + Send;
+}
+
+/// A shared source is a source. Lets a connection be handed to the engine
+/// while a test, or a reconnecting caller, keeps hold of it too.
+impl<S: MailSource + Sync + Send> MailSource for Arc<S> {
+    async fn folders(&self) -> Result<Vec<Folder>, Fault> {
+        (**self).folders().await
+    }
+
+    async fn uids(&self, folder: &str, above: Option<u32>) -> Result<Vec<u32>, Fault> {
+        (**self).uids(folder, above).await
+    }
+
+    async fn fetch(&self, folder: &str, uids: &[u32]) -> Result<Vec<Fetched>, Fault> {
+        (**self).fetch(folder, uids).await
+    }
+
+    async fn wait_for_change(&self, folder: &str, timeout: Duration) -> Result<Wake, Fault> {
+        (**self).wait_for_change(folder, timeout).await
+    }
 }
 
 #[cfg(test)]

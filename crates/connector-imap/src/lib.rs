@@ -14,8 +14,10 @@ pub mod normalize;
 pub mod source;
 pub mod sync;
 pub mod text;
+pub mod watch;
 
 pub use imap::{Credentials, Imap};
 pub use normalize::{Attachment, Mail, external_id, normalize, thread_key};
-pub use source::{Fetched, Folder, MailSource};
+pub use source::{Fetched, Folder, MailSource, Wake};
 pub use sync::{Incoming, Pass, Sync};
+pub use watch::{Round, Sink, Watcher, run_account};

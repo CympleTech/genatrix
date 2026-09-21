@@ -17,6 +17,7 @@
 
 mod annotation;
 mod blob;
+mod cursor;
 mod error;
 mod export;
 mod files;
@@ -28,6 +29,7 @@ mod store;
 mod thread;
 mod time;
 
+pub use cursor::StoredCursor;
 pub use error::{Error, Result};
 pub use export::ExportSummary;
 pub use files::FileStore;

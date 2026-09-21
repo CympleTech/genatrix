@@ -33,6 +33,8 @@ for (const tab of document.querySelectorAll('.tab')) {
 
 // --- status -----------------------------------------------------------
 
+let knownItems = null;
+
 async function loadStatus() {
   try {
     const s = await get('/api/status');
@@ -41,9 +43,31 @@ async function loadStatus() {
       : `${s.bytes_left_device} bytes have left this device`;
     $('#status').textContent =
       `${s.items} items · cloud ${s.cloud_enabled ? 'on' : 'off'} · ${bytes}`;
+    // New mail shows up on the timeline without a reload.
+    if (knownItems !== null && s.items !== knownItems && $('#timeline').classList.contains('is-on')) {
+      loadTimeline();
+    }
+    knownItems = s.items;
   } catch (e) {
     $('#status').textContent = e.message;
     $('#status').classList.add('error');
+  }
+  await loadAccounts();
+}
+
+// One line per account: what it is doing, in the connector's own words.
+async function loadAccounts() {
+  const list = $('#accounts');
+  try {
+    const { accounts } = await get('/api/accounts');
+    list.replaceChildren();
+    for (const a of accounts) {
+      const row = el('li', 'account ' + a.sync.state);
+      row.append(el('span', 'address', a.address), el('span', 'state', a.text));
+      list.append(row);
+    }
+  } catch (e) {
+    list.replaceChildren(el('li', 'account error', e.message));
   }
 }
 
@@ -183,4 +207,5 @@ async function loadRecords() {
 }
 
 loadStatus();
+setInterval(loadStatus, 5000);
 loadTimeline();

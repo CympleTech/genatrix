@@ -28,6 +28,18 @@ pub enum Cursor {
         /// Highest UID taken.
         highest: u32,
     },
+    /// IMAP history, walked newest first: how far back the backfill has
+    /// reached in one folder. Carries the validity marker for the same
+    /// reason the live cursor does: after a renumbering, "everything below
+    /// UID 1200" no longer names the same messages.
+    ImapHistory {
+        /// The folder's validity marker when this was recorded.
+        uidvalidity: u32,
+        /// Lowest UID taken so far, or none before the first batch.
+        oldest: Option<u32>,
+        /// Whether the beginning of the folder has been reached.
+        complete: bool,
+    },
     /// Telegram's update sequence.
     TelegramUpdates {
         /// Update state.
@@ -61,6 +73,13 @@ impl Cursor {
             (
                 Self::ImapUid { uidvalidity, .. },
                 Self::ImapUid {
+                    uidvalidity: before,
+                    ..
+                },
+            )
+            | (
+                Self::ImapHistory { uidvalidity, .. },
+                Self::ImapHistory {
                     uidvalidity: before,
                     ..
                 },
@@ -117,6 +136,32 @@ impl Checkpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_backfill_position_dies_with_the_folders_validity() {
+        let before = Cursor::ImapHistory {
+            uidvalidity: 10,
+            oldest: Some(1200),
+            complete: false,
+        };
+        assert!(
+            Cursor::ImapHistory {
+                uidvalidity: 10,
+                oldest: Some(1150),
+                complete: false,
+            }
+            .continues_from(&before)
+        );
+        assert!(
+            !Cursor::ImapHistory {
+                uidvalidity: 11,
+                oldest: None,
+                complete: false,
+            }
+            .continues_from(&before),
+            "a renumbered folder has to be walked again from the top"
+        );
+    }
 
     #[test]
     fn an_imap_folder_continues_while_its_validity_holds() {

@@ -170,16 +170,26 @@ pub fn normalize(raw: &[u8]) -> Result<Mail, NormalizeError> {
 /// bare IMAP UID is not: it means nothing without the folder it came from,
 /// and nothing again once the server changes that folder's validity marker.
 /// Gmail's own message id has none of those problems, so it wins when the
-/// server offers it.
+/// server offers it. Failing that, the message's own `Message-ID` header:
+/// the same message filed under two folders, or refetched after the server
+/// renumbered a folder, keeps the same one, which is what lets the store
+/// drop the repeat. Only a message with no `Message-ID` at all falls back to
+/// where it was found, and such a message is stored again after a
+/// renumbering, which is the one leak in "never twice" and is rare enough
+/// to accept.
 #[must_use]
 pub fn external_id(
     gmail_message_id: Option<u64>,
+    message_id: Option<&str>,
     folder: &str,
     uidvalidity: u32,
     uid: u32,
 ) -> String {
-    match gmail_message_id {
-        Some(id) => format!("gm:{id:x}"),
+    if let Some(id) = gmail_message_id {
+        return format!("gm:{id:x}");
+    }
+    match message_id.map(str::trim).filter(|m| !m.is_empty()) {
+        Some(mid) => format!("mid:{mid}"),
         None => format!("{folder}/{uidvalidity}/{uid}"),
     }
 }
@@ -384,17 +394,34 @@ body\r\n";
     #[test]
     fn an_identifier_is_unique_across_the_account() {
         // A bare UID is not: two folders can both have message 5.
-        assert_eq!(external_id(None, "INBOX", 10, 5), "INBOX/10/5");
+        assert_eq!(external_id(None, None, "INBOX", 10, 5), "INBOX/10/5");
         assert_ne!(
-            external_id(None, "INBOX", 10, 5),
-            external_id(None, "Archive", 10, 5)
+            external_id(None, None, "INBOX", 10, 5),
+            external_id(None, None, "Archive", 10, 5)
         );
         assert_ne!(
-            external_id(None, "INBOX", 10, 5),
-            external_id(None, "INBOX", 11, 5),
+            external_id(None, None, "INBOX", 10, 5),
+            external_id(None, None, "INBOX", 11, 5),
             "a renumbered folder means a different message"
         );
-        assert_eq!(external_id(Some(0x1a2b), "INBOX", 10, 5), "gm:1a2b");
+        assert_eq!(
+            external_id(None, Some("abc@example.com"), "INBOX", 10, 5),
+            "mid:abc@example.com"
+        );
+        assert_eq!(
+            external_id(None, Some("abc@example.com"), "INBOX", 10, 5),
+            external_id(None, Some("abc@example.com"), "Sent", 11, 9),
+            "the same message wherever and however it is filed"
+        );
+        assert_eq!(
+            external_id(None, Some("  "), "INBOX", 10, 5),
+            "INBOX/10/5",
+            "a blank header is no header"
+        );
+        assert_eq!(
+            external_id(Some(0x1a2b), Some("abc@example.com"), "INBOX", 10, 5),
+            "gm:1a2b"
+        );
     }
 
     #[test]

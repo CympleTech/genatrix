@@ -26,8 +26,10 @@ pub mod backfill;
 pub mod capability;
 pub mod checkpoint;
 pub mod error;
+pub mod status;
 
 pub use backfill::{Backfill, Progress};
 pub use capability::{AccountCapability, Host};
 pub use checkpoint::{Checkpoint, Cursor};
 pub use error::{Fault, Severity};
+pub use status::SyncState;

@@ -22,6 +22,8 @@
 
 A debug build ran first at 211 per minute, so optimisation level barely matters: 98 % of the wall clock is the round trip to Gmail.
 
+**Correction, found while building the realtime loop.** The run fetched every message twice. With no checkpoint the catch-up pass started at UID 0 and took the whole folder oldest first, and the backfill pass then took it again newest first, storing nothing new. The connector's real throughput on this link was therefore about 440 messages per minute, above the threshold as written, and the first run was not newest-first at all. The loop now sets the cursors on first sight and fetches nothing until the backfill, so each message is fetched once and history arrives newest first from the first batch. The recommendation to reword the threshold stands on its own merits; the number no longer forces it.
+
 ## What the real server revealed that the fake did not
 
 1. **The Gmail message id was never read.** The wire layer asked for `X-GM-MSGID` and `X-GM-THRID` and then filled both fields with `None`. Every message fell back to a `folder/uidvalidity/uid` identifier, so the 39 messages in Sent Mail, all of which are also in All Mail, were stored twice. The fake server also returns `None` for both, so the tests passed. Fixed: the message id comes from the library's accessor; on Gmail only All Mail is read, since it holds every message once; the folder choice has tests. The thread id waits on a library accessor and threads use the `References` chain meanwhile.

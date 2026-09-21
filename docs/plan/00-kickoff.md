@@ -30,6 +30,7 @@ Design documents are written in Chinese for discussion with the author. Everythi
 | `genatrix-connector`: capabilities, checkpoints, backfill, fault severity | done |
 | `genatrix-connector-imap`: normalization, the sync engine against a fake server, the IMAP wire layer | done; verified against Gmail |
 | Accounts, mail ingestion, `account` and `sync` commands | done |
+| Realtime sync: persisted cursors, one connection alternating catch-up and backfill, IDLE with a polling fallback, reconnection with backoff, per-account state in `serve` and the page | done; the seven-day soak has not started |
 | crabllm vendored and patched | done |
 | Model selection against a real evaluation set | not started; needs ingested data |
 

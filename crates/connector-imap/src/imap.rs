@@ -15,8 +15,10 @@
 //! folder read.
 
 use std::collections::HashSet;
+use std::time::Duration;
 
 use async_imap::Session;
+use async_imap::extensions::idle::IdleResponse;
 use async_imap::types::NameAttribute;
 use async_native_tls::TlsConnector;
 use futures::StreamExt;
@@ -25,7 +27,7 @@ use genatrix_connector::capability::Host;
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 
-use crate::source::{Fetched, Folder, MailSource};
+use crate::source::{Fetched, Folder, MailSource, Wake};
 
 type Stream = TlsStream;
 type TlsStream = async_native_tls::TlsStream<Compat<TcpStream>>;
@@ -45,8 +47,15 @@ pub struct Credentials {
 
 /// A live IMAP session.
 pub struct Imap {
-    session: tokio::sync::Mutex<Session<Stream>>,
+    /// `None` once the connection has been lost: IDLE has to take the
+    /// session out to use it, and an error on the way back leaves nothing
+    /// to put back. Every method then reports a transient fault, and the
+    /// caller reconnects.
+    session: tokio::sync::Mutex<Option<Session<Stream>>>,
     account: String,
+    /// Whether the server offers IDLE, so it can say when mail arrives
+    /// rather than being asked.
+    idle: bool,
     /// Whether the server offers Gmail's extensions, which give an
     /// account-wide message id and a real thread id. Worth a lot: without
     /// them an identifier has to be built out of folder and UID, which the
@@ -59,6 +68,7 @@ impl std::fmt::Debug for Imap {
         f.debug_struct("Imap")
             .field("account", &self.account)
             .field("gmail_extensions", &self.gmail)
+            .field("idle", &self.idle)
             .finish_non_exhaustive()
     }
 }
@@ -94,12 +104,25 @@ impl Imap {
             .await
             .map_err(|e| Fault::transient(&account, format!("{e}")))?;
         let gmail = capabilities.has_str("X-GM-EXT-1");
+        let idle = capabilities.has_str("IDLE");
 
         Ok(Self {
-            session: tokio::sync::Mutex::new(session),
+            session: tokio::sync::Mutex::new(Some(session)),
             account,
             gmail,
+            idle,
         })
+    }
+
+    /// Whether the server can announce new mail.
+    #[must_use]
+    pub const fn has_idle(&self) -> bool {
+        self.idle
+    }
+
+    /// The fault every method reports once the connection is gone.
+    fn lost(&self) -> Fault {
+        Fault::transient(&self.account, "the connection to the mail server was lost")
     }
 
     /// Whether the server offers Gmail's extensions.
@@ -110,9 +133,11 @@ impl Imap {
 
     /// Close the session politely.
     pub async fn logout(&self) -> Result<(), Fault> {
-        self.session
-            .lock()
-            .await
+        let mut guard = self.session.lock().await;
+        let Some(mut session) = guard.take() else {
+            return Ok(());
+        };
+        session
             .logout()
             .await
             .map_err(|e| Fault::transient(&self.account, format!("{e}")))
@@ -130,7 +155,8 @@ impl Imap {
 
 impl MailSource for Imap {
     async fn folders(&self) -> Result<Vec<Folder>, Fault> {
-        let mut session = self.session.lock().await;
+        let mut guard = self.session.lock().await;
+        let session = guard.as_mut().ok_or_else(|| self.lost())?;
 
         let mut listed = Vec::new();
         {
@@ -178,7 +204,8 @@ impl MailSource for Imap {
     }
 
     async fn uids(&self, folder: &str, above: Option<u32>) -> Result<Vec<u32>, Fault> {
-        let mut session = self.session.lock().await;
+        let mut guard = self.session.lock().await;
+        let session = guard.as_mut().ok_or_else(|| self.lost())?;
         session
             .examine(folder)
             .await
@@ -209,7 +236,8 @@ impl MailSource for Imap {
         let items = self.fetch_items();
         let set = uid_set(uids);
 
-        let mut session = self.session.lock().await;
+        let mut guard = self.session.lock().await;
+        let session = guard.as_mut().ok_or_else(|| self.lost())?;
         session
             .examine(folder)
             .await
@@ -240,6 +268,48 @@ impl MailSource for Imap {
             });
         }
         Ok(out)
+    }
+
+    /// IDLE on the folder until the server speaks or the time is up. A
+    /// server without IDLE is simply waited out, and the caller polls.
+    ///
+    /// IDLE takes the session by value, so it is taken out of the mutex for
+    /// the duration and put back after `DONE`. Any failure on the way leaves
+    /// the connection in an unknown state, and an unknown connection is
+    /// treated as a lost one: every later call reports it and the caller
+    /// reconnects, which is cheaper than guessing.
+    async fn wait_for_change(&self, folder: &str, timeout: Duration) -> Result<Wake, Fault> {
+        if !self.idle {
+            tokio::time::sleep(timeout).await;
+            return Ok(Wake::Timeout);
+        }
+
+        let mut guard = self.session.lock().await;
+        let mut session = guard.take().ok_or_else(|| self.lost())?;
+        session
+            .examine(folder)
+            .await
+            .map_err(|e| Fault::transient(&self.account, format!("{folder}: {e}")))?;
+
+        let mut handle = session.idle();
+        handle
+            .init()
+            .await
+            .map_err(|e| Fault::transient(&self.account, format!("IDLE refused: {e}")))?;
+        let outcome = {
+            let (waiting, _interrupt) = handle.wait_with_timeout(timeout);
+            waiting.await
+        };
+        let session = handle
+            .done()
+            .await
+            .map_err(|e| Fault::transient(&self.account, format!("leaving IDLE: {e}")))?;
+        *guard = Some(session);
+
+        match outcome.map_err(|e| Fault::transient(&self.account, format!("in IDLE: {e}")))? {
+            IdleResponse::NewData(_) => Ok(Wake::Changed),
+            IdleResponse::Timeout | IdleResponse::ManualInterrupt => Ok(Wake::Timeout),
+        }
     }
 }
 

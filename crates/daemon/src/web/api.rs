@@ -29,6 +29,20 @@ pub fn routes() -> Router<Arc<System>> {
         .route("/api/timeline", get(timeline))
         .route("/api/item/{id}", get(item))
         .route("/api/ledger", get(ledger))
+        .route("/api/accounts", get(accounts))
+}
+
+#[derive(Serialize)]
+struct AccountsView {
+    accounts: Vec<crate::syncing::AccountState>,
+}
+
+/// How each account's sync is doing. Design 05: one state per account,
+/// readable at a glance, with the backfill progress alongside.
+async fn accounts(State(system): Shared) -> Json<AccountsView> {
+    Json(AccountsView {
+        accounts: system.accounts.snapshot(),
+    })
 }
 
 /// Anything that goes wrong reading, rendered as JSON so the page can say so.

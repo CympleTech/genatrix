@@ -11,10 +11,11 @@
 )]
 
 use std::sync::Mutex;
+use std::time::Duration;
 
 use genatrix_connector::Fault;
 
-use super::{Fetched, Folder, MailSource};
+use super::{Fetched, Folder, MailSource, Wake};
 
 /// A message sitting in a fake folder.
 #[derive(Clone, Debug)]
@@ -51,6 +52,11 @@ struct State {
     fail_fetches: u32,
     /// How many fetch calls have been made, so a test can prove batching.
     fetch_calls: u32,
+    /// Deliveries since the engine last waited, so a wait can end early
+    /// the way IDLE would.
+    unannounced: u32,
+    /// How many times the engine waited, so a test can prove it did.
+    waits: u32,
 }
 
 impl FakeServer {
@@ -89,7 +95,14 @@ impl FakeServer {
                 uid,
                 raw: message_bytes(uid, body),
             });
+            state.unannounced += 1;
         }
+    }
+
+    /// How many times the engine waited for something to happen.
+    #[must_use]
+    pub fn waits(&self) -> u32 {
+        self.state.lock().unwrap().waits
     }
 
     /// The server renumbers a folder, which invalidates every UID in it.
@@ -165,6 +178,34 @@ impl MailSource for FakeServer {
                 raw: m.raw.clone(),
             })
             .collect())
+    }
+
+    async fn wait_for_change(&self, _folder: &str, timeout: Duration) -> Result<Wake, Fault> {
+        Ok(self.wait(timeout).await)
+    }
+}
+
+impl FakeServer {
+    /// Wait as the engine would: return at once when mail has arrived since
+    /// the last wait, otherwise let the timeout pass. Under a paused tokio
+    /// clock the timeout passes instantly, which keeps the tests quick.
+    async fn wait(&self, timeout: Duration) -> Wake {
+        {
+            let mut state = self.state.lock().unwrap();
+            state.waits += 1;
+            if state.unannounced > 0 {
+                state.unannounced = 0;
+                return Wake::Changed;
+            }
+        }
+        tokio::time::sleep(timeout).await;
+        let mut state = self.state.lock().unwrap();
+        if state.unannounced > 0 {
+            state.unannounced = 0;
+            Wake::Changed
+        } else {
+            Wake::Timeout
+        }
     }
 }
 

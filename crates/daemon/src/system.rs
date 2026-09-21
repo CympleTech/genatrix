@@ -34,6 +34,8 @@ pub struct System {
     pub gate: Arc<EgressGate>,
     /// The caller the agent layer uses.
     pub caller: GatewayCaller<StoreNames>,
+    /// How each account's sync is doing, for the interface.
+    pub accounts: crate::syncing::Accounts,
 }
 
 impl std::fmt::Debug for System {
@@ -116,6 +118,7 @@ impl System {
             ledger,
             gate,
             caller,
+            accounts: crate::syncing::Accounts::default(),
         })
     }
 }

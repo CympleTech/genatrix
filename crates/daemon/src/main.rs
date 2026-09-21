@@ -17,6 +17,7 @@ mod keys;
 mod names;
 mod pipeline;
 mod seed;
+mod syncing;
 mod system;
 mod web;
 
@@ -244,14 +245,17 @@ fn account(config: &Config, address: &str, imap_host: Option<String>) -> anyhow:
     Ok(())
 }
 
-/// Fetch mail for every account: history newest first, then anything new.
+/// Fetch mail for every account, one round at a time, until the history is
+/// in or the limit is reached. Cursors are kept, so running it again
+/// continues rather than starting over. `genatrix serve` does the same
+/// continuously.
 async fn sync(config: &Config, limit: usize) -> anyhow::Result<()> {
+    use genatrix_connector::SyncState;
     use genatrix_connector::capability::Host;
-    use genatrix_connector::{Checkpoint, Cursor, Progress};
-    use genatrix_connector_imap::imap::{Credentials, Imap};
     use genatrix_connector_imap::sync::Sync as MailSync;
+    use genatrix_connector_imap::{Credentials, Imap, Watcher};
 
-    let system = System::open(config.clone(), ticket_key(false)?)?;
+    let system = std::sync::Arc::new(System::open(config.clone(), ticket_key(false)?)?);
     let accounts = accounts::Accounts::load(&config.accounts_path())?;
     if accounts.mail.is_empty() {
         anyhow::bail!("no accounts yet. `genatrix account --add you@example.com` adds one.");
@@ -265,9 +269,6 @@ async fn sync(config: &Config, limit: usize) -> anyhow::Result<()> {
     let grant = accounts.grant();
     let started = std::time::Instant::now();
     let mut total = 0usize;
-    // Where the time goes: waiting on the server, or working locally.
-    let mut fetching = std::time::Duration::ZERO;
-    let mut storing = std::time::Duration::ZERO;
 
     for account in accounts.mail.values() {
         let host = Host::new(&account.imap_host, account.imap_port);
@@ -275,57 +276,33 @@ async fn sync(config: &Config, limit: usize) -> anyhow::Result<()> {
             .account(&account.address)
             .ok_or_else(|| anyhow::anyhow!("{} has no capability", account.address))?
             .clone();
+        if !capability.may_reach(&host) {
+            anyhow::bail!("{} is not allowed to connect to {host}", account.address);
+        }
 
         println!("{}", account.address);
         let credentials = Credentials {
             account: account.address.clone(),
             password: password.clone(),
-            imap: host.clone(),
+            imap: host,
         };
         let imap = Imap::connect(&credentials).await?;
-        let mail = MailSync::new(imap, capability);
-        mail.check_host(&host)?;
+        let (status, _) = tokio::sync::watch::channel(SyncState::Starting);
+        let sink = syncing::StoreSink::new(system.clone(), &account.address);
+        let mut watcher = Watcher::new(MailSync::new(imap, capability), sink, status);
 
-        let folders = mail.folders().await?;
         let mut taken = 0usize;
-        for folder in &folders {
-            println!("  {} ({} message(s))", folder.name, folder.count);
-
-            // Anything new first: it is the part the user is waiting for.
-            let mut checkpoint = Checkpoint::new(
-                &account.address,
-                &folder.name,
-                Cursor::ImapUid {
-                    uidvalidity: folder.uidvalidity,
-                    highest: 0,
-                },
-            );
-            let at = std::time::Instant::now();
-            let (fresh, _) = mail
-                .catch_up(&folder.name, folder.uidvalidity, &mut checkpoint)
-                .await?;
-            fetching += at.elapsed();
-            let at = std::time::Instant::now();
-            taken += store_batch(&system, &fresh)?;
-            storing += at.elapsed();
-
-            // Then history, newest first, until the limit.
-            let mut progress = Progress::default();
-            let mut before = None;
-            while taken < limit {
-                let at = std::time::Instant::now();
-                let (batch, oldest, pass) = mail
-                    .backfill(&folder.name, folder.uidvalidity, before, &mut progress)
-                    .await?;
-                fetching += at.elapsed();
-                let at = std::time::Instant::now();
-                taken += store_batch(&system, &batch)?;
-                storing += at.elapsed();
-                before = oldest;
-                if !pass.more {
-                    break;
-                }
-                println!("    {}", progress.describe());
+        loop {
+            let round = watcher.round().await?;
+            taken += round.new;
+            if round.complete {
+                println!("    {}", watcher.progress().describe());
+                break;
+            }
+            println!("    {}", watcher.progress().describe());
+            if taken >= limit {
+                println!("  stopping at {limit}; running `genatrix sync` again carries on");
+                break;
             }
         }
         println!("  {taken} new item(s)");
@@ -338,11 +315,6 @@ async fn sync(config: &Config, limit: usize) -> anyhow::Result<()> {
         "{total} new item(s) in {}, {} per minute",
         describe_duration(elapsed),
         rate_per_minute(total, elapsed)
-    );
-    println!(
-        "  {} waiting on the server, {} storing locally",
-        describe_duration(fetching),
-        describe_duration(storing)
     );
     println!("{} item(s) in the store", system.store.count_items()?);
     println!("`genatrix classify` judges the new ones.");
@@ -359,7 +331,7 @@ fn describe_duration(d: std::time::Duration) -> String {
     }
 }
 
-/// Whole items per minute, for the backfill threshold in design 10.
+/// Whole items per minute.
 fn rate_per_minute(count: usize, d: std::time::Duration) -> u64 {
     let millis = d.as_millis().max(1);
     (count as u128 * 60_000 / millis)
@@ -367,27 +339,57 @@ fn rate_per_minute(count: usize, d: std::time::Duration) -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-/// Store a batch and say how many were new.
-fn store_batch(
-    system: &System,
-    batch: &[genatrix_connector_imap::sync::Incoming],
-) -> anyhow::Result<usize> {
-    let mut added = 0;
-    for incoming in batch {
-        if let ingest::Ingested::Added(_) = ingest::mail(
-            &system.store,
-            &system.raw_files,
-            &system.blob_files,
-            incoming,
-        )? {
-            added += 1;
-        }
-    }
-    Ok(added)
-}
-
+/// Serve the interface and keep every account up to date while it runs.
+///
+/// Each account gets its own task: connect, take what is new, walk the
+/// history, wait on the server, reconnect when the connection drops. An
+/// account that cannot start, because there is no password or its server is
+/// not allowed, is shown in that state rather than stopping the rest.
 async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
+    use genatrix_connector::SyncState;
+    use genatrix_connector::capability::Host;
+    use genatrix_connector_imap::{Credentials, Imap, run_account};
+
     let system = std::sync::Arc::new(System::open(config.clone(), ticket_key(false)?)?);
+    let accounts = accounts::Accounts::load(&config.accounts_path())?;
+    let password = std::env::var(PASSWORD_ENV).ok();
+    let grant = accounts.grant();
+
+    for account in accounts.mail.values() {
+        let status = system.accounts.track(&account.address);
+        let Some(password) = password.clone() else {
+            status.send_replace(SyncState::NeedsLogin {
+                detail: format!("no password: set {PASSWORD_ENV} before `genatrix serve`"),
+            });
+            continue;
+        };
+        let host = Host::new(&account.imap_host, account.imap_port);
+        let capability = match grant.account(&account.address) {
+            Some(c) if c.may_reach(&host) => c.clone(),
+            _ => {
+                status.send_replace(SyncState::Stopped {
+                    detail: format!("this account is not allowed to connect to {host}"),
+                });
+                continue;
+            }
+        };
+        let credentials = Credentials {
+            account: account.address.clone(),
+            password,
+            imap: host,
+        };
+        let sink = syncing::StoreSink::new(system.clone(), &account.address);
+        tokio::spawn(run_account(
+            capability,
+            move || {
+                let credentials = credentials.clone();
+                async move { Imap::connect(&credentials).await }
+            },
+            sink,
+            status,
+        ));
+    }
+
     web::serve(system, serving).await
 }
 

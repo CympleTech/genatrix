@@ -185,3 +185,17 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--accent); out
 
 .empty { color: var(--muted); padding: 32px 0; }
 .error { color: var(--secret); }
+
+/* --- accounts ------------------------------------------------------- */
+
+.accounts {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  font-size: 0.85rem;
+}
+.account { display: flex; gap: 0.75rem; }
+.account .address { font-weight: 600; }
+.account.needs_login .state,
+.account.stopped .state { color: var(--secret); }
+.account.retrying .state { opacity: 0.8; }

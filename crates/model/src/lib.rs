@@ -11,6 +11,8 @@
 
 pub mod annotation;
 pub mod blob;
+pub mod commitment;
+pub mod digest;
 pub mod id;
 pub mod item;
 pub mod person;
@@ -21,7 +23,9 @@ pub mod thread;
 
 pub use annotation::{Annotation, AnnotationKind, Producer};
 pub use blob::{Blob, ContentHash};
-pub use id::{AnnotationId, BlobRef, HandleId, ItemId, PersonId, RawId, ThreadId};
+pub use commitment::{Commitment, CommitmentStatus, Standing};
+pub use digest::{Digest, DigestGroup, DigestPoint};
+pub use id::{AnnotationId, BlobRef, CommitmentId, HandleId, ItemId, PersonId, RawId, ThreadId};
 pub use item::{Direction, Item, Kind, Payload, Timestamp};
 pub use person::{Confidence, Handle, HandleKind, Person};
 pub use raw::Raw;

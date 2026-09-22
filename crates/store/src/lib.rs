@@ -17,6 +17,7 @@
 
 mod annotation;
 mod blob;
+mod commitment;
 mod cursor;
 mod error;
 mod export;

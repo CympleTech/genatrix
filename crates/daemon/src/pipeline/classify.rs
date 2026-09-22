@@ -253,7 +253,7 @@ fn excerpt(item: &Item) -> String {
 }
 
 /// The text with every `http(s)://…` run removed and whitespace collapsed.
-fn without_links(text: &str) -> String {
+pub(crate) fn without_links(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find("http") {

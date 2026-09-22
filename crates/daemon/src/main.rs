@@ -27,6 +27,8 @@ mod web;
 
 use std::path::PathBuf;
 
+use chrono::{Timelike, Utc};
+
 use clap::{Parser, Subcommand};
 use genatrix_agent::run::RunContext;
 use genatrix_keys::TicketKey;
@@ -62,6 +64,8 @@ enum Command {
     /// Read every raw record again with today's normalization. An item
     /// whose text or payload changes gets a new version; nothing is fetched.
     Reprocess,
+    /// Make today's digest now, from the last 24 hours, and print it.
+    Digest,
     /// Show the timeline.
     Timeline {
         /// How many items.
@@ -156,6 +160,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Seed => seed(&config),
         Command::Classify => classify(&config).await,
         Command::Reprocess => reprocess(&config),
+        Command::Digest => digest_now(&config).await,
         Command::Timeline { limit } => timeline(&config, limit),
         Command::Ledger => ledger(&config),
         Command::Export { to } => export(&config, &to),
@@ -707,7 +712,95 @@ async fn pipelines_as_mail_arrives(system: std::sync::Arc<System>) {
                 });
             finish_run(ctx, "summarize", result);
         }
+
+        if let Some(mut ctx) = begin_run(&system, "commitments") {
+            let result = pipeline::commitments::run(&system.store, &mut ctx)
+                .await
+                .map(|r| {
+                    (r.found > 0).then(|| {
+                        format!("read {} message(s), found {} promise(s)", r.read, r.found)
+                    })
+                });
+            finish_run(ctx, "commitments", result);
+        }
+
+        // The morning digest (design 09: eight o'clock by default). Once a
+        // day, after the hour, when there is none for today yet; a machine
+        // asleep at eight makes it a few minutes after waking.
+        let now = chrono::Local::now();
+        if now.hour() >= DIGEST_HOUR
+            && matches!(system.store.get_digest(now.date_naive()), Ok(None))
+            && let Some(mut ctx) = begin_run(&system, "daily-digest")
+        {
+            let result = pipeline::digest::run(
+                &system.store,
+                &mut ctx,
+                Utc::now(),
+                now.date_naive(),
+            )
+            .await
+            .and_then(|digest| {
+                system.store.put_digest(&digest).map_err(|e| {
+                    genatrix_agent::run::RunError::Ledger(pipeline::store_error(&e))
+                })?;
+                Ok(Some(format!(
+                    "digest for {}: {} to reply, {} promised, {} worth knowing, from {} item(s)",
+                    digest.day,
+                    digest.points(genatrix_model::DigestGroup::NeedsReply).len(),
+                    digest.points(genatrix_model::DigestGroup::Promised).len(),
+                    digest
+                        .points(genatrix_model::DigestGroup::WorthKnowing)
+                        .len(),
+                    digest.considered
+                )))
+            });
+            finish_run(ctx, "daily-digest", result);
+        }
     }
+}
+
+/// When the digest is made, local time (design 09: default eight).
+const DIGEST_HOUR: u32 = 8;
+
+/// Make today's digest now and print it.
+async fn digest_now(config: &Config) -> anyhow::Result<()> {
+    let system = System::open(config.clone(), ticket_key(config, true)?)?;
+    if !system.caller.gateway_healthy().await {
+        anyhow::bail!("the gateway is not answering; is `genatrix serve` running?");
+    }
+    let now = chrono::Local::now();
+    let mut ctx = RunContext::begin(&system.ledger, &system.caller, "daily-digest", 64)?;
+    let started = std::time::Instant::now();
+    let digest =
+        match pipeline::digest::run(&system.store, &mut ctx, Utc::now(), now.date_naive()).await {
+            Ok(d) => {
+                ctx.done()?;
+                d
+            }
+            Err(e) => {
+                ctx.stopped(e.to_string())?;
+                return Err(e.into());
+            }
+        };
+    system.store.put_digest(&digest)?;
+    println!(
+        "digest for {} from {} item(s), in {:.0?}",
+        digest.day,
+        digest.considered,
+        started.elapsed()
+    );
+    for (group, points) in &digest.groups {
+        let name = match group {
+            genatrix_model::DigestGroup::NeedsReply => "Needs your reply",
+            genatrix_model::DigestGroup::Promised => "You promised",
+            genatrix_model::DigestGroup::WorthKnowing => "Worth knowing",
+        };
+        println!("\n{name} ({})", points.len());
+        for p in points {
+            println!("  · {}", p.text);
+        }
+    }
+    Ok(())
 }
 
 type Run<'a> = RunContext<'a, caller::GatewayCaller<names::StoreNames>>;

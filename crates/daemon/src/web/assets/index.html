@@ -11,7 +11,8 @@
 <header>
   <h1>Genatrix</h1>
   <nav>
-    <button class="tab is-on" data-pane="timeline">Timeline</button>
+    <button class="tab is-on" data-pane="today">Today</button>
+    <button class="tab" data-pane="timeline">Timeline</button>
     <button class="tab" data-pane="review">Review</button>
     <button class="tab" data-pane="records">Records</button>
   </nav>
@@ -20,7 +21,15 @@
 </header>
 
 <main>
-  <section id="timeline" class="pane is-on">
+  <section id="today" class="pane is-on">
+    <p id="digest-headline" class="headline"></p>
+    <div id="digest"></div>
+    <h2 class="group-title">You promised</h2>
+    <ol id="commitments" class="rows"></ol>
+    <p id="commitments-empty" class="empty" hidden></p>
+  </section>
+
+  <section id="timeline" class="pane">
     <form id="filters" autocomplete="off">
       <input id="q" type="search" placeholder="Search mail and messages">
       <select id="level">

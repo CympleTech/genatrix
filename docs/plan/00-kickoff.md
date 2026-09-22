@@ -57,6 +57,18 @@ Design 10, "理解". Done when every item has a level and a summary, vector sear
 | Records page backed by the ledger for every model call | partly: the page reads the ledger; the item count of model calls will grow with the pipelines |
 | Telegram connector (non-blocking; due by the end of M3) | written: sign-in from the terminal (`account --add-telegram`), dialogs, history newest first per conversation, live updates with catch-up, edits as new versions, media described but not fetched; its own sandboxed process over the same protocol. Run against the author's account: 170 conversations, thousands of messages a minute, no flood wait. Direct chats are read whole, groups and channels the last thirty days (design 05); deletions are not yet tombstones and media is not fetched |
 
+## M3 status
+
+Design 10, "摘要". Done when there has been a digest every morning for fourteen days, at least half its lines useful, "you promised" has caught one thing the author had really forgotten, and mail and Telegram share one timeline.
+
+| Task | State |
+|---|---|
+| Daily digest pipeline: the last 24 hours, sorted by the model into needs-reply, worth-knowing, skip, one line each in the message's language, every line with its source; made after eight each morning, or with `genatrix digest` | done; quality to be judged over the fourteen days |
+| Commitment extraction: explicit promises in mail and chat, by the user or to the user, as inferred commitments with evidence; confirm, done, or reject on the page | done |
+| The Today page: digest groups with sources that open in place, open promises with their evidence and the user's say | done as the first screen; pending approvals arrive with M4 |
+| Person page and relationship statistics | not started |
+| Mail and Telegram on one timeline | done since the Telegram connector |
+
 ## Spike status
 
 | Spike | Status | Blocked on |

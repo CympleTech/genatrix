@@ -29,6 +29,8 @@ for (const tab of document.querySelectorAll('.tab')) {
     $('#' + tab.dataset.pane).classList.add('is-on');
     if (tab.dataset.pane === 'records') loadRecords();
     if (tab.dataset.pane === 'review') loadReview();
+    if (tab.dataset.pane === 'today') loadToday();
+    if (tab.dataset.pane === 'timeline') loadTimeline();
   });
 }
 
@@ -227,6 +229,109 @@ $('#level').addEventListener('change', loadTimeline);
 $('#connector').addEventListener('change', loadTimeline);
 $('#filters').addEventListener('submit', (e) => e.preventDefault());
 
+// --- today ------------------------------------------------------------
+
+const GROUP_NAMES = {
+  needs_reply: 'Needs your reply',
+  promised: 'You promised',
+  worth_knowing: 'Worth knowing',
+};
+
+// A source: who, when, where; click to read the item in place.
+function sourceNode(src) {
+  const link = el('button', 'source', `${src.who} · ${src.connector === 'imap' ? 'mail' : src.connector} · ${src.at}`);
+  link.type = 'button';
+  let open = null;
+  link.addEventListener('click', async () => {
+    if (open) { open.remove(); open = null; return; }
+    open = el('div', 'detail');
+    open.append(el('p', null, 'loading…'));
+    link.parentElement.append(open);
+    try {
+      const d = await get(`/api/item/${src.id}`);
+      open.replaceChildren();
+      if (d.subject) open.append(el('p', null, d.subject));
+      open.append(el('p', null, d.text));
+    } catch (e) {
+      open.replaceChildren(el('p', 'error', e.message));
+    }
+  });
+  return link;
+}
+
+function pointNode(point) {
+  const li = el('li', 'point' + (point.sources.length ? '' : ' unfounded'));
+  li.append(el('span', 'text', point.text));
+  if (point.sources.length) {
+    const sources = el('div', 'sources');
+    for (const s of point.sources) sources.append(sourceNode(s));
+    li.append(sources);
+  } else {
+    li.append(el('span', 'note', 'no source'));
+  }
+  return li;
+}
+
+function commitmentNode(c) {
+  const li = el('li', 'row is-open commitment ' + c.status);
+  const meta = el('div', 'meta');
+  meta.append(
+    el('span', 'who', c.mine ? 'You' : c.from),
+    el('span', null, c.to ? `→ ${c.mine ? c.to : 'you'}` : ''),
+    el('span', 'thread', c.due ? `by ${c.due}` : 'no date'),
+    el('span', 'standing', c.standing === 'confirmed' ? 'confirmed' : 'inferred'),
+    el('span', c.status === 'overdue' ? 'error' : null, c.status === 'overdue' ? 'overdue' : ''),
+  );
+  li.append(meta, el('p', 'preview', c.what));
+  const sources = el('div', 'sources');
+  for (const s of c.evidence) sources.append(sourceNode(s));
+  li.append(sources);
+  const box = el('div', 'chooser');
+  const act = (label, standing, status) => {
+    const b = el('button', 'choose', label);
+    b.type = 'button';
+    b.addEventListener('click', async () => {
+      for (const x of box.querySelectorAll('button')) x.disabled = true;
+      try { await post(`/api/commitment/${c.id}`, { standing, status }); li.remove(); }
+      catch (e) { box.append(el('span', 'error', e.message)); }
+    });
+    return b;
+  };
+  if (c.standing !== 'confirmed') box.append(act('Yes, I did promise this', 'confirmed', null));
+  box.append(act('Done', 'confirmed', 'done'));
+  box.append(act('Not a promise', 'rejected', 'cancelled'));
+  li.append(box);
+  return li;
+}
+
+async function loadToday() {
+  try {
+    const t = await get('/api/today');
+    const box = $('#digest');
+    box.replaceChildren();
+    if (!t.digest) {
+      $('#digest-headline').textContent = 'No digest yet. The first one is made after eight in the morning, once the model side is up.';
+    } else {
+      $('#digest-headline').textContent = `Digest for ${t.digest.day}, made ${t.digest.generated_at} from ${t.digest.considered} messages`;
+      for (const g of t.digest.groups) {
+        if (g.group === 'promised') continue; // shown live below, from the commitments themselves
+        box.append(el('h2', 'group-title', `${GROUP_NAMES[g.group]} (${g.points.length})`));
+        const ol = el('ol', 'points');
+        if (!g.points.length) ol.append(el('li', 'point empty', 'nothing'));
+        for (const p of g.points) ol.append(pointNode(p));
+        box.append(ol);
+      }
+    }
+    $('#commitments').replaceChildren(...t.commitments.map(commitmentNode));
+    const empty = $('#commitments-empty');
+    empty.hidden = t.commitments.length > 0;
+    empty.textContent = 'No open promises found in your messages.';
+  } catch (e) {
+    $('#digest-headline').textContent = e.message;
+    $('#digest-headline').classList.add('error');
+  }
+}
+
 // --- review -----------------------------------------------------------
 
 function reviewNode(entry) {
@@ -322,4 +427,4 @@ async function loadRecords() {
 
 loadStatus();
 setInterval(loadStatus, 5000);
-loadTimeline();
+loadToday();

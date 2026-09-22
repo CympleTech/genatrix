@@ -78,6 +78,10 @@ define_id!(
     ThreadId
 );
 define_id!(
+    /// Identifier of a [`crate::Commitment`].
+    CommitmentId
+);
+define_id!(
     /// Identifier of a [`crate::Person`].
     PersonId
 );

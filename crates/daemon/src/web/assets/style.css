@@ -220,3 +220,20 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--accent); out
 }
 .summary .ai { display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
 .summary p { margin: 0; white-space: pre-wrap; }
+
+/* --- today ----------------------------------------------------------- */
+
+.group-title { font-size: 14px; margin: 18px 0 6px; color: var(--muted); font-weight: 600; }
+.points { list-style: none; margin: 0; padding: 0; }
+.point { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.point .text { display: block; }
+.point.unfounded .text { color: var(--muted); }
+.point.empty { color: var(--muted); font-size: 13px; }
+.sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.source {
+  font: inherit; font-size: 12px; color: var(--muted); background: none; border: none;
+  padding: 0; cursor: pointer; text-decoration: underline dotted;
+}
+.source:hover { color: var(--ink); }
+.commitment .standing { font-size: 12px; color: var(--muted); }
+.commitment.overdue .preview { color: var(--secret); }

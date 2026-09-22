@@ -35,8 +35,155 @@ pub fn routes() -> Router<Arc<System>> {
         .route("/api/item/{id}", get(item))
         .route("/api/item/{id}/level", post(set_level))
         .route("/api/review", get(review))
+        .route("/api/today", get(today))
+        .route("/api/commitment/{id}", post(set_commitment))
         .route("/api/ledger", get(ledger))
         .route("/api/accounts", get(accounts))
+}
+
+#[derive(Serialize)]
+struct SourceRef {
+    id: String,
+    at: String,
+    connector: String,
+    who: String,
+}
+
+#[derive(Serialize)]
+struct PointView {
+    text: String,
+    sources: Vec<SourceRef>,
+}
+
+#[derive(Serialize)]
+struct GroupView {
+    group: genatrix_model::DigestGroup,
+    points: Vec<PointView>,
+}
+
+#[derive(Serialize)]
+struct DigestView {
+    day: String,
+    generated_at: String,
+    considered: u32,
+    groups: Vec<GroupView>,
+}
+
+#[derive(Serialize)]
+struct CommitmentView {
+    id: String,
+    what: String,
+    due: Option<String>,
+    from: String,
+    to: Option<String>,
+    mine: bool,
+    status: genatrix_model::CommitmentStatus,
+    standing: genatrix_model::Standing,
+    evidence: Vec<SourceRef>,
+}
+
+#[derive(Serialize)]
+struct Today {
+    digest: Option<DigestView>,
+    commitments: Vec<CommitmentView>,
+}
+
+fn source_ref(system: &System, id: ItemId) -> Option<SourceRef> {
+    let item = system.store.get_item(id).ok().flatten()?;
+    Some(SourceRef {
+        id: item.id.to_string(),
+        at: item.occurred_at.format("%Y-%m-%d %H:%M").to_string(),
+        connector: item.source.connector.as_str().to_owned(),
+        who: name_of(system, item.author),
+    })
+}
+
+/// The first screen (design 06): the latest digest and the open
+/// commitments, each with what it was drawn from.
+async fn today(State(system): Shared) -> Result<Json<Today>, ApiError> {
+    let digest = system.store.latest_digest()?.map(|d| DigestView {
+        day: d.day.to_string(),
+        generated_at: d.generated_at.format("%Y-%m-%d %H:%M").to_string(),
+        considered: d.considered,
+        groups: d
+            .groups
+            .iter()
+            .map(|(group, points)| GroupView {
+                group: *group,
+                points: points
+                    .iter()
+                    .map(|p| PointView {
+                        text: p.text.clone(),
+                        sources: p
+                            .sources
+                            .iter()
+                            .filter_map(|id| source_ref(&system, *id))
+                            .collect(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    });
+    let me = system.store.self_person()?.map(|p| p.id);
+    let now = chrono::Utc::now();
+    let commitments = system
+        .store
+        .pending_commitments()?
+        .into_iter()
+        .map(|c| CommitmentView {
+            id: c.id.to_string(),
+            mine: c.is_mine(me),
+            from: name_of(&system, Some(c.from)),
+            to: c.to.map(|p| name_of(&system, Some(p))),
+            due: c.due.map(|d| d.format("%Y-%m-%d").to_string()),
+            // Overdue is a fact about the clock, decided when read.
+            status: if c.due.is_some_and(|d| d < now)
+                && c.status == genatrix_model::CommitmentStatus::Open
+            {
+                genatrix_model::CommitmentStatus::Overdue
+            } else {
+                c.status
+            },
+            standing: c.standing,
+            what: c.what,
+            evidence: c
+                .evidence
+                .iter()
+                .filter_map(|id| source_ref(&system, *id))
+                .collect(),
+        })
+        .collect();
+    Ok(Json(Today {
+        digest,
+        commitments,
+    }))
+}
+
+#[derive(Deserialize)]
+struct SetCommitment {
+    standing: genatrix_model::Standing,
+    #[serde(default)]
+    status: Option<genatrix_model::CommitmentStatus>,
+}
+
+/// The user's word on a commitment: confirmed, rejected, done (design 07).
+async fn set_commitment(
+    State(system): Shared,
+    Path(id): Path<String>,
+    Json(body): Json<SetCommitment>,
+) -> Result<Response, ApiError> {
+    let Ok(id) = id.parse::<genatrix_model::CommitmentId>() else {
+        return Ok(not_found("that is not a commitment identifier"));
+    };
+    let Some(current) = system.store.get_commitment(id)? else {
+        return Ok(not_found("no such commitment"));
+    };
+    let status = body.status.unwrap_or(match body.standing {
+        genatrix_model::Standing::Rejected => genatrix_model::CommitmentStatus::Cancelled,
+        _ => current.status,
+    });
+    system.store.set_commitment(id, body.standing, status)?;
+    Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
 
 #[derive(Deserialize)]

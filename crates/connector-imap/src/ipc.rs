@@ -73,6 +73,7 @@ impl Sink for IpcSink {
             .call(Body::Store(protocol::Store {
                 account: self.account.clone(),
                 messages: batch.iter().map(to_wire).collect(),
+                chats: vec![],
             }))
             .await?
         {

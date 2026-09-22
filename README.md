@@ -178,6 +178,21 @@ password and keeps what was fetched. Run it in a terminal on the machine
 itself, not over SSH: the login keychain refuses to add an item from a
 session that cannot show a dialog (`User interaction is not allowed`).
 
+**Add Telegram, if you use it.** Telegram needs a pair of application
+credentials for the client (design 05); until a release build carries them,
+put yours from my.telegram.org in `~/.config/genatrix-dev/secrets.toml` under
+`[telegram]` as `api_id` and `api_hash`, or in `GENATRIX_TELEGRAM_API_ID` and
+`GENATRIX_TELEGRAM_API_HASH`. Then:
+
+```sh
+./target/release/genatrix --data-dir $DEV account --add-telegram +64211234567
+```
+
+It asks for the code Telegram sends and, if you use two-step verification,
+your password. Your phone will show a new device signed in; that is this.
+The session is kept in the encrypted store. Restart the service afterwards
+(`service install` again) so it picks the account up.
+
 **Run it.** For a look, in a terminal:
 
 ```sh

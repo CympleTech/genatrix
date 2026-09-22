@@ -24,16 +24,48 @@ use crate::system::System;
 #[derive(Clone)]
 pub struct StoreSink {
     system: Arc<System>,
+    connector: Connector,
     account: String,
 }
 
 impl StoreSink {
-    /// The sink for one account.
+    /// The sink for one mail account.
     pub fn new(system: Arc<System>, account: impl Into<String>) -> Self {
+        Self::for_connector(system, Connector::Imap, account)
+    }
+
+    /// The sink for one account of any connector.
+    pub fn for_connector(
+        system: Arc<System>,
+        connector: Connector,
+        account: impl Into<String>,
+    ) -> Self {
         Self {
             system,
+            connector,
             account: account.into(),
         }
+    }
+
+    /// Store a batch of chat messages. Returns how many were new.
+    pub fn store_chats(
+        &self,
+        batch: &[genatrix_connector::protocol::ChatMessage],
+    ) -> Result<usize, Fault> {
+        let mut new = 0;
+        for chat in batch {
+            match ingest::chat(
+                &self.system.store,
+                &self.system.raw_files,
+                &self.account,
+                chat,
+            ) {
+                Ok(Ingested::Added(_)) => new += 1,
+                Ok(Ingested::AlreadyHad) => {}
+                Err(e) => return Err(self.fault("could not store a message", e)),
+            }
+        }
+        Ok(new)
     }
 
     /// A store failure, as the connector sees it: transient, because the
@@ -50,7 +82,7 @@ impl StoreSink {
         Ok(self
             .system
             .store
-            .get_sync_cursor(Connector::Imap, &self.account, scope)
+            .get_sync_cursor(self.connector, &self.account, scope)
             .map_err(|e| self.fault("could not read the sync cursor", e))?
             .map(|stored| stored.cursor))
     }
@@ -59,7 +91,7 @@ impl StoreSink {
     pub fn save_json(&self, scope: &str, cursor_json: &str) -> Result<(), Fault> {
         self.system
             .store
-            .put_sync_cursor(Connector::Imap, &self.account, scope, cursor_json)
+            .put_sync_cursor(self.connector, &self.account, scope, cursor_json)
             .map_err(|e| self.fault("could not write the sync cursor", e))
     }
 }

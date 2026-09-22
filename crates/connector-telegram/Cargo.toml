@@ -1,6 +1,6 @@
 [package]
 name = "genatrix-connector-telegram"
-description = "Telegram connector"
+description = "Telegram connector (user-account protocol)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,6 +13,21 @@ name = "genatrix-telegram"
 path = "src/main.rs"
 
 [dependencies]
+genatrix-connector.workspace = true
+genatrix-model.workspace = true
+grammers-client = { version = "0.10", default-features = false }
+grammers-session = { version = "0.10", default-features = false, features = ["serde"] }
+grammers-tl-types = "0.10"
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap = { workspace = true, features = ["derive"] }
+futures.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

@@ -42,23 +42,34 @@ pub struct Assigned {
     pub status: watch::Sender<SyncState>,
 }
 
-/// The mail connector binary, if it can be found: named by the
-/// environment, or beside this executable.
+/// A connector binary, if it can be found: named by the environment
+/// (`GENATRIX_IMAP_BIN`, `GENATRIX_TELEGRAM_BIN`), or beside this
+/// executable as `genatrix-<kind>`.
 #[must_use]
-pub fn mail_binary() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("GENATRIX_IMAP_BIN") {
+pub fn binary_for(kind: &str) -> Option<PathBuf> {
+    let env = format!("GENATRIX_{}_BIN", kind.to_uppercase());
+    if let Some(path) = std::env::var_os(&env) {
         let path = PathBuf::from(path);
         return path.is_file().then_some(path);
     }
     let beside = std::env::current_exe()
         .ok()?
         .parent()?
-        .join("genatrix-imap");
+        .join(format!("genatrix-{kind}"));
     beside.is_file().then_some(beside)
+}
+
+/// The mail connector binary, if it can be found.
+#[must_use]
+pub fn mail_binary() -> Option<PathBuf> {
+    binary_for("imap")
 }
 
 struct Server {
     system: Arc<System>,
+    /// `imap` or `telegram`: what the hello must say.
+    kind: String,
+    connector: genatrix_model::Connector,
     accounts: BTreeMap<String, Assigned>,
     /// The token the next hello has to carry. Taken on use, replaced on
     /// every start of the process.
@@ -69,7 +80,7 @@ impl Server {
     fn sink(&self, account: &str) -> Option<StoreSink> {
         self.accounts
             .contains_key(account)
-            .then(|| StoreSink::new(Arc::clone(&self.system), account))
+            .then(|| StoreSink::for_connector(Arc::clone(&self.system), self.connector, account))
     }
 
     fn everyone(&self, state: &SyncState) {
@@ -89,12 +100,49 @@ pub fn start_mail(
     assigned: Vec<Assigned>,
     binary: PathBuf,
 ) -> anyhow::Result<()> {
+    start_connector(
+        system,
+        "imap",
+        genatrix_model::Connector::Imap,
+        assigned,
+        binary,
+    )
+}
+
+/// Start the Telegram connector for these accounts and keep it running.
+pub fn start_telegram(
+    system: Arc<System>,
+    assigned: Vec<Assigned>,
+    binary: PathBuf,
+) -> anyhow::Result<()> {
+    start_connector(
+        system,
+        "telegram",
+        genatrix_model::Connector::Telegram,
+        assigned,
+        binary,
+    )
+}
+
+/// Start one kind of connector for these accounts and keep it running.
+///
+/// Each kind has its own socket, `run/<kind>.sock`, its own sandbox profile
+/// and its own token. Returns once the socket is listening and the process
+/// has been started; the accepting and the supervising carry on in the
+/// background for the life of the daemon.
+fn start_connector(
+    system: Arc<System>,
+    kind: &str,
+    connector: genatrix_model::Connector,
+    assigned: Vec<Assigned>,
+    binary: PathBuf,
+) -> anyhow::Result<()> {
     if assigned.is_empty() {
         return Ok(());
     }
     let run_dir = system.config.data_dir.join("run");
     std::fs::create_dir_all(&run_dir)?;
-    let socket = run_dir.join("core.sock");
+    let socket = run_dir.join(format!("{kind}.sock"));
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket)?;
     restrict(&socket)?;
@@ -103,7 +151,7 @@ pub fn start_mail(
         .iter()
         .flat_map(|a| a.capability.hosts.iter().map(|h| h.port))
         .collect();
-    let profile_path = run_dir.join("imap.sb");
+    let profile_path = run_dir.join(format!("{kind}.sb"));
     std::fs::write(
         &profile_path,
         sandbox::profile(&sandbox::Confinement {
@@ -116,6 +164,8 @@ pub fn start_mail(
 
     let server = Arc::new(Server {
         system,
+        kind: kind.to_owned(),
+        connector,
         accounts: assigned
             .into_iter()
             .map(|a| (a.capability.account.clone(), a))
@@ -164,11 +214,11 @@ async fn supervise(server: Arc<Server>, binary: PathBuf, profile: PathBuf, socke
         let mut child = match spawn(&binary, &profile, &socket, &token) {
             Ok(child) => child,
             Err(e) => {
-                tracing::error!(error = %e, "could not start the mail connector");
+                tracing::error!(error = %e, "could not start the connector");
                 attempt = attempt.saturating_add(1);
                 let wait = Fault::backoff(attempt);
                 server.everyone(&SyncState::Retrying {
-                    detail: format!("the mail connector could not be started: {e}"),
+                    detail: format!("the connector could not be started: {e}"),
                     attempt,
                     next_in_secs: wait.as_secs(),
                 });
@@ -176,10 +226,10 @@ async fn supervise(server: Arc<Server>, binary: PathBuf, profile: PathBuf, socke
                 continue;
             }
         };
-        tracing::info!(pid = child.id(), "mail connector started");
+        tracing::info!(pid = child.id(), "connector started");
         let started = std::time::Instant::now();
         let status = child.wait().await;
-        tracing::warn!(?status, "mail connector stopped");
+        tracing::warn!(?status, "connector stopped");
 
         // A process that ran for a while before stopping has earned a
         // quick restart; one that keeps dying at once is backed off.
@@ -190,7 +240,7 @@ async fn supervise(server: Arc<Server>, binary: PathBuf, profile: PathBuf, socke
         };
         let wait = Fault::backoff(attempt);
         server.everyone(&SyncState::Retrying {
-            detail: "the mail connector stopped".to_owned(),
+            detail: "the connector stopped".to_owned(),
             attempt,
             next_in_secs: wait.as_secs(),
         });
@@ -239,7 +289,7 @@ async fn handle(server: Arc<Server>, mut stream: UnixStream) -> anyhow::Result<(
         return Ok(());
     };
     let expected = server.token.lock().await.take();
-    if hello.connector != "imap" || expected.as_deref() != Some(hello.token.as_str()) {
+    if hello.connector != server.kind || expected.as_deref() != Some(hello.token.as_str()) {
         tracing::warn!(
             connector = %hello.connector,
             pid = hello.pid,
@@ -248,7 +298,7 @@ async fn handle(server: Arc<Server>, mut stream: UnixStream) -> anyhow::Result<(
         refuse(&mut stream, first.id, "not the connector this core started").await?;
         return Ok(());
     }
-    tracing::info!(pid = hello.pid, "mail connector connected");
+    tracing::info!(kind = %server.kind, pid = hello.pid, "connector connected");
 
     let assign = Assign {
         accounts: server
@@ -316,12 +366,17 @@ async fn answer(server: &Server, body: Body) -> Body {
                 .into_iter()
                 .map(|m| ipc::from_wire(&store.account, m))
                 .collect();
-            match sink.store(&batch).await {
-                Ok(new) => Body::Stored(protocol::Stored {
-                    new: u32::try_from(new).unwrap_or(u32::MAX),
-                }),
-                Err(fault) => failure(fault.detail),
-            }
+            let mail = match sink.store(&batch).await {
+                Ok(new) => new,
+                Err(fault) => return failure(fault.detail),
+            };
+            let chats = match sink.store_chats(&store.chats) {
+                Ok(new) => new,
+                Err(fault) => return failure(fault.detail),
+            };
+            Body::Stored(protocol::Stored {
+                new: u32::try_from(mail + chats).unwrap_or(u32::MAX),
+            })
         }
         Body::LoadCursor(load) => {
             let Some(sink) = server.sink(&load.account) else {
@@ -402,6 +457,8 @@ endpoint = {{ kind = "local_socket", path = "{}" }}
             .with_host(Host::new("imap.example.com", 993));
         let server = Server {
             system,
+            kind: "imap".to_owned(),
+            connector: Connector::Imap,
             accounts: [(
                 "me@example.com".to_owned(),
                 Assigned {
@@ -451,6 +508,7 @@ endpoint = {{ kind = "local_socket", path = "{}" }}
             Body::Store(protocol::Store {
                 account: "me@example.com".into(),
                 messages: vec![ipc::to_wire(&incoming(n))],
+                chats: vec![],
             })
         };
         assert!(matches!(
@@ -524,6 +582,7 @@ endpoint = {{ kind = "local_socket", path = "{}" }}
             Body::Store(protocol::Store {
                 account: "someone-else@example.com".into(),
                 messages: vec![],
+                chats: vec![],
             }),
         )
         .await;

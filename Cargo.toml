@@ -23,6 +23,7 @@ genatrix-profile = { path = "crates/profile" }
 genatrix-llm = { path = "crates/llm" }
 genatrix-connector = { path = "crates/connector" }
 genatrix-connector-imap = { path = "crates/connector-imap" }
+genatrix-connector-telegram = { path = "crates/connector-telegram" }
 
 # vendored crabllm (see vendor/crabllm/GENATRIX-VENDOR.md)
 crabllm-core = { path = "vendor/crabllm/crates/core" }

@@ -16,6 +16,7 @@ path = "src/main.rs"
 genatrix-agent.workspace = true
 genatrix-connector.workspace = true
 genatrix-connector-imap.workspace = true
+genatrix-connector-telegram.workspace = true
 genatrix-gate.workspace = true
 genatrix-keys.workspace = true
 genatrix-ledger.workspace = true

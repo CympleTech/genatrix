@@ -42,12 +42,38 @@ const fn default_smtp_port() -> u16 {
     587
 }
 
+/// One Telegram account. The session itself is in the encrypted store, not
+/// here.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TelegramAccount {
+    /// The phone number, international form, which is the account's name.
+    pub phone: String,
+    /// The account's own Telegram user id.
+    pub user_id: i64,
+    /// The account's display name at sign-in.
+    pub name: String,
+}
+
+/// Telegram's production datacenters. The connector's sandbox is built from
+/// these: with the port filter the OS offers, that means port 443 to
+/// anywhere, which is weaker than for mail and is said so in design 05.
+pub const TELEGRAM_HOSTS: &[&str] = &[
+    "149.154.175.53",
+    "149.154.167.51",
+    "149.154.175.100",
+    "149.154.167.91",
+    "149.154.171.5",
+];
+
 /// Every account, as stored.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Accounts {
     /// Mail accounts, keyed by address.
     #[serde(default)]
     pub mail: BTreeMap<String, Account>,
+    /// Telegram accounts, keyed by phone number.
+    #[serde(default)]
+    pub telegram: BTreeMap<String, TelegramAccount>,
 }
 
 impl Accounts {
@@ -93,24 +119,41 @@ impl Accounts {
         Ok(())
     }
 
+    /// Add or replace a Telegram account.
+    pub fn add_telegram(&mut self, phone: &str, user_id: i64, name: &str) {
+        let phone = phone.trim().to_owned();
+        self.telegram.insert(
+            phone.clone(),
+            TelegramAccount {
+                phone,
+                user_id,
+                name: name.trim().to_owned(),
+            },
+        );
+    }
+
     /// What each account is allowed to reach and do.
     #[must_use]
     pub fn grant(&self) -> Grant {
-        Grant::of(
-            self.mail
-                .values()
-                .map(|account| {
-                    let mut capability = AccountCapability::new(Connector::Imap, &account.address)
-                        .with_host(Host::new(&account.imap_host, account.imap_port));
-                    if let Some(smtp) = &account.smtp_host {
-                        capability = capability
-                            .with_host(Host::new(smtp, account.smtp_port))
-                            .with_effect("send_mail");
-                    }
-                    capability
-                })
-                .collect(),
-        )
+        let mail = self.mail.values().map(|account| {
+            let mut capability = AccountCapability::new(Connector::Imap, &account.address)
+                .with_host(Host::new(&account.imap_host, account.imap_port));
+            if let Some(smtp) = &account.smtp_host {
+                capability = capability
+                    .with_host(Host::new(smtp, account.smtp_port))
+                    .with_effect("send_mail");
+            }
+            capability
+        });
+        let telegram = self.telegram.values().map(|account| {
+            let mut capability = AccountCapability::new(Connector::Telegram, &account.phone)
+                .with_effect("send_message");
+            for host in TELEGRAM_HOSTS {
+                capability = capability.with_host(Host::new(host, 443));
+            }
+            capability
+        });
+        Grant::of(mail.chain(telegram).collect())
     }
 }
 

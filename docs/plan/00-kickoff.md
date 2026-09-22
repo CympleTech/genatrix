@@ -55,7 +55,7 @@ Design 10, "理解". Done when every item has a level and a summary, vector sear
 | Summarizer role; summary shown per item | done: messages of 280 characters or more get up to three lines in their own language, shown under the text marked as the model's; shorter ones are their own summary |
 | The core starts the model side | done: two models, one sandboxed process; `service install` falls back to `launchctl load` where `bootstrap` needs a GUI session |
 | Records page backed by the ledger for every model call | partly: the page reads the ledger; the item count of model calls will grow with the pipelines |
-| Telegram connector (non-blocking; due by the end of M3) | not started; the login spike needs application credentials |
+| Telegram connector (non-blocking; due by the end of M3) | written: sign-in from the terminal (`account --add-telegram`), dialogs, history newest first per conversation, live updates with catch-up, edits as new versions, media described but not fetched; its own sandboxed process over the same protocol. Not yet run against a real account: the sign-in needs the author at the terminal |
 
 ## Spike status
 
@@ -63,7 +63,7 @@ Design 10, "理解". Done when every item has a level and a summary, vector sear
 |---|---|---|
 | Sandbox | **pass**, [spikes/01-sandbox.md](spikes/01-sandbox.md) | |
 | Local model | **pass with conditions**, [spikes/02-local-model.md](spikes/02-local-model.md) | |
-| Telegram login | not started | Telegram application credentials |
+| Telegram login | the connector is written; the interactive sign-in is the spike, and it waits on the author | a terminal on the machine |
 | Gmail IMAP | **pass on function**, [spikes/03-gmail-imap.md](spikes/03-gmail-imap.md); the speed threshold is proposed for revision | a decision on the design 10 threshold |
 
 ## What the spikes need

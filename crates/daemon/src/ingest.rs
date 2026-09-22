@@ -59,6 +59,144 @@ pub fn mail(
     Ok(Ingested::Added(item.id))
 }
 
+/// Turn one chat message into an item, unless it is already here. An edit
+/// arrives as the same message with different bytes: a new raw record, and
+/// a new item that supersedes the current one (design 01).
+pub fn chat(
+    store: &Store,
+    raw_files: &FileStore,
+    account: &str,
+    message: &genatrix_connector::protocol::ChatMessage,
+) -> anyhow::Result<Ingested> {
+    use genatrix_model::PersonId;
+
+    let source = Source::new(Connector::Telegram, account, message.external_id.clone());
+    let raw = Raw::describe(
+        source.clone(),
+        "application/x-telegram-message+tl",
+        &message.raw,
+    );
+    if !store.insert_raw(&raw)? {
+        return Ok(Ingested::AlreadyHad);
+    }
+    raw_files.put(&message.raw)?;
+
+    let me = store.self_person()?.map(|p| p.id);
+    let author = chat_author(store, me, message)?;
+    let recipients: Vec<PersonId> = match (message.thread_kind.as_str(), message.outgoing, me) {
+        ("direct", false, Some(me)) => vec![me],
+        _ => Vec::new(),
+    };
+    let is_self = |person| me == Some(person);
+    let direction = genatrix_model::item::direction_of(author, &recipients, is_self, false);
+
+    let kind = match message.thread_kind.as_str() {
+        "direct" => ThreadKind::DirectChat,
+        "channel" => ThreadKind::Channel,
+        _ => ThreadKind::GroupChat,
+    };
+    let thread_id = store.upsert_thread(&Thread {
+        id: ThreadId::new(),
+        kind,
+        source: Source::new(Connector::Telegram, account, message.thread_key.clone()),
+        title: (!message.thread_title.is_empty()).then(|| message.thread_title.clone()),
+        members: author
+            .into_iter()
+            .chain(recipients.iter().copied())
+            .collect(),
+        first_at: None,
+        last_at: None,
+    })?;
+
+    let reply_to = match &message.reply_to {
+        Some(external) => store
+            .current_item(&Source::new(Connector::Telegram, account, external.clone()))?
+            .map(|i| i.id),
+        None => None,
+    };
+    let current = store.current_item(&source)?;
+    let occurred_at =
+        chrono::DateTime::parse_from_rfc3339(&message.date).unwrap_or_else(|_| Utc::now().into());
+
+    let text = chat_text(message);
+
+    let item = Item {
+        id: ItemId::new(),
+        source,
+        raw_id: raw.id,
+        supersedes: current.as_ref().map(|c| c.id),
+        thread_id,
+        occurred_at,
+        ingested_at: Utc::now(),
+        direction,
+        author,
+        recipients,
+        text,
+        blobs: vec![],
+        sensitivity: Level::default(),
+        tombstoned: false,
+        payload: Payload::Message {
+            reply_to,
+            forwarded_from: None,
+            edited: message.edited,
+        },
+    };
+    store.insert_item(&item)?;
+    Ok(Ingested::Added(item.id))
+}
+
+/// Who wrote a chat message: the user for an outgoing one, else the person
+/// behind the sender's Telegram id, created on first sight with the
+/// username as a second handle.
+fn chat_author(
+    store: &Store,
+    me: Option<genatrix_model::PersonId>,
+    message: &genatrix_connector::protocol::ChatMessage,
+) -> anyhow::Result<Option<genatrix_model::PersonId>> {
+    use genatrix_model::{Confidence, Handle, HandleId, HandleKind};
+
+    if message.outgoing {
+        return Ok(me);
+    }
+    let Some(sender) = &message.sender else {
+        return Ok(None);
+    };
+    let id =
+        store.person_for_handle(HandleKind::TelegramId, &sender.id.to_string(), &sender.name)?;
+    if let Some(username) = sender.username.as_deref().filter(|u| !u.is_empty())
+        && store
+            .find_handle(HandleKind::TelegramUsername, username)?
+            .is_none()
+    {
+        store.insert_handle(&Handle {
+            id: HandleId::new(),
+            person_id: id,
+            kind: HandleKind::TelegramUsername,
+            value: username.to_owned(),
+            confidence: Confidence::Confirmed,
+        })?;
+    }
+    Ok(Some(id))
+}
+
+/// The text, with each attachment named on its own line, so a photo with no
+/// caption is not an empty item.
+fn chat_text(message: &genatrix_connector::protocol::ChatMessage) -> String {
+    let mut text = message.text.clone();
+    for media in &message.media {
+        let described = match (&media.name, &media.mime) {
+            (Some(name), _) => format!("[{}: {name}]", media.kind),
+            (None, Some(mime)) => format!("[{}: {mime}]", media.kind),
+            (None, None) => format!("[{}]", media.kind),
+        };
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&described);
+    }
+    text
+}
+
 /// What reading a raw record again did.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reprocessed {

@@ -74,7 +74,7 @@ enum Command {
     /// checks it against the server, and keeps it in the keychain.
     Account {
         /// The address. For a well-known provider that is all it takes.
-        #[arg(long, required_unless_present = "forget")]
+        #[arg(long, required_unless_present_any = ["forget", "add_telegram"])]
         add: Option<String>,
         /// The IMAP server, when it cannot be worked out from the address.
         #[arg(long)]
@@ -82,6 +82,11 @@ enum Command {
         /// Remove a mailbox and its password. What was fetched stays.
         #[arg(long, conflicts_with = "add")]
         forget: Option<String>,
+        /// Sign in to Telegram with this phone number (international form,
+        /// `+64...`). Asks for the code Telegram sends, and the password if
+        /// two-step verification is on.
+        #[arg(long, conflicts_with_all = ["add", "forget"], required_unless_present_any = ["add", "forget"])]
+        add_telegram: Option<String>,
     },
     /// Run in the background from login onwards, or stop doing so.
     Service {
@@ -163,7 +168,13 @@ async fn main() -> anyhow::Result<()> {
             forget: Some(address),
             ..
         } => forget_account(&config, &address),
-        Command::Account { .. } => anyhow::bail!("say which address: --add or --forget"),
+        Command::Account {
+            add_telegram: Some(phone),
+            ..
+        } => add_telegram(&config, &phone).await,
+        Command::Account { .. } => {
+            anyhow::bail!("say which account: --add, --forget or --add-telegram")
+        }
         Command::Service { action } => service(&config, &action),
         Command::Sync { limit } => sync(&config, limit).await,
         Command::Serve { bind, port, token } => {
@@ -412,6 +423,73 @@ async fn account(config: &Config, address: &str, imap_host: Option<String>) -> a
     println!();
     println!("`genatrix serve` keeps this mailbox up to date while it runs;");
     println!("`genatrix service install` makes that happen from login onwards.");
+    Ok(())
+}
+
+/// Sign in to Telegram (design 05, "接入"; design 09, screen four): the
+/// number, the code, the password if asked. The session is kept in the
+/// encrypted store, under the account's cursors; the account's own user id
+/// becomes a handle of the user's person.
+async fn add_telegram(config: &Config, phone: &str) -> anyhow::Result<()> {
+    use genatrix_connector_telegram::login::{Prompt, sign_in};
+    use genatrix_model::HandleKind;
+
+    struct Terminal;
+    impl Prompt for Terminal {
+        fn code(&self) -> anyhow::Result<String> {
+            use std::io::Write as _;
+            print!("Telegram sent a code to your phone or another signed-in device. Code: ");
+            std::io::stdout().flush()?;
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            Ok(line)
+        }
+        fn password(&self, hint: Option<&str>) -> anyhow::Result<String> {
+            let hint = hint
+                .filter(|h| !h.is_empty())
+                .map_or(String::new(), |h| format!(" (hint: {h})"));
+            Ok(rpassword::prompt_password(format!(
+                "Two-step verification password{hint}: "
+            ))?)
+        }
+    }
+
+    let phone = phone.trim();
+    if !phone.starts_with('+') {
+        anyhow::bail!("the number needs its country code, as in +64 21 ...");
+    }
+    let credentials = genatrix_connector_telegram::Credentials::find()?;
+    let system = System::open(config.clone(), ticket_key(config, false)?)?;
+
+    println!("{phone}");
+    println!("  Telegram will show a new device signed in; that is this.");
+    let signed_in = sign_in(&credentials, phone, &Terminal).await?;
+    println!("  signed in as {} ({})", signed_in.name, signed_in.user_id);
+
+    system.store.put_sync_cursor(
+        genatrix_model::Connector::Telegram,
+        phone,
+        "session",
+        &serde_json::to_string(&signed_in.session)?,
+    )?;
+    let path = config.accounts_path();
+    let mut accounts = accounts::Accounts::load(&path)?;
+    accounts.add_telegram(phone, signed_in.user_id, &signed_in.name);
+    accounts.save(&path)?;
+
+    let me = system.store.person_for_handle(
+        HandleKind::TelegramId,
+        &signed_in.user_id.to_string(),
+        &signed_in.name,
+    )?;
+    if system.store.self_person()?.is_none() {
+        system.store.set_self(me)?;
+    }
+    println!("  session     in the encrypted store");
+    println!();
+    println!(
+        "`genatrix serve` reads this account while it runs; restart the service to pick it up."
+    );
     Ok(())
 }
 
@@ -672,6 +750,61 @@ fn finish_run(
     }
 }
 
+/// Telegram accounts get the application credentials as their secret and
+/// find their session in the store. Each is shown in its state; none stops
+/// the rest.
+fn start_telegram_accounts(
+    system: &std::sync::Arc<System>,
+    accounts: &accounts::Accounts,
+    grant: &genatrix_connector::capability::Grant,
+) -> anyhow::Result<()> {
+    use genatrix_connector::SyncState;
+
+    if accounts.telegram.is_empty() {
+        return Ok(());
+    }
+    let credentials = match genatrix_connector_telegram::Credentials::find() {
+        Ok(c) => c,
+        Err(e) => {
+            for account in accounts.telegram.values() {
+                system
+                    .accounts
+                    .track(&account.phone)
+                    .send_replace(SyncState::Stopped {
+                        detail: format!("no Telegram application credentials: {e}"),
+                    });
+            }
+            return Ok(());
+        }
+    };
+    let secret = serde_json::to_string(&credentials)?;
+    let assigned: Vec<connectors::Assigned> = accounts
+        .telegram
+        .values()
+        .filter_map(|account| {
+            let status = system.accounts.track(&account.phone);
+            grant
+                .account(&account.phone)
+                .map(|capability| connectors::Assigned {
+                    capability: capability.clone(),
+                    secret: secret.clone(),
+                    status,
+                })
+        })
+        .collect();
+    if let Some(binary) = connectors::binary_for("telegram") {
+        return connectors::start_telegram(system.clone(), assigned, binary);
+    }
+    for a in &assigned {
+        a.status.send_replace(SyncState::Stopped {
+            detail:
+                "genatrix-telegram is not beside this binary; `cargo build --release --workspace`"
+                    .into(),
+        });
+    }
+    Ok(())
+}
+
 /// Serve the interface and keep every account up to date while it runs.
 ///
 /// The mail connector runs in its own sandboxed process (design 05) when
@@ -735,6 +868,8 @@ async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
             status,
         });
     }
+
+    start_telegram_accounts(&system, &accounts, &grant)?;
 
     if let Some(binary) = connectors::mail_binary() {
         connectors::start_mail(system.clone(), assigned, binary)?;

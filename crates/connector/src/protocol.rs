@@ -114,15 +114,93 @@ pub struct Assignment {
     pub secret: String,
 }
 
-/// Messages to keep.
+/// Messages to keep: mail, chat, or both.
 #[derive(Clone, PartialEq, Message)]
 pub struct Store {
     /// Whose.
     #[prost(string, tag = "1")]
     pub account: String,
-    /// The batch.
+    /// Mail.
     #[prost(message, repeated, tag = "2")]
     pub messages: Vec<MailMessage>,
+    /// Chat.
+    #[prost(message, repeated, tag = "3")]
+    pub chats: Vec<ChatMessage>,
+}
+
+/// One chat message, normalized by the connector, with its original bytes.
+#[derive(Clone, PartialEq, Message)]
+pub struct ChatMessage {
+    /// Account-wide identifier: the conversation and the message id.
+    #[prost(string, tag = "1")]
+    pub external_id: String,
+    /// The conversation's identifier within the account.
+    #[prost(string, tag = "2")]
+    pub thread_key: String,
+    /// `direct`, `group` or `channel`.
+    #[prost(string, tag = "3")]
+    pub thread_kind: String,
+    /// The conversation's name.
+    #[prost(string, tag = "4")]
+    pub thread_title: String,
+    /// Who sent it, when known. Absent for anonymous channel posts.
+    #[prost(message, optional, tag = "5")]
+    pub sender: Option<ChatSender>,
+    /// Whether the account holder sent it.
+    #[prost(bool, tag = "6")]
+    pub outgoing: bool,
+    /// When, RFC 3339.
+    #[prost(string, tag = "7")]
+    pub date: String,
+    /// Plain text; formatting flattened, links kept as URLs.
+    #[prost(string, tag = "8")]
+    pub text: String,
+    /// The message this one replies to, as an external id.
+    #[prost(string, optional, tag = "9")]
+    pub reply_to: Option<String>,
+    /// The name of the original author when forwarded.
+    #[prost(string, optional, tag = "10")]
+    pub forwarded_from: Option<String>,
+    /// Whether the source marks it as edited.
+    #[prost(bool, tag = "11")]
+    pub edited: bool,
+    /// The message as the protocol delivered it, serialized.
+    #[prost(bytes = "vec", tag = "12")]
+    pub raw: Vec<u8>,
+    /// Attached media, described; bytes are fetched later, on request.
+    #[prost(message, repeated, tag = "13")]
+    pub media: Vec<ChatMedia>,
+}
+
+/// Who sent a chat message.
+#[derive(Clone, PartialEq, Message)]
+pub struct ChatSender {
+    /// The platform's numeric identifier.
+    #[prost(int64, tag = "1")]
+    pub id: i64,
+    /// Handle, without the `@`.
+    #[prost(string, optional, tag = "2")]
+    pub username: Option<String>,
+    /// Display name.
+    #[prost(string, tag = "3")]
+    pub name: String,
+}
+
+/// One attachment, described but not carried.
+#[derive(Clone, PartialEq, Message)]
+pub struct ChatMedia {
+    /// `photo`, `document`, `sticker`, `voice`, ...
+    #[prost(string, tag = "1")]
+    pub kind: String,
+    /// File name, when there is one.
+    #[prost(string, optional, tag = "2")]
+    pub name: Option<String>,
+    /// Media type, when known.
+    #[prost(string, optional, tag = "3")]
+    pub mime: Option<String>,
+    /// Size in bytes, when known.
+    #[prost(uint64, optional, tag = "4")]
+    pub size: Option<u64>,
 }
 
 /// How a store went.
@@ -424,6 +502,7 @@ mod tests {
                     }],
                     ..MailMessage::default()
                 }],
+                chats: vec![],
             })),
         };
         write_frame(&mut a, &sent).await.unwrap();

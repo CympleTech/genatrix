@@ -364,6 +364,18 @@ async function loadToday() {
 // you see, checked by hash and by the nonce this page was handed.
 
 const KIND_WORDS = { send_mail: 'Reply by mail', send_message: 'Reply on Telegram', create_event: 'Add an event', write_memory: 'Remember' };
+// What each state means to the person reading it. "unknown" is the one that
+// matters most: it must never read like a failure to be retried (design 05).
+const STATUS_WORDS = {
+  approved: 'approved, sending', declined: 'declined', executed: 'sent',
+  failed: 'not sent', unknown: 'possibly sent; waiting for sync to confirm', expired: 'expired',
+};
+
+function statusLine(a) {
+  if (a.status === 'pending') return expiresIn(a.expires_in_secs);
+  const word = STATUS_WORDS[a.status] || a.status;
+  return a.status_detail ? `${word} · ${a.status_detail}` : word;
+}
 
 function expiresIn(secs) {
   if (secs <= 0) return 'expired';
@@ -378,7 +390,7 @@ function actionCard(a, onDone) {
   const head = el('div', 'meta');
   head.append(
     el('span', 'who', `${KIND_WORDS[a.kind] || a.kind} → ${a.target}`),
-    el('span', 'faint', a.status === 'pending' ? expiresIn(a.expires_in_secs) : a.status + (a.status_detail ? ` · ${a.status_detail}` : '')),
+    el('span', 'faint', statusLine(a)),
   );
   li.append(head);
 
@@ -398,7 +410,33 @@ function actionCard(a, onDone) {
   draft.readOnly = a.status !== 'pending';
   li.append(draft);
   li.append(el('p', 'note', `Drafted ${a.drafted}. From ${a.account}.`));
+  if (a.result) {
+    li.append(el('h4', 'card-label', 'Sent'));
+    const sent = el('div', 'sources');
+    sent.append(sourceNode(a.result));
+    li.append(sent);
+  }
 
+  if (a.status === 'approved' && a.can_withdraw) {
+    // Approved but not yet taken: the user can still take it back. Once a
+    // connector holds it, only the connector's report says what happened.
+    const box = el('div', 'chooser');
+    const back = el('button', 'choose lowers', 'Withdraw');
+    back.type = 'button';
+    const msg = el('span', 'note');
+    back.addEventListener('click', async () => {
+      back.disabled = true;
+      try {
+        const done = await post(`/api/action/${a.id}/decline`, { reason: 'withdrawn before sending' });
+        li.className = 'row is-open action ' + done.status;
+        box.replaceChildren(el('span', 'note', 'Withdrawn. Nothing was sent.'));
+        onDone && onDone();
+      } catch (e) { msg.textContent = e.message; msg.classList.add('error'); back.disabled = false; }
+    });
+    box.append(back, msg);
+    li.append(box);
+    return li;
+  }
   if (a.status !== 'pending') return li;
 
   let current = a; // the version and nonce this card holds

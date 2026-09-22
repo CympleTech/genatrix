@@ -100,6 +100,25 @@ impl Core {
         .map(|_| ())
     }
 
+    async fn pull_actions(&self) -> Result<Vec<protocol::ActionToDo>, Fault> {
+        match self
+            .call(Body::PullActions(protocol::PullActions {
+                account: self.account.clone(),
+            }))
+            .await?
+        {
+            Body::Actions(a) => Ok(a.actions),
+            _ => Err(Fault::transient(
+                &self.account,
+                "the core answered out of turn",
+            )),
+        }
+    }
+
+    async fn report(&self, report: protocol::Report) -> Result<(), Fault> {
+        self.call(Body::Report(report)).await.map(|_| ())
+    }
+
     async fn store(&self, chats: Vec<protocol::ChatMessage>) -> Result<usize, Fault> {
         if chats.is_empty() {
             return Ok(0);
@@ -159,7 +178,7 @@ async fn main() -> anyhow::Result<()> {
             client: Arc::clone(&client),
             account: capability.account.clone(),
         };
-        tasks.push(tokio::spawn(run_account(core, credentials)));
+        tasks.push(tokio::spawn(run_account(core, credentials, capability)));
     }
     for task in tasks {
         if let Ok(fault) = task.await {
@@ -172,11 +191,11 @@ async fn main() -> anyhow::Result<()> {
 
 /// Keep one account up to date across reconnections, until a fault only
 /// the user can fix.
-async fn run_account(core: Core, credentials: Credentials) -> Fault {
+async fn run_account(core: Core, credentials: Credentials, capability: AccountCapability) -> Fault {
     let mut attempt: u32 = 0;
     loop {
         core.status(&SyncState::Connecting).await;
-        let fault = match once(&core, &credentials).await {
+        let fault = match once(&core, &credentials, &capability).await {
             Ok(()) => Fault::transient(&core.account, "the update stream ended"),
             Err(fault) => fault,
         };
@@ -191,7 +210,12 @@ async fn run_account(core: Core, credentials: Credentials) -> Fault {
 }
 
 /// One connected life: session in, dialogs, history alongside updates.
-async fn once(core: &Core, credentials: &Credentials) -> Result<(), Fault> {
+#[allow(clippy::too_many_lines)] // one life, told in order
+async fn once(
+    core: &Core,
+    credentials: &Credentials,
+    capability: &AccountCapability,
+) -> Result<(), Fault> {
     let snapshot: Option<Snapshot> = match core.load_json(SESSION_SCOPE).await? {
         Some(json) => serde_json::from_str(&json).ok(),
         None => None,
@@ -269,10 +293,20 @@ async fn once(core: &Core, credentials: &Credentials) -> Result<(), Fault> {
         }
     });
 
+    // Approved replies, alongside the reading (design 05, "动作执行").
+    let conversations = Arc::new(conversations);
+    let executing = tokio::spawn(execute::run(
+        core.clone(),
+        client.clone(),
+        capability.clone(),
+        Arc::clone(&conversations),
+    ));
+
     let outcome = backfill(core, &client, &conversations).await;
     save_session(core, &session).await?;
     if let Err(fault) = outcome {
         live.abort();
+        executing.abort();
         runner.abort();
         return Err(fault);
     }
@@ -290,10 +324,160 @@ async fn once(core: &Core, credentials: &Credentials) -> Result<(), Fault> {
                 core.status(&SyncState::Live { synced_at: chrono::Utc::now() }).await;
             }
             _ = &mut live => {
+                executing.abort();
                 runner.abort();
                 return Ok(());
             }
         }
+    }
+}
+
+/// Carrying out approved `send_message` actions.
+///
+/// The core has checked status, expiry, token and version before handing
+/// one out. This side checks what only it can see, sends once, and
+/// reports once. No retry: a message sent twice is worse than one that
+/// failed (design 05).
+mod execute {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use genatrix_connector::capability::AccountCapability;
+    use genatrix_connector::protocol::{ActionToDo, Report, outcome};
+    use genatrix_connector_telegram::sync::{self, Conversation};
+    use grammers_client::Client;
+    use grammers_client::InvocationError;
+    use grammers_client::message::InputMessage;
+    use serde::Deserialize;
+    use sha2::{Digest, Sha256};
+
+    use super::Core;
+
+    /// How often the core is asked.
+    const PULL_EVERY: Duration = Duration::from_secs(15);
+
+    /// The `send_message` effect as the core serializes it.
+    #[derive(Debug, Deserialize)]
+    struct SendMessage {
+        account: String,
+        /// The thread key, `chat:<id>`.
+        chat: String,
+    }
+
+    pub async fn run(
+        core: Core,
+        client: Client,
+        capability: AccountCapability,
+        conversations: Arc<Vec<Conversation>>,
+    ) {
+        loop {
+            match core.pull_actions().await {
+                Ok(actions) => {
+                    for action in actions {
+                        let report =
+                            Box::pin(carry_out(&client, &capability, &conversations, action)).await;
+                        if let Err(e) = core.report(report).await {
+                            tracing::warn!(error = %e, "the core did not take the report");
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!(error = %e, "could not ask for approved actions"),
+            }
+            tokio::time::sleep(PULL_EVERY).await;
+        }
+    }
+
+    async fn carry_out(
+        client: &Client,
+        capability: &AccountCapability,
+        conversations: &[Conversation],
+        action: ActionToDo,
+    ) -> Report {
+        let mut report = Report {
+            account: capability.account.clone(),
+            action_id: action.id.clone(),
+            token: action.token.clone(),
+            outcome: outcome::FAILED.to_owned(),
+            detail: String::new(),
+            message: None,
+            chat: None,
+            message_id: None,
+        };
+        let conversation = match check(capability, conversations, &action) {
+            Ok(c) => c,
+            Err(detail) => {
+                tracing::warn!(action = %action.id, %detail, "not sent");
+                report.detail = detail;
+                return report;
+            }
+        };
+        let reply_to = action
+            .reply_to_external_id
+            .as_deref()
+            .and_then(|id| id.rsplit_once("/msg:"))
+            .and_then(|(_, n)| n.parse::<i32>().ok());
+        let input = InputMessage::new()
+            .text(action.payload.as_str())
+            .reply_to(reply_to);
+        match Box::pin(client.send_message(conversation.peer, input)).await {
+            Ok(message) => {
+                tracing::info!(action = %action.id, "sent");
+                outcome::EXECUTED.clone_into(&mut report.outcome);
+                report.chat = sync::sent(conversation, &message);
+            }
+            Err(InvocationError::Rpc(e)) => {
+                // Telegram answered, and the answer was no: nothing went out.
+                report.detail = format!("Telegram refused: {e}");
+                tracing::warn!(action = %action.id, detail = %report.detail, "not sent");
+            }
+            Err(e) => {
+                // The request left and the answer did not come back.
+                outcome::UNKNOWN.clone_into(&mut report.outcome);
+                report.detail = format!("the connection failed before Telegram answered: {e}");
+                tracing::warn!(action = %action.id, detail = %report.detail, "outcome unknown");
+            }
+        }
+        report
+    }
+
+    fn check<'c>(
+        capability: &AccountCapability,
+        conversations: &'c [Conversation],
+        action: &ActionToDo,
+    ) -> Result<&'c Conversation, String> {
+        if action.kind != "send_message" {
+            return Err(format!(
+                "the Telegram connector does not do {}",
+                action.kind
+            ));
+        }
+        if !capability.may_do(&action.kind) {
+            return Err(format!(
+                "{} was not granted {}",
+                capability.account, action.kind
+            ));
+        }
+        if hex::encode(Sha256::digest(action.payload.as_bytes())) != action.payload_hash {
+            return Err("the words do not match the approved version".to_owned());
+        }
+        let effect: SendMessage = serde_json::from_str(&action.effect_json)
+            .map_err(|e| format!("the effect could not be read: {e}"))?;
+        if effect.account != capability.account {
+            return Err(format!(
+                "the action is for {}, and this is {}",
+                effect.account, capability.account
+            ));
+        }
+        let id: i64 = effect
+            .chat
+            .strip_prefix("chat:")
+            .unwrap_or(&effect.chat)
+            .parse()
+            .map_err(|_| format!("{} is not a conversation", effect.chat))?;
+        conversations
+            .iter()
+            .find(|c| c.id == id)
+            .ok_or_else(|| "the conversation is not one this account has open".to_owned())
     }
 }
 

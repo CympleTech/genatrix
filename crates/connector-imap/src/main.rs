@@ -17,6 +17,7 @@ use clap::Parser;
 use genatrix_connector::capability::AccountCapability;
 use genatrix_connector::protocol::{Client, TOKEN_ENV};
 use genatrix_connector::{Fault, SyncState};
+use genatrix_connector_imap::execute;
 use genatrix_connector_imap::ipc::IpcSink;
 use genatrix_connector_imap::{Credentials, Imap, run_account};
 use tokio::sync::{Mutex, watch};
@@ -67,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(accounts = assign.accounts.len(), "assigned");
 
     let mut tasks = Vec::new();
+    let mut tokens_to_execute = Vec::new();
     for assignment in assign.accounts {
         let capability: AccountCapability = serde_json::from_str(&assignment.capability_json)?;
         let account = capability.account.clone();
@@ -90,6 +92,16 @@ async fn main() -> anyhow::Result<()> {
             .find(|h| h.port == 993 || h.port == 143)
             .cloned();
         let secret = assignment.secret;
+        // Approved actions, alongside the reading. A separate task: a
+        // mailbox that is slow to read must not hold up a reply the user
+        // has approved, and the other way round.
+        if capability.may_do("send_mail") {
+            tokens_to_execute.push(tokio::spawn(execute::run(
+                sink.clone(),
+                capability.clone(),
+                secret.clone(),
+            )));
+        }
         let connect_capability = capability.clone();
         let connect = move || {
             let host = imap_host.clone();
@@ -129,7 +141,11 @@ async fn main() -> anyhow::Result<()> {
     }
     // Every account has stopped for a reason only the user can fix. Stay
     // up so the core does not restart this process in a loop; it will be
-    // replaced when the user signs in again.
+    // replaced when the user signs in again. Sending stops with reading:
+    // a password the server refused for IMAP will be refused for SMTP.
+    for task in tokens_to_execute {
+        task.abort();
+    }
     std::future::pending::<()>().await;
     Ok(())
 }

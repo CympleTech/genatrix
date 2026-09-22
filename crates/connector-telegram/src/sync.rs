@@ -129,6 +129,14 @@ pub fn from_update(message: &Message) -> Option<ChatMessage> {
     to_wire(&conversation, message)
 }
 
+/// A message this account just sent, in the shape the core stores. The
+/// same shape the update stream will deliver for it, under the same
+/// identifier, so the two are one item.
+#[must_use]
+pub fn sent(conversation: &Conversation, message: &Message) -> Option<ChatMessage> {
+    to_wire(conversation, message)
+}
+
 /// The message as the core stores it. Service messages (someone joined,
 /// the photo changed) are not correspondence and yield nothing.
 fn to_wire(conversation: &Conversation, message: &Message) -> Option<ChatMessage> {

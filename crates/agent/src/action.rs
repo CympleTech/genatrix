@@ -259,6 +259,15 @@ pub struct Action {
     /// The live execution token, present only while approved and unused.
     #[serde(skip_serializing_if = "Option::is_none")]
     token: Option<ExecutionToken>,
+    /// When the token was spent, that is, when a connector took the action
+    /// to carry it out. A connector that then never reports leaves the
+    /// action here; after a while the core calls that outcome unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handed_at: Option<DateTime<Utc>>,
+    /// For a mail whose outcome is unknown: the `Message-ID` it was
+    /// submitted under, so that a later sync can confirm it went out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submitted_as: Option<String>,
 }
 
 /// Why a transition was refused.
@@ -328,6 +337,8 @@ impl Action {
             decided_at: None,
             expires_at: now + Duration::days(DEFAULT_TTL_DAYS),
             token: None,
+            handed_at: None,
+            submitted_as: None,
         }
     }
 
@@ -481,7 +492,42 @@ impl Action {
             .clone();
         // Spent: a second attempt with the same token finds nothing.
         self.token = None;
+        self.handed_at = Some(now);
         Ok(version)
+    }
+
+    /// Whether a connector holds this action right now: approved, token
+    /// spent, no report yet.
+    #[must_use]
+    pub const fn is_in_a_connectors_hands(&self) -> bool {
+        matches!(self.status, Status::Approved { .. }) && self.token.is_none()
+    }
+
+    /// The user takes an approval back before a connector has acted on it.
+    ///
+    /// Possible only while the token is unspent: once a connector holds the
+    /// action the words may already be on their way, and the honest state
+    /// then is whatever the connector reports, not a withdrawal that would
+    /// pretend otherwise.
+    pub fn withdraw(&mut self, reason: &str, now: DateTime<Utc>) -> Result<(), ActionError> {
+        if !matches!(self.status, Status::Approved { .. }) {
+            return Err(ActionError::WrongStatus {
+                found: status_name(&self.status),
+                expected: "approved",
+            });
+        }
+        if self.token.is_none() {
+            return Err(ActionError::WrongStatus {
+                found: "in a connector's hands",
+                expected: "approved and not yet taken",
+            });
+        }
+        self.token = None;
+        self.status = Status::Declined {
+            reason: reason.to_owned(),
+        };
+        self.decided_at = Some(now);
+        Ok(())
     }
 
     /// Record how execution ended.
@@ -537,6 +583,29 @@ mod tests {
             version: a.current().seq,
             payload_hash: a.current().payload_hash.clone(),
         }
+    }
+
+    #[test]
+    fn an_approval_can_be_withdrawn_until_a_connector_takes_it() {
+        let now = Utc::now();
+        let mut a = action();
+        assert!(
+            a.withdraw("changed my mind", now).is_err(),
+            "nothing to withdraw while pending"
+        );
+        let token = a.approve(&approval_of(&a), now).unwrap();
+        let mut held = a.clone();
+        a.withdraw("changed my mind", now).unwrap();
+        assert!(matches!(a.status, Status::Declined { ref reason } if reason == "changed my mind"));
+        assert!(a.token_for_execution().is_none(), "the token dies with it");
+
+        held.begin_execution(&token, now).unwrap();
+        assert!(held.is_in_a_connectors_hands());
+        assert_eq!(held.handed_at, Some(now));
+        assert!(
+            held.withdraw("too late", now).is_err(),
+            "once handed out the words may be on their way; only the report can say"
+        );
     }
 
     #[test]

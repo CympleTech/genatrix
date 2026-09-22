@@ -255,6 +255,20 @@ and everything in it is your mail. It is still plain HTTP with one shared
 secret: fine on a network you trust, not fine on one you do not. Pass
 `--token` to keep a link working across restarts.
 
+**Reply.** Open a message and press "Draft a reply". The model writes one
+in your voice, from the conversation and your own earlier messages to that
+person, and puts it on the Approvals page: the evidence it read, why it
+thinks a reply is due, the draft to change in place, and one button that
+says what it does, "Approve and send". Declining asks why, in a word or
+two. Nothing is sent until you press that button. Then the connector sends
+it, once, through the submission host the account was granted when you
+added it (Gmail's on port 587, with the same app password), and the sent
+copy appears on the timeline as your own message. If the connection drops
+before the server's final answer, the action reads "possibly sent; waiting
+for sync to confirm", and the next sync settles it. Genatrix never sends a
+message twice on its own. An approval not yet taken by the connector can be
+withdrawn from the same card.
+
 **Read it all again.** When normalization improves, `genatrix reprocess`
 derives every item again from its stored raw record, in place; nothing is
 fetched.

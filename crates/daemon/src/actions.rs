@@ -46,15 +46,26 @@ pub struct ActionRecord {
 /// The store and the ledger, for actions.
 pub struct Actions {
     nonces: Mutex<HashMap<String, String>>,
+    /// Action id to the token it was handed out with. The token is spent
+    /// inside the action the moment it is handed out; this is the copy the
+    /// report is checked against, so that only the connector that took an
+    /// action can say how it went.
+    handed: Mutex<HashMap<String, String>>,
 }
 
 impl Default for Actions {
     fn default() -> Self {
         Self {
             nonces: Mutex::new(HashMap::new()),
+            handed: Mutex::new(HashMap::new()),
         }
     }
 }
+
+/// How long a connector has to report on an action it took before the core
+/// stops waiting and calls the outcome unknown. Sending is seconds; a
+/// connector that is silent this long has died or lost the core.
+pub const REPORT_WITHIN: chrono::Duration = chrono::Duration::minutes(10);
 
 /// What can go wrong deciding an action.
 #[derive(Debug, thiserror::Error)]
@@ -256,7 +267,8 @@ impl Actions {
     }
 
     /// The user declined, with a reason (design 03: it may be short, but it
-    /// is there).
+    /// is there). An approval not yet taken by a connector is withdrawn the
+    /// same way; one already taken cannot be, and the refusal says so.
     pub fn decline(
         &self,
         store: &Store,
@@ -271,27 +283,59 @@ impl Actions {
         } else {
             reason
         };
-        action.decline(reason, Utc::now())?;
+        let event = if matches!(action.status, Status::Approved { .. }) {
+            action.withdraw(reason, Utc::now())?;
+            "withdrawn"
+        } else {
+            action.decline(reason, Utc::now())?;
+            "declined"
+        };
         Self::save(store, &action)?;
-        Self::record(ledger, &action, "declined", "user", reason)?;
+        Self::record(ledger, &action, event, "user", reason)?;
         Ok(action)
     }
 
-    /// Lapse what nobody decided in time. Returns how many.
+    /// Lapse what nobody decided in time, and give up on what a connector
+    /// took and never reported. Returns how many actions changed.
     pub fn expire_due(&self, store: &Store, ledger: &Ledger) -> anyhow::Result<usize> {
         let now = Utc::now();
-        let mut expired = 0;
+        let mut changed = 0;
         for mut action in self.list(store, Some("pending"), 1000)? {
             if action.expire_if_due(now) {
                 Self::save(store, &action)?;
                 Self::record(ledger, &action, "expired", "core", "")?;
-                expired += 1;
+                changed += 1;
             }
         }
-        Ok(expired)
+        for mut action in self.list(store, Some("approved"), 1000)? {
+            let silent = action.is_in_a_connectors_hands()
+                && action.handed_at.is_some_and(|at| now - at > REPORT_WITHIN);
+            if silent {
+                // Not `Failed`: the connector may have sent it in its last
+                // moments. Design 05 keeps the vague case honest.
+                action.finish(Status::Unknown {
+                    detail: "the connector took it and did not report back; \
+                             check the sent folder before sending again"
+                        .to_owned(),
+                })?;
+                self.handed
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&action.id);
+                Self::save(store, &action)?;
+                Self::record(
+                    ledger,
+                    &action,
+                    "unknown",
+                    "core",
+                    "no report from the connector",
+                )?;
+                changed += 1;
+            }
+        }
+        Ok(changed)
     }
 
-    #[allow(dead_code)] // the connector side of design 03 lands next
     /// Approved actions a connector may execute for an account, with their
     /// tokens. Marked as handed out in the ledger; the action stays
     /// approved until the connector reports.
@@ -320,6 +364,10 @@ impl Actions {
                         "core",
                         "handed to the connector",
                     )?;
+                    self.handed
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(action.id.clone(), token.expose().to_owned());
                     out.push((action, version, token));
                 }
                 Err(e) => {
@@ -331,19 +379,31 @@ impl Actions {
         Ok(out)
     }
 
-    #[allow(dead_code)] // the connector side of design 03 lands next
-    /// The connector reported. Status becomes executed, failed or unknown;
-    /// the result item, when there is one, closes the loop in the data.
-    pub fn finish(
+    /// The connector reported. Only the connector that was handed the
+    /// action, shown by the token, may say how it went. Status becomes
+    /// executed, failed or unknown; the result item, when there is one,
+    /// closes the loop in the data; for an unknown mail the `Message-ID` is
+    /// kept so that sync can confirm it later.
+    pub fn report(
         &self,
         store: &Store,
         ledger: &Ledger,
         id: &str,
+        token: &str,
         status: Status,
-    ) -> anyhow::Result<Option<Action>> {
-        let Some(mut action) = self.get(store, id)? else {
-            return Ok(None);
-        };
+        submitted_as: Option<String>,
+    ) -> Result<Action, DecisionError> {
+        let mut action = self.get(store, id)?.ok_or(DecisionError::NotFound)?;
+        {
+            let mut handed = self
+                .handed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if handed.get(id).is_none_or(|t| t != token) {
+                return Err(genatrix_agent::action::ActionError::BadToken.into());
+            }
+            handed.remove(id);
+        }
         let event = match &status {
             Status::Executed { .. } => "executed",
             Status::Failed { .. } => "failed",
@@ -355,10 +415,44 @@ impl Actions {
             Status::Failed { detail } | Status::Unknown { detail } => detail.clone(),
             _ => String::new(),
         };
+        if matches!(status, Status::Unknown { .. }) {
+            action.submitted_as = submitted_as;
+        }
         action.finish(status)?;
         Self::save(store, &action)?;
         Self::record(ledger, &action, event, "connector", detail)?;
-        Ok(Some(action))
+        Ok(action)
+    }
+
+    /// Sync brought in a mail the account sent. If an action with an
+    /// unknown outcome was submitted under that `Message-ID`, it did go
+    /// out: the action becomes executed with this item as its result
+    /// (design 05, "发送"). Returns whether one was.
+    pub fn confirm_sent(
+        &self,
+        store: &Store,
+        ledger: &Ledger,
+        account: &str,
+        message_id: &str,
+        item: ItemId,
+    ) -> anyhow::Result<bool> {
+        for stored in store.actions_for_account(account, "unknown")? {
+            let mut action: Action = serde_json::from_str(&stored.value)?;
+            if action.submitted_as.as_deref() != Some(message_id) {
+                continue;
+            }
+            action.status = Status::Executed { result: Some(item) };
+            Self::save(store, &action)?;
+            Self::record(
+                ledger,
+                &action,
+                "executed",
+                "core",
+                format!("{item}: confirmed by sync"),
+            )?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 

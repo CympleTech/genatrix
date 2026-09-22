@@ -15,6 +15,12 @@
 //!
 //! Cursors and states cross as the JSON they are stored and shown as. The
 //! transport carries them; it does not read them.
+//!
+//! Approved actions go the same way, and the same direction: the connector
+//! asks for them (design 05, "动作执行": pulled, never pushed), gets each
+//! one once with its execution token, and reports how it went. What it
+//! sent comes back in the report, so the core can keep it as the outbound
+//! item the action produced.
 
 use std::io;
 use std::path::Path;
@@ -38,11 +44,16 @@ pub struct Envelope {
     #[prost(uint64, tag = "1")]
     pub id: u64,
     /// What it says.
-    #[prost(oneof = "Body", tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12")]
+    #[prost(
+        oneof = "Body",
+        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15"
+    )]
     pub body: Option<Body>,
 }
 
 /// Everything either side can say.
+// A report carries the message that went out; a frame lives for one call.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, PartialEq, prost::Oneof)]
 pub enum Body {
     /// Connector to core, first.
@@ -78,6 +89,107 @@ pub enum Body {
     /// The core could not do that.
     #[prost(message, tag = "12")]
     Failure(Failure),
+    /// Anything approved for me to carry out?
+    #[prost(message, tag = "13")]
+    PullActions(PullActions),
+    /// These, each handed out once.
+    #[prost(message, tag = "14")]
+    Actions(Actions),
+    /// This is how one of them went.
+    #[prost(message, tag = "15")]
+    Report(Report),
+}
+
+/// Ask for approved actions on one account.
+#[derive(Clone, PartialEq, Message)]
+pub struct PullActions {
+    /// Whose.
+    #[prost(string, tag = "1")]
+    pub account: String,
+}
+
+/// Approved actions, each with the one token that lets it run.
+#[derive(Clone, PartialEq, Message)]
+pub struct Actions {
+    /// In the order they were approved.
+    #[prost(message, repeated, tag = "1")]
+    pub actions: Vec<ActionToDo>,
+}
+
+/// One approved action as the connector receives it.
+///
+/// The core has already checked status, expiry and token on its side and
+/// spent the token; the connector checks again what it can see (design 05:
+/// the kind against its capability, the account against its own, the
+/// content against the hash), and refuses rather than guesses.
+#[derive(Clone, PartialEq, Message)]
+pub struct ActionToDo {
+    /// The action.
+    #[prost(string, tag = "1")]
+    pub id: String,
+    /// `send_mail`, `send_message`, ...
+    #[prost(string, tag = "2")]
+    pub kind: String,
+    /// The one-time execution token; goes back in the report.
+    #[prost(string, tag = "3")]
+    pub token: String,
+    /// The approved version.
+    #[prost(uint32, tag = "4")]
+    pub version: u32,
+    /// SHA-256 of `payload`, hex, as approved.
+    #[prost(string, tag = "5")]
+    pub payload_hash: String,
+    /// The `Effect`, as JSON: whom, in reply to what.
+    #[prost(string, tag = "6")]
+    pub effect_json: String,
+    /// The words to send.
+    #[prost(string, tag = "7")]
+    pub payload: String,
+    /// For a chat reply: the source id of the message replied to, which
+    /// only the core can look up.
+    #[prost(string, optional, tag = "8")]
+    pub reply_to_external_id: Option<String>,
+}
+
+/// How an action went. One report per action, ever.
+#[derive(Clone, PartialEq, Message)]
+pub struct Report {
+    /// Whose.
+    #[prost(string, tag = "1")]
+    pub account: String,
+    /// Which action.
+    #[prost(string, tag = "2")]
+    pub action_id: String,
+    /// The token it was handed with.
+    #[prost(string, tag = "3")]
+    pub token: String,
+    /// `executed`, `failed` or `unknown` (design 03: three outcomes).
+    #[prost(string, tag = "4")]
+    pub outcome: String,
+    /// What happened, for the record and the user.
+    #[prost(string, tag = "5")]
+    pub detail: String,
+    /// The mail that went out, when one did.
+    #[prost(message, optional, tag = "6")]
+    pub message: Option<MailMessage>,
+    /// The chat message that went out, when one did.
+    #[prost(message, optional, tag = "7")]
+    pub chat: Option<ChatMessage>,
+    /// The `Message-ID` a mail was submitted under, whether or not the
+    /// server's final answer arrived: it is what sync confirms an unknown
+    /// outcome by.
+    #[prost(string, optional, tag = "8")]
+    pub message_id: Option<String>,
+}
+
+/// The three ways an action can end (design 03).
+pub mod outcome {
+    /// It went out; the report carries what did.
+    pub const EXECUTED: &str = "executed";
+    /// Nothing went out.
+    pub const FAILED: &str = "failed";
+    /// Submitted; the final answer never came.
+    pub const UNKNOWN: &str = "unknown";
 }
 
 /// Who is calling.

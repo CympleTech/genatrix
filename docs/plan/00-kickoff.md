@@ -79,7 +79,8 @@ Design 10, "行动". Done when design 00's success standard is met whole: the au
 | The approval endpoint: local only, version and hash and a page nonce; editing makes a new version and voids an earlier approval; three days to expiry | done |
 | The drafter: a reply in the user's voice from the conversation and the user's own messages, as version one of a pending action, on request from a message | done; quality to be judged in use |
 | The approval panel: evidence, why, an editable draft, "Approve and send", a decline with a reason; the Today page shows the first five | done |
-| Connectors execute approved actions and report; the sent message flows back as an outbound item | not started |
+| Connectors pull approved actions, check them again, send once and report; the sent message flows back as an outbound item in the answered thread; an unknown outcome is confirmed by sync; a silent connector becomes unknown after ten minutes | done; to be exercised on a real reply |
+| Withdrawing an approval before the connector takes it | done |
 | Edited drafts and decline reasons as signal (design 07) | recorded as versions and records; not yet used |
 | The conversation page | not started |
 

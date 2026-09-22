@@ -40,6 +40,22 @@ pub fn mail(
         incoming.account.clone(),
         incoming.external_id.clone(),
     );
+    // A mail this account sent through a connector was kept under its own
+    // `Message-ID` before the server ever saw it. When sync brings the
+    // server's copy back under the server's identifier, it is the same
+    // message, and design 05 has it skipped, not doubled.
+    if !incoming.external_id.starts_with("mid:")
+        && let Some(message_id) = &incoming.mail.message_id
+        && store
+            .current_item(&Source::new(
+                Connector::Imap,
+                incoming.account.clone(),
+                format!("mid:{message_id}"),
+            ))?
+            .is_some()
+    {
+        return Ok(Ingested::AlreadyHad);
+    }
     let raw = Raw::describe(source.clone(), "message/rfc822", &incoming.raw);
     if !store.insert_raw(&raw)? {
         return Ok(Ingested::AlreadyHad);

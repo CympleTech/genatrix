@@ -68,6 +68,33 @@ impl StoreSink {
         Ok(new)
     }
 
+    /// A mail the account sent, arriving by sync, may be the one an action
+    /// with an unknown outcome was submitted as. Then it did go out.
+    fn maybe_confirm_sent(&self, incoming: &Incoming, id: genatrix_model::ItemId) {
+        let Some(message_id) = &incoming.mail.message_id else {
+            return;
+        };
+        let from_this_account = incoming
+            .mail
+            .from
+            .as_ref()
+            .is_some_and(|f| f.address.eq_ignore_ascii_case(&self.account));
+        if !from_this_account {
+            return;
+        }
+        match self.system.actions.confirm_sent(
+            &self.system.store,
+            &self.system.ledger,
+            &self.account,
+            message_id,
+            id,
+        ) {
+            Ok(true) => tracing::info!(item = %id, "an unknown send was confirmed by sync"),
+            Ok(false) => {}
+            Err(e) => tracing::warn!(error = %e, "could not check the sent mail against actions"),
+        }
+    }
+
     /// A store failure, as the connector sees it: transient, because the
     /// likely causes, a full disk or a locked file, pass, and the backoff
     /// keeps the account from being hammered meanwhile.
@@ -106,7 +133,10 @@ impl Sink for StoreSink {
                 &self.system.blob_files,
                 incoming,
             ) {
-                Ok(Ingested::Added(_)) => new += 1,
+                Ok(Ingested::Added(id)) => {
+                    new += 1;
+                    self.maybe_confirm_sent(incoming, id);
+                }
                 Ok(Ingested::AlreadyHad) => {}
                 Err(e) => return Err(self.fault("could not store a message", e)),
             }

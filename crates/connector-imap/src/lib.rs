@@ -9,10 +9,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod execute;
 pub mod imap;
 pub mod ipc;
 pub mod normalize;
 pub mod sandbox;
+pub mod send;
 pub mod source;
 pub mod sync;
 pub mod text;

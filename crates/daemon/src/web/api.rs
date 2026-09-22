@@ -395,6 +395,11 @@ struct ActionView {
     /// Drafted where. Local, always, in phase one.
     drafted: &'static str,
     versions: u32,
+    /// Approved and not yet taken by a connector: the user can still take
+    /// the approval back.
+    can_withdraw: bool,
+    /// The outbound item the action produced, once it has.
+    result: Option<SourceRef>,
 }
 
 fn action_view(system: &System, a: &genatrix_agent::Action, nonce: Option<String>) -> ActionView {
@@ -426,9 +431,17 @@ fn action_view(system: &System, a: &genatrix_agent::Action, nonce: Option<String
     let status_detail = match &a.status {
         Status::Declined { reason } => reason.clone(),
         Status::Failed { detail } | Status::Unknown { detail } => detail.clone(),
-        Status::Executed { result } => result.map(|r| r.to_string()).unwrap_or_default(),
+        Status::Approved { .. } if a.is_in_a_connectors_hands() => {
+            "handed to the connector".to_owned()
+        }
         _ => String::new(),
     };
+    let result = match &a.status {
+        Status::Executed { result: Some(id) } => source_ref(system, *id),
+        _ => None,
+    };
+    let can_withdraw =
+        matches!(a.status, Status::Approved { .. }) && a.token_for_execution().is_some();
     let current = a.current();
     ActionView {
         id: a.id.clone(),
@@ -451,6 +464,8 @@ fn action_view(system: &System, a: &genatrix_agent::Action, nonce: Option<String
         nonce,
         drafted: "on this device",
         versions: u32::try_from(a.versions.len()).unwrap_or(0),
+        can_withdraw,
+        result,
     }
 }
 

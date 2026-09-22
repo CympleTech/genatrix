@@ -54,6 +54,27 @@ impl IpcSink {
         }
     }
 
+    /// Ask the core for approved actions on this account. Each comes once.
+    pub async fn pull_actions(&self) -> Result<Vec<protocol::ActionToDo>, Fault> {
+        match self
+            .call(Body::PullActions(protocol::PullActions {
+                account: self.account.clone(),
+            }))
+            .await?
+        {
+            Body::Actions(actions) => Ok(actions.actions),
+            _ => Err(Fault::transient(
+                &self.account,
+                "the core answered out of turn",
+            )),
+        }
+    }
+
+    /// Tell the core how an action went.
+    pub async fn report(&self, report: protocol::Report) -> Result<(), Fault> {
+        self.call(Body::Report(report)).await.map(|_| ())
+    }
+
     /// Tell the core how the account is doing.
     pub async fn status(&self, state: &SyncState) -> Result<(), Fault> {
         let state_json = serde_json::to_string(state)

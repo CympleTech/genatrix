@@ -226,8 +226,15 @@ async fn once(core: &Core, credentials: &Credentials) -> Result<(), Fault> {
         }
     }
 
-    let conversations = sync::conversations(&client).await.map_err(transient)?;
-    tracing::info!(conversations = conversations.len(), "dialogs listed");
+    let all = sync::conversations(&client).await.map_err(transient)?;
+    let archived: std::collections::BTreeSet<i64> =
+        all.iter().filter(|c| c.archived).map(|c| c.id).collect();
+    let conversations: Vec<Conversation> = all.into_iter().filter(|c| !c.archived).collect();
+    tracing::info!(
+        conversations = conversations.len(),
+        archived = archived.len(),
+        "dialogs listed; archived ones are left alone"
+    );
     save_session(core, &session).await?;
 
     // Live updates in their own task; history below, one page at a time.
@@ -247,6 +254,7 @@ async fn once(core: &Core, credentials: &Credentials) -> Result<(), Fault> {
             match stream.next().await {
                 Ok(Update::NewMessage(m) | Update::MessageEdited(m)) => {
                     if let Some(chat) = sync::from_update(&m)
+                        && !archived.contains(&chat_id(&chat))
                         && let Err(e) = live_core.store(vec![chat]).await
                     {
                         tracing::warn!(error = %e, "could not store an update");
@@ -287,6 +295,14 @@ async fn once(core: &Core, credentials: &Credentials) -> Result<(), Fault> {
             }
         }
     }
+}
+
+/// The conversation a wire message belongs to, from its thread key.
+fn chat_id(chat: &protocol::ChatMessage) -> i64 {
+    chat.thread_key
+        .strip_prefix("chat:")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
 
 async fn save_session(core: &Core, session: &JsonSession) -> Result<(), Fault> {

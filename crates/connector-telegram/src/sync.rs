@@ -32,6 +32,10 @@ pub struct Conversation {
     pub title: String,
     /// How to ask Telegram about it.
     pub peer: grammers_session::types::PeerRef,
+    /// Whether the user has archived it. Telegram keeps archived chats in
+    /// folder 1; an archived chat is one the user has chosen not to look
+    /// at, and the connector leaves it alone (design 05).
+    pub archived: bool,
 }
 
 /// The conversation's key within the account.
@@ -65,11 +69,16 @@ fn conversation_of(dialog: &Dialog) -> Conversation {
         Peer::Group(_) => "group",
         Peer::Channel(_) => "channel",
     };
+    let archived = match &dialog.raw {
+        grammers_tl_types::enums::Dialog::Dialog(d) => d.folder_id == Some(1),
+        grammers_tl_types::enums::Dialog::Folder(_) => false,
+    };
     Conversation {
         id: peer.id().bot_api_dialog_id_unchecked(),
         kind,
         title: peer.name().unwrap_or("").to_owned(),
         peer: dialog.peer_ref(),
+        archived,
     }
 }
 
@@ -115,6 +124,7 @@ pub fn from_update(message: &Message) -> Option<ChatMessage> {
             id: peer.id(),
             auth: grammers_session::types::PeerAuth::default(),
         },
+        archived: false,
     };
     to_wire(&conversation, message)
 }

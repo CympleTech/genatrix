@@ -59,28 +59,39 @@ impl Program {
         }
     }
 
-    fn arguments(&self, data_dir: &Path, port: u16) -> Vec<String> {
+    fn arguments(&self, data_dir: &Path, listen: &Listen) -> Vec<String> {
         let dir = data_dir.display().to_string();
-        match self {
+        let mut args = match self {
             Self::Shell { shell, core } => vec![
                 shell.display().to_string(),
                 "--genatrix".into(),
                 core.display().to_string(),
                 "--data-dir".into(),
                 dir,
-                "--port".into(),
-                port.to_string(),
             ],
             Self::CoreOnly { core } => vec![
                 core.display().to_string(),
                 "--data-dir".into(),
                 dir,
                 "serve".into(),
-                "--port".into(),
-                port.to_string(),
             ],
+        };
+        args.extend(["--port".into(), listen.port.to_string()]);
+        if !listen.bind.is_loopback() {
+            args.extend(["--bind".into(), listen.bind.to_string()]);
         }
+        args
     }
+}
+
+/// Where the installed core listens (design 06: loopback, or a private
+/// network's address for paired devices).
+#[derive(Clone, Copy, Debug)]
+pub struct Listen {
+    /// Address.
+    pub bind: std::net::IpAddr,
+    /// Port.
+    pub port: u16,
 }
 
 /// The property list for one installation.
@@ -89,9 +100,9 @@ impl Program {
 /// from the menu, which exits cleanly, does not (design 09: "退出要从菜单栏
 /// 图标里点"). It is back at the next login either way.
 #[must_use]
-pub fn plist(program: &Program, data_dir: &Path, port: u16, log: &Path) -> String {
+pub fn plist(program: &Program, data_dir: &Path, listen: &Listen, log: &Path) -> String {
     let arguments = program
-        .arguments(data_dir, port)
+        .arguments(data_dir, listen)
         .iter()
         .fold(String::new(), |mut out, a| {
             out.push_str("    <string>");
@@ -150,7 +161,7 @@ fn domain() -> String {
 
 /// Write the property list and start the agent. Replaces an existing one.
 /// Says what was installed.
-pub fn install(data_dir: &Path, port: u16) -> anyhow::Result<(PathBuf, Program)> {
+pub fn install(data_dir: &Path, listen: &Listen) -> anyhow::Result<(PathBuf, Program)> {
     let core = std::env::current_exe()?.canonicalize()?;
     let program = Program::beside(core);
     let log_dir = data_dir.join("logs");
@@ -168,7 +179,7 @@ pub fn install(data_dir: &Path, port: u16) -> anyhow::Result<(PathBuf, Program)>
     }
     std::fs::write(
         &path,
-        plist(&program, data_dir, port, &log_dir.join("genatrix.log")),
+        plist(&program, data_dir, listen, &log_dir.join("genatrix.log")),
     )?;
     // `bootstrap` needs the caller to be inside the user's GUI session; from
     // SSH or a tool it fails with an I/O error. The older `load` reaches the
@@ -240,6 +251,30 @@ fn launchctl(args: &[&str]) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    const LOOPBACK: Listen = Listen {
+        bind: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        port: 7717,
+    };
+
+    #[test]
+    fn loopback_is_left_unsaid_and_another_address_is_passed_on() {
+        let core = Program::CoreOnly {
+            core: PathBuf::from("/opt/genatrix/bin/genatrix"),
+        };
+        let local = plist(&core, Path::new("/data"), &LOOPBACK, Path::new("/data/log"));
+        assert!(!local.contains("--bind"), "the default needs no flag");
+        let tailnet = plist(
+            &core,
+            Path::new("/data"),
+            &Listen {
+                bind: "100.101.102.103".parse().unwrap(),
+                port: 7717,
+            },
+            Path::new("/data/log"),
+        );
+        assert!(tailnet.contains("<string>--bind</string>\n    <string>100.101.102.103</string>"));
+    }
+
     #[test]
     fn without_the_shell_the_core_is_served_directly() {
         let text = plist(
@@ -247,7 +282,7 @@ mod tests {
                 core: PathBuf::from("/opt/genatrix/bin/genatrix"),
             },
             Path::new("/Users/someone/Library/Application Support/Genatrix"),
-            7717,
+            &LOOPBACK,
             Path::new("/Users/someone/Library/Application Support/Genatrix/logs/genatrix.log"),
         );
         assert!(text.contains("<string>/opt/genatrix/bin/genatrix</string>"));
@@ -269,7 +304,7 @@ mod tests {
                 core: PathBuf::from("/opt/genatrix/bin/genatrix"),
             },
             Path::new("/data"),
-            7717,
+            &LOOPBACK,
             Path::new("/data/logs/genatrix.log"),
         );
         assert!(text.contains("<string>/opt/genatrix/bin/genatrix-menubar</string>"));
@@ -302,7 +337,10 @@ mod tests {
                 core: PathBuf::from("/tmp/a&b/genatrix"),
             },
             Path::new("/tmp/<data>"),
-            1,
+            &Listen {
+                bind: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                port: 1,
+            },
             Path::new("/tmp/log"),
         );
         assert!(text.contains("/tmp/a&amp;b/genatrix"));

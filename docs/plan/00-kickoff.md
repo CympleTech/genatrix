@@ -85,6 +85,21 @@ Design 10, "行动". Done when design 00's success standard is met whole: the au
 | The conversation page: a bounded plan of at most eight model calls, one tool per step (search, thread, person, time, draft), every step on record and openable from the answer, cites checked against what was shown, a proposed draft shown as the same card the Approvals page uses | done; quality to be judged in use |
 | The Records page shows every action step and every run, each run openable into its steps | done |
 
+## Interface v0.4 status
+
+Design 06 v0.4: one daemon, any device with a browser. Decided after M4, when the
+first month of use began and the test page was not something to hand a phone.
+
+| Task | State |
+|---|---|
+| Design 02, 03, 06, 08, 09 amended: pairing replaces the start-up token, approvals accept paired devices, the network boundary is the private network's, the shell shows the page in a window | done |
+| Device pairing: a code made on loopback, one use, five minutes; a hashed secret per device in the store; a cookie the device carries; revocation; the test for design 02's invariant 11 | done |
+| The page rebuilt with Svelte and Vite, phone first, two languages following the system, the eight screens and the pairing screen; built output committed and compiled into the core | done; to be judged in use |
+| The menu bar shell opens the page in a web view window | done |
+| `service install --bind` and `serve --bind` for a private network address | done |
+| Backup, recovery code, export, delete, diagnostics on the Settings page (design 09) | not started |
+| First-run wizard (design 09) | not started |
+
 ## Spike status
 
 | Spike | Status | Blocked on |

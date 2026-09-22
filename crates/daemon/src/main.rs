@@ -111,20 +111,17 @@ enum Command {
         #[arg(long)]
         to: PathBuf,
     },
-    /// Serve the local interface.
+    /// Serve the interface.
     Serve {
         /// Address to listen on. Loopback by default, which only this machine
-        /// can reach. Anything else needs an access token, which is generated
-        /// and printed with the link.
+        /// can reach. A private network's address, such as a Tailscale or
+        /// other wireguard tunnel, lets paired devices reach it; pair them
+        /// from Settings on this machine.
         #[arg(long, default_value = "127.0.0.1")]
         bind: std::net::IpAddr,
         /// Port.
         #[arg(long, default_value_t = 7717)]
         port: u16,
-        /// Reuse this access token instead of a fresh one, so a link keeps
-        /// working across restarts. Ignored on loopback.
-        #[arg(long)]
-        token: Option<String>,
     },
 }
 
@@ -137,6 +134,10 @@ enum ServiceAction {
         /// Port for the interface.
         #[arg(long, default_value_t = 7717)]
         port: u16,
+        /// Address for the interface. Loopback by default; a private
+        /// network's address lets paired devices reach it.
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: std::net::IpAddr,
     },
     /// Stop it and remove the launch agent.
     Uninstall,
@@ -184,9 +185,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Service { action } => service(&config, &action),
         Command::Sync { limit } => sync(&config, limit).await,
-        Command::Serve { bind, port, token } => {
-            serve(&config, &web::Serving { bind, port, token }).await
-        }
+        Command::Serve { bind, port } => serve(&config, &web::Serving { bind, port }).await,
     }
 }
 
@@ -548,14 +547,18 @@ fn forget_account(config: &Config, address: &str) -> anyhow::Result<()> {
 
 fn service(config: &Config, action: &ServiceAction) -> anyhow::Result<()> {
     match action {
-        ServiceAction::Install { port } => {
+        ServiceAction::Install { port, bind } => {
             if !config.gateway_config_path().exists() {
                 anyhow::bail!(
                     "nothing to install yet: {} has not been initialised",
                     config.data_dir.display()
                 );
             }
-            let (path, program) = service::install(&config.data_dir, *port)?;
+            let listen = service::Listen {
+                bind: *bind,
+                port: *port,
+            };
+            let (path, program) = service::install(&config.data_dir, &listen)?;
             println!("installed  {}", path.display());
             match program {
                 service::Program::Shell { .. } => {

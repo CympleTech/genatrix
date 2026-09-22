@@ -42,6 +42,8 @@ pub struct System {
     pub model_state: tokio::sync::watch::Sender<crate::models::ModelState>,
     /// Actions: proposed, decided, executed, recorded.
     pub actions: crate::actions::Actions,
+    /// The live pairing code, if any (design 06, "形态").
+    pub pairing: crate::web::Pairing,
     /// Numbers that are slow to compute and slow to change: bytes on disk,
     /// bytes that left the device. Refreshed at most every half minute
     /// for a page that asks every five seconds.
@@ -157,6 +159,7 @@ impl System {
             model_state: crate::models::idle_state(),
             slow_status: std::sync::Mutex::new(None),
             actions: crate::actions::Actions::default(),
+            pairing: crate::web::Pairing::default(),
         })
     }
 }

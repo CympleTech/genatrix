@@ -1,20 +1,21 @@
-//! The local web interface.
+//! The web interface: one daemon, any device with a browser.
 //!
-//! Design: `docs/design/06-interface.md`.
+//! Design: `docs/design/06-interface.md`, "形态".
 //!
 //! A browser cannot speak to a Unix socket, so this is the one part of the
 //! system that listens on a TCP port. It listens on `127.0.0.1` by default,
-//! where nothing else can reach it. It can be told to listen elsewhere, which
-//! is genuinely useful for looking at it from a phone, and which brings an
-//! access token with it: see [`access`].
+//! where nothing else can reach it. It can be told to listen on a private
+//! network's address, where paired devices reach it: see [`access`] and
+//! [`devices`].
 //!
-//! The page is plain HTML, CSS and a little JavaScript, compiled into the
-//! binary. No build step, no package manager, nothing to install. When the
-//! interface grows past what that carries, it can grow a framework; until
-//! then a compile chain would buy nothing.
+//! The page is built from `web/` with Svelte and Vite into `dist/`, and the
+//! four files there are compiled into the binary. The build output is
+//! committed with the source, so a Rust toolchain alone builds the core; see
+//! `web/README.md` for the front-end side.
 
 mod access;
 mod api;
+mod devices;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -24,74 +25,78 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::get;
 
+pub use devices::Pairing;
+
 use crate::system::System;
-use access::Access;
 
-const INDEX_HTML: &str = include_str!("assets/index.html");
-const STYLE_CSS: &str = include_str!("assets/style.css");
-const APP_JS: &str = include_str!("assets/app.js");
+const INDEX_HTML: &str = include_str!("dist/index.html");
+const APP_JS: &str = include_str!("dist/app.js");
+const APP_CSS: &str = include_str!("dist/app.css");
+const MANIFEST: &str = include_str!("dist/manifest.webmanifest");
+const ICON_SVG: &str = include_str!("dist/icon.svg");
 
-/// Where and how to listen.
+/// Where to listen.
 #[derive(Clone, Debug)]
 pub struct Serving {
     /// Address to bind. Loopback unless asked otherwise.
     pub bind: IpAddr,
     /// Port.
     pub port: u16,
-    /// A token to reuse, so a link survives a restart. Ignored on loopback.
-    pub token: Option<String>,
 }
 
 /// Serve the interface until the process is stopped.
 pub async fn serve(system: Arc<System>, serving: &Serving) -> anyhow::Result<()> {
-    let access = Access::for_address(serving.bind, serving.token.clone())?;
-
     let app = Router::new()
-        .route("/", get(index))
-        .route("/style.css", get(style))
         .route("/app.js", get(script))
+        .route("/app.css", get(style))
+        .route("/manifest.webmanifest", get(manifest))
+        .route("/icon.svg", get(icon))
         .merge(api::routes())
-        .with_state(system)
+        .merge(devices::routes())
+        // Every other path is the page: the app routes on the client side,
+        // so a link to /approvals or /pair?code=... opens on the right screen.
+        .fallback(get(index))
         .layer(axum::middleware::from_fn_with_state(
-            access.clone(),
+            Arc::clone(&system),
             access::guard,
-        ));
+        ))
+        .with_state(system);
 
     let addr = SocketAddr::from((serving.bind, serving.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    announce(serving, &access);
-    axum::serve(listener, app).await?;
+    announce(serving);
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
 /// Say where it is, who can reach it, and what that means.
-fn announce(serving: &Serving, access: &Access) {
-    match access.token() {
-        None => {
-            println!("Genatrix is at http://127.0.0.1:{}", serving.port);
-            println!("Only this machine can reach it.");
-        }
-        Some(token) => {
-            let host = if serving.bind.is_unspecified() {
-                local_address().unwrap_or_else(|| serving.bind.to_string())
-            } else {
-                serving.bind.to_string()
-            };
-            println!(
-                "Genatrix is at http://{host}:{}/?token={token}",
-                serving.port
-            );
-            println!();
-            println!(
-                "It is listening on {}, so other machines on this network",
-                serving.bind
-            );
-            println!("can reach it. They need that link; the token is in it.");
-            println!();
-            println!("This is plain HTTP with one shared secret. Fine on a network you");
-            println!("trust, not fine on one you do not. Everything here is your mail.");
-        }
+fn announce(serving: &Serving) {
+    if serving.bind.is_loopback() {
+        println!("Genatrix is at http://127.0.0.1:{}", serving.port);
+        println!("Only this machine can reach it.");
+        return;
     }
+    let host = if serving.bind.is_unspecified() {
+        local_address().unwrap_or_else(|| serving.bind.to_string())
+    } else {
+        serving.bind.to_string()
+    };
+    println!("Genatrix is at http://{host}:{}", serving.port);
+    println!();
+    println!(
+        "It is listening on {}, so other devices that can reach that address",
+        serving.bind
+    );
+    println!("can open the page. Only a paired device gets past it: pair a phone");
+    println!("from Settings on this machine.");
+    println!();
+    println!("This is plain HTTP. Bind it to a private network you trust, such as a");
+    println!("Tailscale or WireGuard address; the tunnel is the encryption. Everything");
+    println!("here is your mail and messages.");
 }
 
 /// A network address of this machine, so the printed link is one somebody can
@@ -130,21 +135,44 @@ fn address_of(interface: &str) -> Option<String> {
 
 async fn index() -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
         INDEX_HTML,
-    )
-}
-
-async fn style() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        STYLE_CSS,
     )
 }
 
 async fn script() -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/javascript; charset=utf-8",
+            ),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
         APP_JS,
     )
+}
+
+async fn style() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        APP_CSS,
+    )
+}
+
+async fn manifest() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "application/manifest+json")],
+        MANIFEST,
+    )
+}
+
+async fn icon() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "image/svg+xml")], ICON_SVG)
 }

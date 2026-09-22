@@ -1,0 +1,11 @@
+{
+  "name": "Genatrix",
+  "short_name": "Genatrix",
+  "description": "Your mail and messages, understood on your own machine.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fbfaf8",
+  "theme_color": "#2b5d4f",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

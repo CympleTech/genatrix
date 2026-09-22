@@ -1,108 +1,115 @@
 //! Who may reach the interface.
 //!
+//! Design: `docs/design/06-interface.md`, "形态"; `docs/design/08-storage.md`,
+//! the network boundary; `docs/design/02-trust-boundary.md`, invariant 11.
+//!
 //! On loopback, everyone who can open a socket to it is already someone with
-//! an account on this machine, and design 08 says an attacker with that is
-//! outside the threat model anyway. So loopback asks for nothing.
+//! an account on this machine, and design 08 puts an attacker with that
+//! outside the threat model. So loopback asks for nothing.
 //!
-//! Any other address is a different situation entirely. The interface reads
-//! every mail and message the user has, and it has no login. Bound to a
-//! network address without a check, it would hand that to whoever else is on
-//! the wifi. So a non-loopback bind requires a token, generated per run and
-//! printed with the link. Open the link once and a cookie keeps you in.
+//! Any other address is a paired device or nobody. A device is paired once,
+//! from this machine: the settings page asks for a code, the phone opens the
+//! page with the code, and the page trades it for a long-lived secret kept in
+//! a cookie. The core keeps a hash of the secret, never the secret. A
+//! revoked device is refused like a stranger. The page itself, and the one
+//! endpoint that trades a code for a secret, are open to everyone, because a
+//! phone has to be able to load the page to pair; every `/api/` route besides
+//! that is behind the check.
 //!
-//! This is not authentication in any serious sense: it is one shared secret
-//! over plain HTTP, and anyone who can watch the traffic can take it. It is
-//! enough to make "let me look at this from my phone" reasonable, and it is
-//! not enough to put this on an untrusted network. Design 06 says local; this
-//! only stretches it to a network the user trusts.
+//! What this does not do, said plainly: TLS. The daemon is meant to be bound
+//! to a private network's address, where the tunnel encrypts and identifies;
+//! the startup message says so.
 
-use std::net::IpAddr;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
-use axum::extract::{Request, State};
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
-/// How the interface decides who gets in.
-#[derive(Clone, Debug)]
-pub enum Access {
-    /// Loopback: no check.
-    Open,
-    /// Everything else: this token, in a cookie or the query string.
-    Token(String),
-}
+use crate::system::System;
 
-/// Name of the cookie that remembers the token.
-const COOKIE: &str = "genatrix_access";
+/// Name of the cookie that carries a device's credential: `<id>.<secret>`.
+pub const COOKIE: &str = "genatrix_device";
 
-impl Access {
-    /// Decide what the given bind address needs.
-    pub fn for_address(ip: IpAddr, provided: Option<String>) -> std::io::Result<Self> {
-        if ip.is_loopback() {
-            return Ok(Self::Open);
-        }
-        Ok(Self::Token(match provided {
-            Some(token) => token,
-            None => random_token()?,
-        }))
-    }
-
-    /// The token, when one is needed.
-    #[must_use]
-    pub fn token(&self) -> Option<&str> {
-        match self {
-            Self::Open => None,
-            Self::Token(t) => Some(t),
-        }
-    }
-}
-
-fn random_token() -> std::io::Result<String> {
-    use std::io::Read;
-    let mut bytes = [0u8; 16];
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
-    Ok(hex::encode(bytes))
+/// Where a request came from, as far as access is concerned.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Caller {
+    /// This machine.
+    Local,
+    /// A paired device, by id.
+    Device(String),
 }
 
 /// Let the request through, or explain why not.
-pub async fn guard(State(access): State<Access>, request: Request, next: Next) -> Response {
-    let Access::Token(expected) = &access else {
-        return next.run(request).await;
-    };
-
-    if cookie_token(&request).as_deref() == Some(expected.as_str()) {
+pub async fn guard(
+    State(system): State<Arc<System>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    if peer.ip().is_loopback() {
+        request.extensions_mut().insert(Caller::Local);
         return next.run(request).await;
     }
-
-    // A fresh visitor arrives with the token in the link. Accept it, and
-    // hand back a cookie so the rest of the session is ordinary.
-    if query_token(&request).as_deref() == Some(expected.as_str()) {
-        let path = request.uri().path().to_owned();
-        let response = next.run(request).await;
-        return (
-            [
-                (
-                    header::SET_COOKIE,
-                    format!("{COOKIE}={expected}; Path=/; HttpOnly; SameSite=Strict"),
-                ),
-                (header::CONTENT_LOCATION, path),
-            ],
-            response,
-        )
-            .into_response();
+    let path = request.uri().path();
+    // The page and its assets, and the pairing exchange: open, so that a
+    // phone with a code can get as far as using it. Nothing in them is data.
+    if !path.starts_with("/api/") || path == "/api/pair" {
+        return next.run(request).await;
     }
+    match device_of(&system, &request) {
+        Some(id) => {
+            request.extensions_mut().insert(Caller::Device(id));
+            next.run(request).await
+        }
+        None => refused(),
+    }
+}
 
+/// The paired device a request comes from, if its cookie names one that is
+/// still active and the secret matches.
+pub fn device_of(system: &System, request: &Request) -> Option<String> {
+    let cookie = cookie_value(request, COOKIE)?;
+    let (id, secret) = cookie.split_once('.')?;
+    let device = system.store.get_device(id).ok().flatten()?;
+    if !device.is_active() {
+        return None;
+    }
+    let presented = hash_secret(secret);
+    if presented
+        .as_bytes()
+        .ct_eq(device.secret_hash.as_bytes())
+        .into()
+    {
+        let _ = system
+            .store
+            .touch_device(id, &chrono::Utc::now().to_rfc3339());
+        Some(device.id)
+    } else {
+        None
+    }
+}
+
+/// SHA-256 of a device secret, hex. What the store keeps.
+#[must_use]
+pub fn hash_secret(secret: &str) -> String {
+    hex::encode(Sha256::digest(secret.as_bytes()))
+}
+
+fn refused() -> Response {
     (
         StatusCode::UNAUTHORIZED,
-        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-        "This copy of Genatrix is reachable over the network, so it needs the \
-         access token.\n\nOpen the link the daemon printed when it started; it \
-         has the token in it.\n",
+        [(header::CONTENT_TYPE, "application/json")],
+        r#"{"error":"this device is not paired with this Genatrix; pair it from the settings page on the machine it runs on"}"#,
     )
         .into_response()
 }
 
-fn cookie_token(request: &Request) -> Option<String> {
+fn cookie_value(request: &Request, name: &str) -> Option<String> {
     request
         .headers()
         .get(header::COOKIE)?
@@ -110,55 +117,221 @@ fn cookie_token(request: &Request) -> Option<String> {
         .ok()?
         .split(';')
         .filter_map(|pair| pair.trim().split_once('='))
-        .find(|(name, _)| *name == COOKIE)
-        .map(|(_, value)| value.to_owned())
-}
-
-fn query_token(request: &Request) -> Option<String> {
-    request
-        .uri()
-        .query()?
-        .split('&')
-        .filter_map(|pair| pair.split_once('='))
-        .find(|(name, _)| *name == "token")
+        .find(|(n, _)| *n == name)
         .map(|(_, value)| value.to_owned())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::net::{Ipv4Addr, SocketAddr};
 
-    #[test]
-    fn loopback_asks_for_nothing() {
-        for ip in [
-            IpAddr::V4(Ipv4Addr::LOCALHOST),
-            IpAddr::V6(Ipv6Addr::LOCALHOST),
-        ] {
-            let access = Access::for_address(ip, None).unwrap();
-            assert!(matches!(access, Access::Open));
-            assert!(access.token().is_none());
-        }
+    use axum::body::Body;
+    use axum::http::{Request as HttpRequest, StatusCode, header};
+    use tower::ServiceExt as _;
+
+    use super::*;
+
+    const LAN: SocketAddr =
+        SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)), 50000);
+    const HERE: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), 50000);
+
+    fn app(system: &Arc<System>) -> axum::Router {
+        axum::Router::new()
+            .merge(super::super::api::routes())
+            .merge(super::super::devices::routes())
+            .fallback(axum::routing::get(|| async { "page" }))
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(system),
+                guard,
+            ))
+            .with_state(Arc::clone(system))
     }
 
-    #[test]
-    fn any_other_address_gets_a_token_whether_or_not_one_was_asked_for() {
-        let wildcard = Access::for_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED), None).unwrap();
-        assert_eq!(wildcard.token().map(str::len), Some(32));
+    async fn call(
+        app: &axum::Router,
+        from: SocketAddr,
+        method: &str,
+        path: &str,
+        cookie: Option<&str>,
+        body: Option<serde_json::Value>,
+    ) -> axum::response::Response {
+        let mut request = HttpRequest::builder().method(method).uri(path);
+        if let Some(c) = cookie {
+            request = request.header(header::COOKIE, c);
+        }
+        let request = match body {
+            Some(json) => request
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json.to_string()))
+                .unwrap(),
+            None => request.body(Body::empty()).unwrap(),
+        };
+        let mut request = request;
+        request.extensions_mut().insert(ConnectInfo(from));
+        app.clone().oneshot(request).await.unwrap()
+    }
 
-        let lan = Access::for_address(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)), None).unwrap();
-        assert!(lan.token().is_some());
-        assert_ne!(
-            wildcard.token(),
-            lan.token(),
-            "a fresh token for each run, not a fixed one"
+    async fn json(response: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+    }
+
+    /// Design 02, invariant 11.
+    #[tokio::test]
+    async fn a_stranger_on_the_network_gets_the_page_and_nothing_else() {
+        let (_dir, system) = crate::system::test_system();
+        let app = app(&system);
+        assert_eq!(
+            call(&app, LAN, "GET", "/", None, None).await.status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(&app, LAN, "GET", "/api/status", None, None)
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call(&app, LAN, "GET", "/api/actions", None, None)
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call(&app, LAN, "POST", "/api/pair/start", None, None)
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED,
+            "a stranger cannot even ask for a code"
+        );
+        assert_eq!(
+            call(&app, HERE, "GET", "/api/status", None, None)
+                .await
+                .status(),
+            StatusCode::OK,
+            "loopback asks for nothing"
         );
     }
 
-    #[test]
-    fn a_token_can_be_supplied_so_a_link_survives_a_restart() {
-        let access =
-            Access::for_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED), Some("abc".into())).unwrap();
-        assert_eq!(access.token(), Some("abc"));
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // one device's whole life, in order
+    async fn a_code_made_here_pairs_one_device_once_and_revocation_ends_it() {
+        let (_dir, system) = crate::system::test_system();
+        let app = app(&system);
+
+        let started = json(call(&app, HERE, "POST", "/api/pair/start", None, None).await).await;
+        let code = started["code"].as_str().unwrap().to_owned();
+        assert_eq!(code.len(), 6);
+
+        // A wrong guess spends the code.
+        let wrong = call(
+            &app,
+            LAN,
+            "POST",
+            "/api/pair",
+            None,
+            Some(serde_json::json!({"code": "000000"})),
+        )
+        .await;
+        assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+        let spent = call(
+            &app,
+            LAN,
+            "POST",
+            "/api/pair",
+            None,
+            Some(serde_json::json!({"code": code})),
+        )
+        .await;
+        assert_eq!(spent.status(), StatusCode::UNAUTHORIZED, "one try per code");
+
+        let started = json(call(&app, HERE, "POST", "/api/pair/start", None, None).await).await;
+        let code = started["code"].as_str().unwrap().to_owned();
+        let paired = call(
+            &app,
+            LAN,
+            "POST",
+            "/api/pair",
+            None,
+            Some(serde_json::json!({"code": code, "name": "phone"})),
+        )
+        .await;
+        assert_eq!(paired.status(), StatusCode::OK);
+        let cookie = paired
+            .headers()
+            .get(header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned();
+        assert!(cookie.starts_with("genatrix_device="));
+        let device = json(paired).await;
+        let id = device["id"].as_str().unwrap().to_owned();
+
+        // The same code does not pair a second device.
+        let again = call(
+            &app,
+            LAN,
+            "POST",
+            "/api/pair",
+            None,
+            Some(serde_json::json!({"code": code})),
+        )
+        .await;
+        assert_eq!(again.status(), StatusCode::UNAUTHORIZED);
+
+        // The cookie is the key, and only the whole cookie.
+        assert_eq!(
+            call(&app, LAN, "GET", "/api/status", Some(&cookie), None)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let (name, value) = cookie.split_once('=').unwrap();
+        let tampered = format!("{name}={}x", &value[..value.len() - 1]);
+        assert_eq!(
+            call(&app, LAN, "GET", "/api/status", Some(&tampered), None)
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        // The store holds a hash, never the secret.
+        let stored = system.store.get_device(&id).unwrap().unwrap();
+        assert!(!value.contains(&stored.secret_hash));
+        assert_eq!(stored.secret_hash.len(), 64);
+
+        // A paired device may approve, but may not start a pairing.
+        assert_eq!(
+            call(&app, LAN, "POST", "/api/pair/start", Some(&cookie), None)
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+
+        // Revoked: the cookie is worth nothing, and the record remains.
+        let revoked = call(
+            &app,
+            HERE,
+            "POST",
+            &format!("/api/device/{id}/revoke"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(revoked.status(), StatusCode::OK);
+        assert_eq!(
+            call(&app, LAN, "GET", "/api/status", Some(&cookie), None)
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let devices = json(call(&app, HERE, "GET", "/api/devices", None, None).await).await;
+        assert_eq!(devices.as_array().unwrap().len(), 1);
+        assert!(devices[0]["revoked_at"].is_string());
     }
 }

@@ -20,6 +20,7 @@ mod annotation;
 mod blob;
 mod commitment;
 mod cursor;
+mod device;
 mod error;
 mod export;
 mod files;
@@ -35,6 +36,7 @@ mod vector;
 
 pub use action::{ActionColumns, StoredAction};
 pub use cursor::StoredCursor;
+pub use device::Device;
 pub use error::{Error, Result};
 pub use export::ExportSummary;
 pub use files::FileStore;

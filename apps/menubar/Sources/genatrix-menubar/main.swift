@@ -8,13 +8,19 @@
 // core (`genatrix serve`), keeps it running, and asks it every few seconds
 // how each account is doing. The icon has the four looks the design names:
 // normal, syncing, needs you, error. Clicking it lists the accounts, opens
-// the interface in the browser, or quits, which stops the core too.
+// the interface, or quits, which stops the core too.
+//
+// "Opens the interface" means a window of this shell with a web view in it,
+// showing the page the core serves, with no address bar (design 06, v0.4:
+// one page, two shells; the phone's shell is its home screen). The browser
+// is one menu item away for anyone who wants it.
 //
 // It is a shell and nothing more. It holds no data, no keys and no
 // passwords; everything it shows it read from the core's local API.
 
 import AppKit
 import Foundation
+import WebKit
 
 // MARK: - Arguments
 
@@ -22,6 +28,7 @@ struct Options {
     var genatrix: URL
     var dataDir: String?
     var port: Int = 7717
+    var bind: String?
 
     static func parse() -> Options {
         let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
@@ -32,6 +39,7 @@ struct Options {
             case "--genatrix": if let v = args.next() { options.genatrix = URL(fileURLWithPath: v) }
             case "--data-dir": options.dataDir = args.next()
             case "--port": if let v = args.next(), let p = Int(v) { options.port = p }
+            case "--bind": options.bind = args.next()
             default: break
             }
         }
@@ -101,6 +109,7 @@ final class Core {
         var args: [String] = []
         if let dir = options.dataDir { args += ["--data-dir", dir] }
         args += ["serve", "--port", String(options.port)]
+        if let bind = options.bind { args += ["--bind", bind] }
         p.arguments = args
         // The core's own log goes wherever ours goes: launchd's log file.
         p.standardOutput = FileHandle.standardOutput
@@ -128,6 +137,65 @@ final class Core {
     }
 }
 
+// MARK: - The window
+
+/// One window with the page in it. Made on first open, kept across closes,
+/// reloaded when the core it showed has gone away and come back.
+final class Page: NSObject, NSWindowDelegate, WKNavigationDelegate {
+    private var window: NSWindow?
+    private var web: WKWebView?
+    private var failed = false
+
+    func open(_ url: URL) {
+        if window == nil { build(url) }
+        guard let window = window, let web = web else { return }
+        if failed || web.url == nil {
+            failed = false
+            web.load(URLRequest(url: url))
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private func build(_ url: URL) {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false)
+        window.title = "Genatrix"
+        window.isReleasedWhenClosed = false
+        window.setFrameAutosaveName("GenatrixPage")
+        if window.frame.width < 400 { window.center() }
+        window.delegate = self
+        let configuration = WKWebViewConfiguration()
+        let web = WKWebView(frame: window.contentView!.bounds, configuration: configuration)
+        web.autoresizingMask = [.width, .height]
+        web.navigationDelegate = self
+        window.contentView?.addSubview(web)
+        web.load(URLRequest(url: url))
+        self.window = window
+        self.web = web
+    }
+
+    // The core was not there, or stopped mid-page: remember, so the next
+    // open loads again instead of showing the error for good.
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed = true }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed = true }
+
+    // Links that leave the core's page go to the browser; the window shows
+    // Genatrix and nothing else.
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if let url = navigationAction.request.url, let host = url.host,
+           host != "127.0.0.1", host != "localhost", navigationAction.navigationType == .linkActivated {
+            NSWorkspace.shared.open(url)
+            decisionHandler(.cancel)
+            return
+        }
+        decisionHandler(.allow)
+    }
+}
+
 // MARK: - The menu bar
 
 final class Shell: NSObject, NSApplicationDelegate {
@@ -137,6 +205,7 @@ final class Shell: NSObject, NSApplicationDelegate {
     private var timer: Timer?
     private var accounts: [AccountsReply.Account] = []
     private var reachable = false
+    private let page = Page()
 
     init(options: Options) {
         self.options = options
@@ -206,6 +275,9 @@ final class Shell: NSObject, NSApplicationDelegate {
         let open = NSMenuItem(title: "Open Genatrix", action: #selector(openInterface), keyEquivalent: "o")
         open.target = self
         menu.addItem(open)
+        let browser = NSMenuItem(title: "Open in Browser", action: #selector(openInBrowser), keyEquivalent: "")
+        browser.target = self
+        menu.addItem(browser)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Genatrix", action: #selector(quitAll), keyEquivalent: "q")
         quit.target = self
@@ -220,6 +292,12 @@ final class Shell: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openInterface() {
+        if let url = URL(string: "http://127.0.0.1:\(options.port)/") {
+            page.open(url)
+        }
+    }
+
+    @objc private func openInBrowser() {
         if let url = URL(string: "http://127.0.0.1:\(options.port)/") {
             NSWorkspace.shared.open(url)
         }

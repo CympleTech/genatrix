@@ -212,7 +212,7 @@ Genatrix starts when you log in. With the shell beside the core the agent
 runs the shell, which puts an icon in the menu bar and runs the core behind
 it; without the shell it runs `serve` alone. The icon has four looks, up to
 date, syncing, needs you, error; clicking it lists each account with what it
-is doing, opens the page, or quits. Quitting from the menu stops the core
+is doing, opens the page in a window of its own (or in the browser), or quits. Quitting from the menu stops the core
 too and stays stopped until the next login; a crash is restarted. The log is
 at `$DEV/logs/genatrix.log`. `service status` says whether it is installed,
 `service uninstall` stops and removes it. After a rebuild, run `service
@@ -241,19 +241,30 @@ review tab that draws the model's judgements for you to check; a records page
 that opens with how many bytes have left the device and lists every model
 call; and a line per account at the top.
 
-To look at it from a phone, bind somewhere else. That needs an access token,
-which is generated per run and printed inside the link:
+**From a phone, or any other device.** Genatrix is one daemon; every
+device is a window on it. Bind it to a private network's address, the
+Tailscale or WireGuard address of this machine, and pair the phone:
 
 ```sh
-./target/release/genatrix --data-dir $DEV serve --bind 0.0.0.0
-# Genatrix is at http://192.168.1.20:7717/?token=6a5915554214...
+./target/release/genatrix --data-dir $DEV serve --bind 100.101.102.103
+# or, installed:  genatrix --data-dir $DEV service install --bind 100.101.102.103
 ```
 
-Loopback needs no token, because anyone who can reach it already has an
-account on the machine. Any other address does, because the page has no login
-and everything in it is your mail. It is still plain HTTP with one shared
-secret: fine on a network you trust, not fine on one you do not. Pass
-`--token` to keep a link working across restarts.
+Then, on this machine, open Settings and press "Pair a device": a six-digit
+code and a QR code appear, good for five minutes and for one device. Open
+the address on the phone (scan the code, or type it in), enter the code,
+and the phone is paired: it carries its own credential from then on, and
+Settings lists it with a Revoke button. Add the page to the phone's home
+screen and it opens like an app. Loopback needs no pairing, because anyone
+who can reach it already has an account on the machine. There is no TLS in
+Genatrix: the tunnel is the encryption, which is why the address should be
+a private network's and not the wifi's. Everything on the page is your mail
+and messages.
+
+**The page is built from `web/`** with Svelte and Vite; the build output is
+committed under `crates/daemon/src/web/dist/` and compiled into the core, so
+a Rust toolchain alone builds Genatrix. After changing anything in `web/`,
+run `npm run build` there and commit `dist/` with it.
 
 **Reply.** Open a message and press "Draft a reply". The model writes one
 in your voice, from the conversation and your own earlier messages to that

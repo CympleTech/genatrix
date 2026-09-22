@@ -38,6 +38,11 @@ struct Args {
 const SESSION_SCOPE: &str = "session";
 /// History pages.
 const PAGE: usize = 100;
+/// How far back groups and channels are read. Direct chats are read whole:
+/// they are the user's own correspondence. A group or channel is a place
+/// the user is in, not a conversation they had, and its history is read
+/// only this far; everything from now on arrives live (design 05).
+const GROUP_HISTORY_DAYS: i64 = 30;
 
 /// The core, for one account.
 #[derive(Clone)]
@@ -312,11 +317,24 @@ async fn backfill(
                 _ => {}
             }
         }
+        let horizon = (conversation.kind != "direct")
+            .then(|| chrono::Utc::now() - chrono::Duration::days(GROUP_HISTORY_DAYS));
         loop {
-            let (page, page_oldest) = sync::history_page(client, conversation, oldest, PAGE)
+            let (mut page, page_oldest) = sync::history_page(client, conversation, oldest, PAGE)
                 .await
                 .map_err(|e| Fault::transient(&core.account, format!("Telegram: {e}")))?;
-            let complete = page_oldest.is_none();
+            let mut complete = page_oldest.is_none();
+            if let Some(horizon) = horizon {
+                let before = page.len();
+                page.retain(|m| {
+                    chrono::DateTime::parse_from_rfc3339(&m.date).is_ok_and(|d| d >= horizon)
+                });
+                if page.len() < before {
+                    // The page crossed the horizon: what is older stays
+                    // where it is, and this conversation is done.
+                    complete = true;
+                }
+            }
             progress.done += page.len() as u64;
             core.store(page).await?;
             if let Some(id) = page_oldest {

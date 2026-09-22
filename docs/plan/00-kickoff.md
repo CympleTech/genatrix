@@ -55,7 +55,7 @@ Design 10, "理解". Done when every item has a level and a summary, vector sear
 | Summarizer role; summary shown per item | done: messages of 280 characters or more get up to three lines in their own language, shown under the text marked as the model's; shorter ones are their own summary |
 | The core starts the model side | done: two models, one sandboxed process; `service install` falls back to `launchctl load` where `bootstrap` needs a GUI session |
 | Records page backed by the ledger for every model call | partly: the page reads the ledger; the item count of model calls will grow with the pipelines |
-| Telegram connector (non-blocking; due by the end of M3) | written: sign-in from the terminal (`account --add-telegram`), dialogs, history newest first per conversation, live updates with catch-up, edits as new versions, media described but not fetched; its own sandboxed process over the same protocol. Run against the author's account: 170 conversations, thousands of messages a minute, no flood wait; deletions are not yet tombstones and media is not fetched |
+| Telegram connector (non-blocking; due by the end of M3) | written: sign-in from the terminal (`account --add-telegram`), dialogs, history newest first per conversation, live updates with catch-up, edits as new versions, media described but not fetched; its own sandboxed process over the same protocol. Run against the author's account: 170 conversations, thousands of messages a minute, no flood wait. Direct chats are read whole, groups and channels the last thirty days (design 05); deletions are not yet tombstones and media is not fetched |
 
 ## Spike status
 

@@ -91,12 +91,15 @@ pub async fn run<C: ModelCaller>(
         // The rules are deterministic, so their verdict is computed once and
         // reused; re-running them every pass would pile up identical
         // annotations saying the same thing.
-        let existing_rule = judged
-            .iter()
-            .find(|(producer, _)| matches!(producer, Producer::Rule { .. }))
-            .map(|(_, level)| *level);
-        let floor = if let Some(level) = existing_rule {
-            level
+        // (level, whether a rule actually matched rather than the default
+        // applying). Design 04: the rules go first and the model sees only
+        // what they could not settle.
+        let existing_rule = judged.iter().find_map(|(producer, level)| match producer {
+            Producer::Rule { rule, .. } => Some((*level, rule != "default")),
+            _ => None,
+        });
+        let (floor, matched) = if let Some(found) = existing_rule {
+            found
         } else {
             let headers = headers_of(&item);
             let domain = sender_domain_of(&item);
@@ -107,25 +110,31 @@ pub async fn run<C: ModelCaller>(
                 headers: &headers,
                 sender_domain: domain.as_deref(),
             });
+            let reason = judgement.reason();
             record(
                 store,
                 &item,
                 judgement.level,
                 Producer::Rule {
-                    rule: judgement.reason(),
+                    rule: reason.clone(),
                     version: rules.version.clone(),
                 },
             )?;
-            judgement.level
+            (judgement.level, reason != "default")
         };
 
-        if floor == Level::Secret {
-            // Nowhere higher to go; asking would spend a call to learn
-            // nothing. Only count it the first time, so a second run
-            // reports honestly that it had nothing to do.
-            if existing_rule.is_none() {
-                report.seen += 1;
-                report.by_rule += 1;
+        if floor == Level::Secret || matched {
+            // A rule spoke: secret, which nothing can lower, or a class it
+            // recognised, a public channel post or bulk mail. Asking the
+            // model would spend a call to learn nothing. Counted the first
+            // time only, so a second run reports honestly that it had
+            // nothing to do; settled every time, because a pass cut short
+            // may have left the cached level behind.
+            if !by_model {
+                if existing_rule.is_none() {
+                    report.seen += 1;
+                    report.by_rule += 1;
+                }
                 settle(store, &item, &mut report)?;
             }
         } else if !by_model {

@@ -26,6 +26,7 @@ mod item;
 mod migrate;
 mod person;
 mod raw;
+mod relationship;
 mod store;
 mod thread;
 mod time;
@@ -37,6 +38,7 @@ pub use export::ExportSummary;
 pub use files::FileStore;
 pub use genatrix_keys::DbKey;
 pub use item::{ItemQuery, ItemVersion};
+pub use relationship::{PersonOverview, Relationship, RelationshipStats};
 pub use store::Store;
 pub use vector::EMBEDDING_DIMS;
 

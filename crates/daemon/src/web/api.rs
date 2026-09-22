@@ -36,6 +36,9 @@ pub fn routes() -> Router<Arc<System>> {
         .route("/api/item/{id}/level", post(set_level))
         .route("/api/review", get(review))
         .route("/api/today", get(today))
+        .route("/api/people", get(people))
+        .route("/api/person/{id}", get(person))
+        .route("/api/person/{id}/relationship", post(set_relationship))
         .route("/api/commitment/{id}", post(set_commitment))
         .route("/api/ledger", get(ledger))
         .route("/api/accounts", get(accounts))
@@ -157,6 +160,201 @@ async fn today(State(system): Shared) -> Result<Json<Today>, ApiError> {
         digest,
         commitments,
     }))
+}
+
+#[derive(Serialize)]
+struct PersonCard {
+    id: String,
+    name: String,
+    handles: Vec<HandleView>,
+    from_them: u64,
+    to_them: u64,
+    last_at: Option<String>,
+    connectors: Vec<String>,
+    roles: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct HandleView {
+    kind: String,
+    value: String,
+    inferred: bool,
+}
+
+#[derive(Serialize)]
+struct StatsView {
+    from_them: u64,
+    to_them: u64,
+    first_at: Option<String>,
+    last_at: Option<String>,
+    months: Vec<u32>,
+    reply_hours: Option<f64>,
+    language: String,
+    connectors: Vec<(String, u64)>,
+}
+
+#[derive(Serialize)]
+struct PersonDetail {
+    card: PersonCard,
+    stats: StatsView,
+    notes: String,
+    recent: Vec<Row>,
+    commitments: Vec<CommitmentView>,
+}
+
+#[derive(Deserialize)]
+struct PeopleQuery {
+    #[serde(default = "default_people_limit")]
+    limit: u32,
+}
+
+const fn default_people_limit() -> u32 {
+    60
+}
+
+fn handles_view(
+    system: &System,
+    id: genatrix_model::PersonId,
+) -> Result<Vec<HandleView>, ApiError> {
+    Ok(system
+        .store
+        .handles_of(id)?
+        .into_iter()
+        .map(|h| HandleView {
+            kind: format!("{:?}", h.kind).to_lowercase(),
+            value: h.value,
+            inferred: h.confidence == genatrix_model::Confidence::Inferred,
+        })
+        .collect())
+}
+
+fn card(system: &System, o: &genatrix_store::PersonOverview) -> Result<PersonCard, ApiError> {
+    Ok(PersonCard {
+        id: o.person.id.to_string(),
+        name: o.person.display_name.clone(),
+        handles: handles_view(system, o.person.id)?,
+        from_them: o.from_them,
+        to_them: o.to_them,
+        last_at: o.last_at.map(|t| t.format("%Y-%m-%d").to_string()),
+        connectors: o.connectors.clone(),
+        roles: system
+            .store
+            .get_relationship(o.person.id)?
+            .map(|r| r.roles)
+            .unwrap_or_default(),
+    })
+}
+
+/// Everyone the user has exchanged messages with, most recent first
+/// (design 07: the relationship's statistics are arithmetic, not opinion).
+async fn people(
+    State(system): Shared,
+    Query(query): Query<PeopleQuery>,
+) -> Result<Json<Vec<PersonCard>>, ApiError> {
+    let mut out = Vec::new();
+    for o in system.store.people_overview(query.limit.min(500))? {
+        if o.from_them + o.to_them == 0 {
+            continue;
+        }
+        out.push(card(&system, &o)?);
+    }
+    Ok(Json(out))
+}
+
+/// One person: who they are, what passed between you, what you said about
+/// them, what was promised either way.
+async fn person(State(system): Shared, Path(id): Path<String>) -> Result<Response, ApiError> {
+    let Ok(id) = id.parse::<genatrix_model::PersonId>() else {
+        return Ok(not_found("that is not a person identifier"));
+    };
+    let Some(p) = system.store.get_person(id)? else {
+        return Ok(not_found("no such person"));
+    };
+    let stats = system.store.relationship_stats(id)?;
+    let relationship = system.store.get_relationship(id)?.unwrap_or_default();
+    let overview = genatrix_store::PersonOverview {
+        person: p,
+        from_them: stats.from_them,
+        to_them: stats.to_them,
+        last_at: stats.last_at,
+        connectors: stats.connectors.keys().cloned().collect(),
+    };
+    let mut recent = Vec::new();
+    for item in system.store.items_with_person(id, 30)? {
+        recent.push(row(&system, &item)?);
+    }
+    let me = system.store.self_person()?.map(|p| p.id);
+    let commitments = system
+        .store
+        .commitments_with(id)?
+        .into_iter()
+        .map(|c| CommitmentView {
+            id: c.id.to_string(),
+            mine: c.is_mine(me),
+            from: name_of(&system, Some(c.from)),
+            to: c.to.map(|p| name_of(&system, Some(p))),
+            due: c.due.map(|d| d.format("%Y-%m-%d").to_string()),
+            status: c.status,
+            standing: c.standing,
+            what: c.what,
+            evidence: c
+                .evidence
+                .iter()
+                .filter_map(|id| source_ref(&system, *id))
+                .collect(),
+        })
+        .collect();
+    Ok(Json(PersonDetail {
+        card: card(&system, &overview)?,
+        stats: StatsView {
+            from_them: stats.from_them,
+            to_them: stats.to_them,
+            first_at: stats.first_at.map(|t| t.format("%Y-%m-%d").to_string()),
+            last_at: stats.last_at.map(|t| t.format("%Y-%m-%d").to_string()),
+            months: stats.months,
+            reply_hours: stats.reply_hours,
+            language: stats.language,
+            connectors: stats.connectors.into_iter().collect(),
+        },
+        notes: relationship.notes,
+        recent,
+        commitments,
+    })
+    .into_response())
+}
+
+#[derive(Deserialize)]
+struct SetRelationship {
+    roles: Vec<String>,
+    notes: String,
+}
+
+/// Roles and notes are the user's alone (design 07).
+async fn set_relationship(
+    State(system): Shared,
+    Path(id): Path<String>,
+    Json(body): Json<SetRelationship>,
+) -> Result<Response, ApiError> {
+    let Ok(id) = id.parse::<genatrix_model::PersonId>() else {
+        return Ok(not_found("that is not a person identifier"));
+    };
+    if system.store.get_person(id)?.is_none() {
+        return Ok(not_found("no such person"));
+    }
+    let roles: Vec<String> = body
+        .roles
+        .into_iter()
+        .map(|r| r.trim().chars().take(40).collect::<String>())
+        .filter(|r| !r.is_empty())
+        .collect();
+    system.store.set_relationship(
+        id,
+        &genatrix_store::Relationship {
+            roles,
+            notes: body.notes.chars().take(4000).collect(),
+        },
+    )?;
+    Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
 
 #[derive(Deserialize)]

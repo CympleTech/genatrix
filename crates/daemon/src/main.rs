@@ -334,7 +334,16 @@ fn reprocess(config: &Config) -> anyhow::Result<()> {
             }
         }
     }
+    let telegram_ids: Vec<i64> = accounts::Accounts::load(&config.accounts_path())?
+        .telegram
+        .values()
+        .map(|a| a.user_id)
+        .collect();
+    let repaired = ingest::repair_chats(&system.store, &telegram_ids)?;
     println!("{} raw record(s) read again", raws.len());
+    if repaired > 0 {
+        println!("  {repaired} chat message(s) given their direction and recipient");
+    }
     println!("  {updated} item(s) brought up to date");
     println!("  {unchanged} unchanged");
     if unreadable > 0 {
@@ -482,12 +491,33 @@ async fn add_telegram(config: &Config, phone: &str) -> anyhow::Result<()> {
     accounts.add_telegram(phone, signed_in.user_id, &signed_in.name);
     accounts.save(&path)?;
 
-    let me = system.store.person_for_handle(
-        HandleKind::TelegramId,
-        &signed_in.user_id.to_string(),
-        &signed_in.name,
-    )?;
-    if system.store.self_person()?.is_none() {
+    // The address is the user's own (design 01: every account's handle
+    // hangs on the self person). With a self person already there from an
+    // earlier account, the handle joins it rather than making a stranger.
+    if let Some(me) = system.store.self_person()? {
+        let value = signed_in.user_id.to_string();
+        if let Some(existing) = system.store.find_handle(HandleKind::TelegramId, &value)? {
+            if existing.person_id != me.id {
+                system
+                    .store
+                    .move_handle(HandleKind::TelegramId, &value, me.id)?;
+                system.store.reassign_author(existing.person_id, me.id)?;
+            }
+        } else {
+            system.store.insert_handle(&genatrix_model::Handle {
+                id: genatrix_model::HandleId::new(),
+                person_id: me.id,
+                kind: HandleKind::TelegramId,
+                value,
+                confidence: genatrix_model::Confidence::Confirmed,
+            })?;
+        }
+    } else {
+        let me = system.store.person_for_handle(
+            HandleKind::TelegramId,
+            &signed_in.user_id.to_string(),
+            &signed_in.name,
+        )?;
         system.store.set_self(me)?;
     }
     println!("  session     in the encrypted store");

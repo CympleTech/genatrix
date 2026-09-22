@@ -13,6 +13,7 @@
   <nav>
     <button class="tab is-on" data-pane="today">Today</button>
     <button class="tab" data-pane="timeline">Timeline</button>
+    <button class="tab" data-pane="people">People</button>
     <button class="tab" data-pane="review">Review</button>
     <button class="tab" data-pane="records">Records</button>
   </nav>
@@ -46,6 +47,15 @@
     </form>
     <ol id="rows" class="rows"></ol>
     <p id="timeline-empty" class="empty" hidden></p>
+  </section>
+
+  <section id="people" class="pane">
+    <div class="people-layout">
+      <ol id="people-list" class="people"></ol>
+      <div id="person" class="person">
+        <p class="empty">Pick someone on the left.</p>
+      </div>
+    </div>
   </section>
 
   <section id="review" class="pane">

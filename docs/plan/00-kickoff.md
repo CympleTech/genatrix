@@ -66,7 +66,7 @@ Design 10, "摘要". Done when there has been a digest every morning for fourtee
 | Daily digest pipeline: the last 24 hours, sorted by the model into needs-reply, worth-knowing, skip, one line each in the message's language, every line with its source; made after eight each morning, or with `genatrix digest` | done; quality to be judged over the fourteen days |
 | Commitment extraction: explicit promises in mail and chat, by the user or to the user, as inferred commitments with evidence; confirm, done, or reject on the page | done |
 | The Today page: digest groups with sources that open in place, open promises with their evidence and the user's say | done as the first screen; pending approvals arrive with M4 |
-| Person page and relationship statistics | not started |
+| Person page and relationship statistics | done: everyone the user exchanged messages with, most recent first; per person the counts each way, first and last contact, the user's median reply time, the language, twelve months of activity, handles, promises either way, recent messages; roles and notes are the user's to write (design 07) |
 | Mail and Telegram on one timeline | done since the Telegram connector |
 
 ## Spike status

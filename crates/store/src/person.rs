@@ -189,6 +189,26 @@ impl Store {
         Ok(person.id)
     }
 
+    /// Give a handle to another person: the account holder's own address
+    /// found under a stray person, for instance. Says whether it moved.
+    pub fn move_handle(&self, kind: HandleKind, value: &str, to: PersonId) -> Result<bool> {
+        let value = Handle::normalize(kind, value);
+        let n = self.conn().execute(
+            "UPDATE handle SET person_id = ?3 WHERE kind = ?1 AND value = ?2 AND person_id <> ?3",
+            params![handle_kind_to_col(kind), value, to.to_string()],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Items authored by one person become authored by another. Returns
+    /// how many. Direction is not recomputed here; the caller re-derives.
+    pub fn reassign_author(&self, from: PersonId, to: PersonId) -> Result<usize> {
+        Ok(self.conn().execute(
+            "UPDATE item SET author = ?2 WHERE author = ?1",
+            params![from.to_string(), to.to_string()],
+        )?)
+    }
+
     /// Handles of one person.
     pub fn handles_of(&self, person: PersonId) -> Result<Vec<Handle>> {
         let conn = self.conn();

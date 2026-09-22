@@ -30,6 +30,7 @@ for (const tab of document.querySelectorAll('.tab')) {
     if (tab.dataset.pane === 'records') loadRecords();
     if (tab.dataset.pane === 'review') loadReview();
     if (tab.dataset.pane === 'today') loadToday();
+    if (tab.dataset.pane === 'people') loadPeople();
     if (tab.dataset.pane === 'timeline') loadTimeline();
   });
 }
@@ -329,6 +330,171 @@ async function loadToday() {
   } catch (e) {
     $('#digest-headline').textContent = e.message;
     $('#digest-headline').classList.add('error');
+  }
+}
+
+// --- people -----------------------------------------------------------
+//
+// Design 07: a relationship is the person, the roles you gave them, the
+// notes you wrote, and arithmetic over what passed between you. Nothing on
+// this page is the model's opinion.
+
+const HANDLE_ICONS = { email: '✉', telegramid: '✈', telegramusername: '@', phone: '☏' };
+
+function initials(name) {
+  const clean = (name || '').trim();
+  if (!clean) return '?';
+  const parts = clean.split(/\s+/);
+  const first = [...parts[0]][0] || '?';
+  const second = parts.length > 1 ? [...parts[parts.length - 1]][0] : '';
+  return (first + second).toUpperCase();
+}
+
+// A tiny bar chart: the last twelve months, the busiest month full height.
+function monthBars(months) {
+  const box = el('div', 'months');
+  const max = Math.max(1, ...months);
+  months.forEach((n, i) => {
+    const bar = el('span', 'month' + (i === months.length - 1 ? ' now' : ''));
+    bar.style.height = `${Math.max(2, Math.round(n / max * 28))}px`;
+    bar.title = `${n} message${n === 1 ? '' : 's'}`;
+    box.append(bar);
+  });
+  return box;
+}
+
+function personCard(card, onOpen) {
+  const li = el('li', 'person-card');
+  li.dataset.id = card.id;
+  const avatar = el('span', 'avatar', initials(card.name));
+  const body = el('div', 'person-body');
+  const head = el('div', 'person-head');
+  head.append(el('span', 'person-name', card.name));
+  for (const r of card.roles) head.append(el('span', 'role', r));
+  body.append(head);
+  const line = el('div', 'person-line');
+  line.append(
+    el('span', 'count in', `↓ ${card.from_them}`),
+    el('span', 'count out', `↑ ${card.to_them}`),
+    el('span', 'faint', card.last_at ? `last ${card.last_at}` : ''),
+    el('span', 'faint', card.connectors.map(c => c === 'imap' ? 'mail' : c).join(' · ')),
+  );
+  body.append(line);
+  li.append(avatar, body);
+  li.addEventListener('click', () => onOpen(card.id, li));
+  return li;
+}
+
+function statTile(label, value, note) {
+  const tile = el('div', 'tile');
+  tile.append(el('span', 'tile-value', value), el('span', 'tile-label', label));
+  if (note) tile.append(el('span', 'tile-note', note));
+  return tile;
+}
+
+function hours(h) {
+  if (h == null) return '—';
+  if (h < 1) return `${Math.round(h * 60)} min`;
+  if (h < 48) return `${h.toFixed(1)} h`;
+  return `${(h / 24).toFixed(1)} d`;
+}
+
+async function openPerson(id) {
+  const box = $('#person');
+  box.replaceChildren(el('p', 'empty', 'loading…'));
+  for (const c of document.querySelectorAll('.person-card')) c.classList.toggle('is-on', c.dataset.id === id);
+  try {
+    const d = await get(`/api/person/${id}`);
+    box.replaceChildren();
+
+    // Head: who, with the roles you gave them; click a role to remove it,
+    // type to add one.
+    const head = el('div', 'person-detail-head');
+    head.append(el('span', 'avatar big', initials(d.card.name)));
+    const title = el('div');
+    title.append(el('h2', 'person-title', d.card.name));
+    const roles = el('div', 'roles');
+    const saveRelationship = async () => {
+      const current = [...roles.querySelectorAll('.role')].map(r => r.dataset.role);
+      await post(`/api/person/${id}/relationship`, { roles: current, notes: notes.value });
+    };
+    const addRole = (name) => {
+      const chip = el('span', 'role removable', name);
+      chip.dataset.role = name;
+      chip.title = 'remove';
+      chip.addEventListener('click', async () => { chip.remove(); await saveRelationship(); });
+      roles.insertBefore(chip, input);
+    };
+    const input = el('input', 'role-input');
+    input.placeholder = 'add a role…';
+    input.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter' && input.value.trim()) {
+        addRole(input.value.trim());
+        input.value = '';
+        await saveRelationship();
+      }
+    });
+    roles.append(input);
+    for (const r of d.card.roles) addRole(r);
+    title.append(roles);
+    const handles = el('div', 'handles');
+    for (const h of d.card.handles) {
+      handles.append(el('span', 'handle' + (h.inferred ? ' inferred' : ''),
+        `${HANDLE_ICONS[h.kind] || ''} ${h.value}`));
+    }
+    title.append(handles);
+    head.append(title);
+    box.append(head);
+
+    // The arithmetic.
+    const tiles = el('div', 'tiles');
+    tiles.append(
+      statTile('from them', d.stats.from_them),
+      statTile('from you', d.stats.to_them),
+      statTile('your reply time', hours(d.stats.reply_hours), d.stats.reply_hours == null ? 'no exchanges to measure' : 'median'),
+      statTile('since', d.stats.first_at || '—', d.stats.last_at ? `last ${d.stats.last_at}` : ''),
+      statTile('language', d.stats.language || '—'),
+    );
+    box.append(tiles);
+    const chart = el('div', 'chart');
+    chart.append(el('span', 'chart-label', 'last twelve months'), monthBars(d.stats.months));
+    box.append(chart);
+
+    // Your notes.
+    box.append(el('h3', 'group-title', 'Your notes'));
+    const notes = el('textarea', 'notes');
+    notes.value = d.notes || '';
+    notes.placeholder = 'Anything you want to remember about them. Only you write here.';
+    notes.addEventListener('blur', saveRelationship);
+    box.append(notes);
+
+    // Promises either way.
+    if (d.commitments.length) {
+      box.append(el('h3', 'group-title', `Promises (${d.commitments.length})`));
+      const ol = el('ol', 'rows');
+      for (const c of d.commitments) ol.append(commitmentNode(c));
+      box.append(ol);
+    }
+
+    // Recent messages, the same rows as the timeline.
+    box.append(el('h3', 'group-title', 'Recent'));
+    const ol = el('ol', 'rows');
+    for (const r of d.recent) ol.append(rowNode(r));
+    if (!d.recent.length) ol.append(el('li', 'empty', 'nothing yet'));
+    box.append(ol);
+  } catch (e) {
+    box.replaceChildren(el('p', 'error', e.message));
+  }
+}
+
+async function loadPeople() {
+  const list = $('#people-list');
+  try {
+    const cards = await get('/api/people?limit=80');
+    list.replaceChildren(...cards.map(c => personCard(c, openPerson)));
+    if (!cards.length) list.append(el('li', 'empty', 'No one yet.'));
+  } catch (e) {
+    list.replaceChildren(el('li', 'empty error', e.message));
   }
 }
 

@@ -83,12 +83,18 @@ pub fn chat(
 
     let me = store.self_person()?.map(|p| p.id);
     let author = chat_author(store, me, message)?;
+    // In a direct chat the other party is the conversation itself: its key
+    // is their Telegram id. So an outgoing message is to them, an incoming
+    // one to the user.
     let recipients: Vec<PersonId> = match (message.thread_kind.as_str(), message.outgoing, me) {
         ("direct", false, Some(me)) => vec![me],
+        ("direct", true, _) => direct_peer(store, &message.thread_key, &message.thread_title)?
+            .into_iter()
+            .collect(),
         _ => Vec::new(),
     };
     let is_self = |person| me == Some(person);
-    let direction = genatrix_model::item::direction_of(author, &recipients, is_self, false);
+    let direction = genatrix_model::item::direction_of(author, &recipients, is_self, true);
 
     let kind = match message.thread_kind.as_str() {
         "direct" => ThreadKind::DirectChat,
@@ -143,6 +149,79 @@ pub fn chat(
     };
     store.insert_item(&item)?;
     Ok(Ingested::Added(item.id))
+}
+
+/// The person a direct chat is with, from its key (`chat:<telegram id>`).
+fn direct_peer(
+    store: &Store,
+    thread_key: &str,
+    title: &str,
+) -> anyhow::Result<Option<genatrix_model::PersonId>> {
+    use genatrix_model::HandleKind;
+    let Some(id) = thread_key.strip_prefix("chat:") else {
+        return Ok(None);
+    };
+    if id.starts_with('-') {
+        return Ok(None);
+    }
+    Ok(Some(store.person_for_handle(
+        HandleKind::TelegramId,
+        id,
+        title,
+    )?))
+}
+
+/// Put right what earlier builds got wrong about chats: the account
+/// holder's own Telegram identity filed under a separate person, outgoing
+/// direct messages without a recipient, and every chat message marked
+/// directionless. Returns how many items changed.
+pub fn repair_chats(store: &Store, telegram_user_ids: &[i64]) -> anyhow::Result<usize> {
+    use genatrix_model::{Connector, HandleKind, ThreadKind};
+
+    let Some(me) = store.self_person()?.map(|p| p.id) else {
+        return Ok(0);
+    };
+    // The user's own Telegram ids belong to the user's person.
+    for id in telegram_user_ids {
+        let value = id.to_string();
+        if let Some(handle) = store.find_handle(HandleKind::TelegramId, &value)?
+            && handle.person_id != me
+        {
+            store.move_handle(HandleKind::TelegramId, &value, me)?;
+            store.reassign_author(handle.person_id, me)?;
+        }
+    }
+
+    let mut changed = 0;
+    for mut item in store.all_items()? {
+        if item.source.connector != Connector::Telegram || item.tombstoned {
+            continue;
+        }
+        let Some(thread) = store.get_thread(item.thread_id)? else {
+            continue;
+        };
+        let from_me = item.author == Some(me);
+        let mut recipients = item.recipients.clone();
+        if thread.kind == ThreadKind::DirectChat {
+            let title = thread.title.clone().unwrap_or_default();
+            recipients = if from_me {
+                direct_peer(store, &thread.source.external_id, &title)?
+                    .into_iter()
+                    .collect()
+            } else {
+                vec![me]
+            };
+        }
+        let direction =
+            genatrix_model::item::direction_of(item.author, &recipients, |p| p == me, true);
+        if direction != item.direction || recipients != item.recipients {
+            item.direction = direction;
+            item.recipients = recipients;
+            store.rederive_item(&item)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
 }
 
 /// Who wrote a chat message: the user for an outgoing one, else the person

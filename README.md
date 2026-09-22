@@ -229,7 +229,11 @@ within minutes, and takes new mail as it arrives: within seconds on servers
 with IDLE, within a minute elsewhere. Progress and state per account are on
 the page and in the menu.
 
-**Open the interface.** A timeline you can search and filter, by words and,
+**Open the interface.** The first screen is Today: the morning digest with
+its sources, and the promises found in your messages for you to confirm. A
+People tab lists everyone you exchange messages with and, per person, what
+passed between you, in numbers and in the recent messages, plus roles and
+notes that only you write. Then a timeline you can search and filter, by words and,
 once the model side is up, by meaning in any language; each item expanding
 to show the model's summary, its full text and every judgement made about it,
 with who made it and when, and a way to confirm or correct the level; a

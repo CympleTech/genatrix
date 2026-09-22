@@ -12,7 +12,7 @@ use crate::time::{opt_utc_from_col, opt_utc_to_col, utc_from_col, utc_to_col};
 
 const T: &str = "commitment";
 
-fn row_to_commitment(r: &Row<'_>) -> Result<Commitment> {
+pub(crate) fn row_to_commitment(r: &Row<'_>) -> Result<Commitment> {
     let id: String = r.get("id")?;
     let from: String = r.get("from_person")?;
     let to: Option<String> = r.get("to_person")?;

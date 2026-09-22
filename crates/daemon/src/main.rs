@@ -571,11 +571,12 @@ fn rate_per_minute(count: usize, d: std::time::Duration) -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-/// Judge the sensitivity of new items as they arrive, while the model side
-/// is up. Runs the classification pipeline whenever the item count has
-/// moved since the last pass; the pipeline itself skips what the model has
-/// already judged (design 02: every item gets a level, on this machine).
-async fn judge_as_mail_arrives(system: std::sync::Arc<System>) {
+/// The ingestion pipelines, run as mail arrives and while the model side
+/// is up: judge what is new, vectorize what has no vectors, summarize what
+/// has no summary (design 03). Each pass has its own run and step budget;
+/// a pass that stops at the budget continues on the next tick, and what it
+/// did stays done.
+async fn pipelines_as_mail_arrives(system: std::sync::Arc<System>) {
     let mut judged_at_count: Option<u64> = None;
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(20)).await;
@@ -589,41 +590,84 @@ async fn judge_as_mail_arrives(system: std::sync::Arc<System>) {
                 continue;
             }
         };
-        if judged_at_count == Some(count) {
-            continue;
-        }
-        let mut ctx = match RunContext::begin(&system.ledger, &system.caller, "classify", 64) {
-            Ok(ctx) => ctx,
-            Err(e) => {
-                tracing::warn!(error = %e, "could not begin a classification run");
-                continue;
-            }
-        };
-        let report = pipeline::classify::run(&system.store, system.gate.rules(), &mut ctx).await;
-        match report {
-            Ok(report) => {
-                let _ = ctx.done();
-                if report.asked > 0 || report.by_rule > 0 {
-                    tracing::info!(
-                        seen = report.seen,
-                        by_rule = report.by_rule,
-                        asked = report.asked,
-                        raised = report.raised,
-                        "classified"
-                    );
-                }
+
+        if judged_at_count != Some(count)
+            && let Some(mut ctx) = begin_run(&system, "classify")
+        {
+            let result = pipeline::classify::run(&system.store, system.gate.rules(), &mut ctx)
+                .await
+                .map(|r| {
+                    (r.seen > 0).then(|| {
+                        format!(
+                            "classified {} item(s): {} by rules, {} asked, {} raised",
+                            r.seen, r.by_rule, r.asked, r.raised
+                        )
+                    })
+                });
+            if finish_run(ctx, "classify", result) {
                 judged_at_count = Some(count);
             }
-            Err(genatrix_agent::run::RunError::OutOfSteps { .. }) => {
-                // The collar, not a failure: a mailbox of thousands takes
-                // several passes, and what this one judged stays judged.
-                let _ = ctx.stopped("paused at the step budget; more next pass");
-                tracing::info!("classification paused at its step budget; continuing next pass");
+        }
+
+        if system.embedder_configured()
+            && let Some(mut ctx) = begin_run(&system, "embed")
+        {
+            let result = pipeline::embed::run(&system.store, &mut ctx)
+                .await
+                .map(|r| {
+                    (r.items > 0)
+                        .then(|| format!("embedded {} item(s) in {} chunk(s)", r.items, r.chunks))
+                });
+            finish_run(ctx, "embed", result);
+        }
+
+        if let Some(mut ctx) = begin_run(&system, "summarize") {
+            let result = pipeline::summarize::run(&system.store, &mut ctx)
+                .await
+                .map(|r| {
+                    (r.summarized > 0).then(|| format!("summarized {} item(s)", r.summarized))
+                });
+            finish_run(ctx, "summarize", result);
+        }
+    }
+}
+
+type Run<'a> = RunContext<'a, caller::GatewayCaller<names::StoreNames>>;
+
+fn begin_run<'a>(system: &'a System, task: &str) -> Option<Run<'a>> {
+    match RunContext::begin(&system.ledger, &system.caller, task, 64) {
+        Ok(ctx) => Some(ctx),
+        Err(e) => {
+            tracing::warn!(task, error = %e, "could not begin a run");
+            None
+        }
+    }
+}
+
+/// Close a run. Returns whether the pass ran to its end; stopping at the
+/// step budget is not a failure, just not the end.
+fn finish_run(
+    ctx: Run<'_>,
+    task: &str,
+    result: Result<Option<String>, genatrix_agent::run::RunError>,
+) -> bool {
+    match result {
+        Ok(line) => {
+            let _ = ctx.done();
+            if let Some(line) = line {
+                tracing::info!(task, "{line}");
             }
-            Err(e) => {
-                let _ = ctx.stopped(e.to_string());
-                tracing::warn!(error = %e, "classification pass failed; will try again");
-            }
+            true
+        }
+        Err(genatrix_agent::run::RunError::OutOfSteps { .. }) => {
+            let _ = ctx.stopped("paused at the step budget; more next pass");
+            tracing::info!(task, "paused at the step budget; continuing next pass");
+            false
+        }
+        Err(e) => {
+            let _ = ctx.stopped(e.to_string());
+            tracing::warn!(task, error = %e, "pass failed; will try again");
+            false
         }
     }
 }
@@ -646,7 +690,7 @@ async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
     let system = std::sync::Arc::new(System::open(config.clone(), key.clone())?);
     leave_ticket_key(config, &key)?;
     models::start(system.clone(), &key)?;
-    tokio::spawn(judge_as_mail_arrives(system.clone()));
+    tokio::spawn(pipelines_as_mail_arrives(system.clone()));
 
     let accounts = accounts::Accounts::load(&config.accounts_path())?;
     let grant = accounts.grant();

@@ -28,6 +28,7 @@ mod raw;
 mod store;
 mod thread;
 mod time;
+mod vector;
 
 pub use cursor::StoredCursor;
 pub use error::{Error, Result};
@@ -36,6 +37,7 @@ pub use files::FileStore;
 pub use genatrix_keys::DbKey;
 pub use item::{ItemQuery, ItemVersion};
 pub use store::Store;
+pub use vector::EMBEDDING_DIMS;
 
 /// Current schema version. Bump with every new migration file.
 pub const SCHEMA_VERSION: i64 = migrate::SCHEMA_VERSION;

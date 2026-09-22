@@ -51,6 +51,21 @@ impl std::fmt::Debug for System {
 }
 
 impl System {
+    /// Whether the registry names a local embedder (an entry whose only
+    /// purpose is `embed`). Without one, search stays full-text.
+    #[must_use]
+    pub fn embedder_configured(&self) -> bool {
+        self.gateway_config.registry.models.iter().any(|m| {
+            matches!(
+                m.endpoint,
+                genatrix_llm::registry::Endpoint::LocalSocket { .. }
+            ) && !m.purposes.is_empty()
+                && m.purposes
+                    .iter()
+                    .all(|p| *p == genatrix_llm::ticket::Purpose::Embed)
+        })
+    }
+
     /// Open everything.
     ///
     /// The ticket key is generated here, per run, and handed to the gateway

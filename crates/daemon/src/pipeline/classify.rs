@@ -387,9 +387,7 @@ fn thread_kind_of(store: &Store, item: &Item) -> genatrix_model::ThreadKind {
 
 /// The run context reports failures as ledger errors; a store failure during
 /// a pipeline is the same kind of "we cannot continue safely".
-fn store_error(e: &genatrix_store::Error) -> genatrix_ledger::Error {
-    genatrix_ledger::Error::HeadMismatch(format!("store: {e}"))
-}
+use super::store_error;
 
 #[cfg(test)]
 mod tests {

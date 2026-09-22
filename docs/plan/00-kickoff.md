@@ -51,8 +51,9 @@ Design 10, "理解". Done when every item has a level and a summary, vector sear
 | Classification runs inside `serve` as mail arrives | done. Measured on the real mailbox: the model reads about 150 prompt tokens a second, so the prompt carries sender, subject and the first 200 characters without links, about 1,300 tokens for a batch of ten, 9 seconds a batch, under a second an item; whole bodies took 18 seconds a batch. Quality not yet measured |
 | Review on the page: the model's judgement of a message, confirmed or corrected with one click; the tally of agreement; a level chooser on every item (design 06) | done; the author's judgements are the evaluation set (design 04) |
 | Model selection against a real evaluation set: the author's mailbox, 100 sampled judgements | waiting on the author's review pass |
-| Chunking, embedder role, `sqlite-vec`, vector search on the page | not started |
-| Summarizer role; summary shown per item | not started |
+| Chunking, embedder role, `sqlite-vec`, vector search on the page | done: `multilingual-e5-small` served by the inference process on the CPU with Apple's Accelerate (candle; its Metal backend lacks layer-norm; about 2,000 prompt tokens a second, 32 chunks in 8 seconds), chunks of about 700 characters at paragraph and sentence boundaries, vectors in `chunk_vec` beside the Embedding annotations, search merges full-text and nearest-by-meaning hits into one timeline |
+| Summarizer role; summary shown per item | done: messages of 280 characters or more get up to three lines in their own language, shown under the text marked as the model's; shorter ones are their own summary |
+| The core starts the model side | done: two models, one sandboxed process; `service install` falls back to `launchctl load` where `bootstrap` needs a GUI session |
 | Records page backed by the ledger for every model call | partly: the page reads the ledger; the item count of model calls will grow with the pipelines |
 | Telegram connector (non-blocking; due by the end of M3) | not started; the login spike needs application credentials |
 

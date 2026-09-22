@@ -420,6 +420,13 @@ fn encode_body(
     // The registry name, not the upstream model: the gateway resolves it and
     // the ticket's target must match what the gateway routes to.
     body.insert("model".into(), entry.name.clone().into());
+    if request.purpose == Purpose::Embed {
+        // An embeddings request: the texts are the messages' contents, in
+        // order. Nothing else applies to it.
+        let input: Vec<&str> = messages.iter().map(|m| m.content.as_str()).collect();
+        body.insert("input".into(), serde_json::to_value(input)?);
+        return Ok(Bytes::from(serde_json::to_vec(&body)?));
+    }
     body.insert("messages".into(), serde_json::to_value(messages)?);
     if let Some(t) = request.max_tokens {
         body.insert("max_tokens".into(), t.into());

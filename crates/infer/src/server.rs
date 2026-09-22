@@ -20,6 +20,89 @@ struct App {
     provider: MlxProvider,
     model_dir: String,
     model_name: String,
+    /// The embedder, when this process was given one.
+    embedder: Option<Arc<crate::embedder::Embedder>>,
+    embedding_model_name: String,
+}
+
+/// An OpenAI-style embeddings request: one text or several.
+#[derive(serde::Deserialize)]
+struct EmbeddingsRequest {
+    model: String,
+    input: EmbeddingsInput,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum EmbeddingsInput {
+    One(String),
+    Many(Vec<String>),
+}
+
+/// Embed a batch of texts. Design 04: vectors, only here.
+async fn embeddings(State(app): State<Arc<App>>, Json(req): Json<EmbeddingsRequest>) -> Response {
+    let Some(embedder) = app.embedder.clone() else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "model_not_found",
+            "this process was started without an embedding model",
+        );
+    };
+    if req.model != app.embedding_model_name && req.model != "default" {
+        return error(
+            StatusCode::NOT_FOUND,
+            "model_not_found",
+            format!(
+                "embeddings are served only as `{}`",
+                app.embedding_model_name
+            ),
+        );
+    }
+    let texts = match req.input {
+        EmbeddingsInput::One(t) => vec![t],
+        EmbeddingsInput::Many(v) => v,
+    };
+    if texts.len() > 256 {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "too_many_inputs",
+            "at most 256 texts per call",
+        );
+    }
+    let started = std::time::Instant::now();
+    let name = app.embedding_model_name.clone();
+    let count = texts.len();
+    let result = tokio::task::spawn_blocking(move || embedder.embed(&texts)).await;
+    match result {
+        Ok(Ok((vectors, tokens))) => {
+            tracing::info!(
+                texts = count,
+                prompt_tokens = tokens,
+                secs = started.elapsed().as_secs_f32(),
+                "embeddings"
+            );
+            let data: Vec<serde_json::Value> = vectors
+                .into_iter()
+                .enumerate()
+                .map(|(index, embedding)| {
+                    serde_json::json!({ "object": "embedding", "index": index, "embedding": embedding })
+                })
+                .collect();
+            Json(serde_json::json!({
+                "object": "list",
+                "data": data,
+                "model": name,
+                "usage": { "prompt_tokens": tokens, "total_tokens": tokens }
+            }))
+            .into_response()
+        }
+        Ok(Err(e)) => error(StatusCode::BAD_GATEWAY, "inference_error", e.to_string()),
+        Err(e) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "inference_error",
+            e.to_string(),
+        ),
+    }
 }
 
 #[derive(Serialize)]
@@ -133,7 +216,23 @@ pub async fn run(
     model_name: &str,
     socket: &Path,
     idle_timeout: u64,
+    embedding_model_dir: Option<&Path>,
+    embedding_model_name: &str,
 ) -> anyhow::Result<()> {
+    let embedder = match embedding_model_dir {
+        Some(dir) => {
+            let t = std::time::Instant::now();
+            let embedder = crate::embedder::Embedder::load(dir)?;
+            tracing::info!(
+                model = embedding_model_name,
+                dims = embedder.dims(),
+                secs = t.elapsed().as_secs_f32(),
+                "embedding model loaded"
+            );
+            Some(Arc::new(embedder))
+        }
+        None => None,
+    };
     if !model_dir.join("config.json").exists() {
         anyhow::bail!(
             "{} does not look like a model directory",
@@ -149,6 +248,8 @@ pub async fn run(
         provider: MlxProvider::new(pool),
         model_dir: model_dir.canonicalize()?.to_string_lossy().into_owned(),
         model_name: model_name.to_owned(),
+        embedder,
+        embedding_model_name: embedding_model_name.to_owned(),
     });
 
     // Warm up so the first real request does not pay the load.
@@ -179,6 +280,7 @@ pub async fn run(
         .route("/health", get(health))
         .route("/v1/models", get(models))
         .route("/v1/chat/completions", post(chat))
+        .route("/v1/embeddings", post(embeddings))
         .with_state(app);
     axum::serve(listener, router).await?;
     Ok(())

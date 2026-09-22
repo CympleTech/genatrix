@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+mod embedder;
 mod sandbox;
 mod server;
 
@@ -44,6 +45,15 @@ struct Args {
     /// Print the macOS sandbox profile for these paths and exit.
     #[arg(long)]
     print_sandbox_profile: bool,
+
+    /// Directory holding the embedding model (config.json, tokenizer.json,
+    /// model.safetensors). Without it `/v1/embeddings` is not served.
+    #[arg(long)]
+    embedding_model_dir: Option<PathBuf>,
+
+    /// Registry name the embedding model is served under.
+    #[arg(long, default_value = "embed")]
+    embedding_model_name: String,
 }
 
 #[tokio::main]
@@ -60,11 +70,30 @@ async fn main() -> anyhow::Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
+    leave_with_parent();
     server::run(
         &args.model_dir,
         &args.model_name,
         &args.socket,
         args.idle_timeout,
+        args.embedding_model_dir.as_deref(),
+        &args.embedding_model_name,
     )
     .await
+}
+
+/// Leave when the core that started this process is gone: a child that
+/// outlives a killed parent would hold the model, and its memory, for
+/// nobody. The connector does the same.
+fn leave_with_parent() {
+    let parent = std::os::unix::process::parent_id();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            if std::os::unix::process::parent_id() != parent {
+                tracing::warn!("the parent process is gone; leaving");
+                std::process::exit(3);
+            }
+        }
+    });
 }

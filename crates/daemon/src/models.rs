@@ -91,6 +91,9 @@ struct Local {
     name: String,
     dir: PathBuf,
     socket: PathBuf,
+    /// The embedder beside it, when the registry names one and its weights
+    /// are on disk: model id and directory.
+    embedder: Option<(String, PathBuf)>,
 }
 
 /// Start the inference process and the gateway for the local model in the
@@ -103,12 +106,18 @@ pub fn start(system: Arc<System>, key: &TicketKey) -> anyhow::Result<()> {
         state.send_replace(ModelState::Off { detail });
     };
 
+    let is_embedder = |m: &&genatrix_llm::registry::ModelEntry| {
+        m.purposes
+            .iter()
+            .all(|p| *p == genatrix_llm::ticket::Purpose::Embed)
+            && !m.purposes.is_empty()
+    };
     let Some(entry) = system
         .gateway_config
         .registry
         .models
         .iter()
-        .find(|m| matches!(m.endpoint, Endpoint::LocalSocket { .. }))
+        .find(|m| matches!(m.endpoint, Endpoint::LocalSocket { .. }) && !is_embedder(m))
     else {
         off("no local model in gateway.toml".into());
         return Ok(());
@@ -117,10 +126,34 @@ pub fn start(system: Arc<System>, key: &TicketKey) -> anyhow::Result<()> {
         unreachable!("filtered above");
     };
     let local_socket = PathBuf::from(path);
+    // The embedder is served by the same process (design 04: both stay
+    // resident); a registry entry with only the `embed` purpose names it.
+    let embedder = system
+        .gateway_config
+        .registry
+        .models
+        .iter()
+        .find(|m| matches!(m.endpoint, Endpoint::LocalSocket { .. }) && is_embedder(m))
+        .and_then(|m| {
+            let dir = system.config.data_dir.join("models").join(&m.model);
+            if dir.join("model.safetensors").is_file() {
+                // The gateway rewrites the registry name to this model id
+                // before forwarding, so this is the name the process must
+                // answer to.
+                Some((m.model.clone(), dir))
+            } else {
+                tracing::warn!(
+                    dir = %dir.display(),
+                    "the registry names an embedder but its weights are not there; search stays full-text only"
+                );
+                None
+            }
+        });
     let local = Local {
         name: entry.model.clone(),
         dir: system.config.data_dir.join("models").join(&entry.model),
         socket: local_socket.clone(),
+        embedder,
     };
     if !local.dir.join("config.json").is_file() {
         off(format!(
@@ -209,6 +242,12 @@ fn spawn_infer(
         "--socket".to_owned(),
         local.socket.display().to_string(),
     ];
+    if let Some((name, dir)) = &local.embedder {
+        common.push("--embedding-model-dir".to_owned());
+        common.push(dir.display().to_string());
+        common.push("--embedding-model-name".to_owned());
+        common.push(name.clone());
+    }
     let profile = std::process::Command::new(binary)
         .args(&common)
         .arg("--print-sandbox-profile")

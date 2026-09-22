@@ -27,6 +27,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 futures.workspace = true
 anyhow.workspace = true
+candle-nn = { version = "0.11", features = ["accelerate"] }
+candle-transformers = "0.11"
+tokenizers = "0.21"
+candle-core = { version = "0.11", features = ["accelerate"] }
 
 [lints]
 workspace = true

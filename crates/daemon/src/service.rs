@@ -160,14 +160,42 @@ pub fn install(data_dir: &Path, port: u16) -> anyhow::Result<(PathBuf, Program)>
         std::fs::create_dir_all(parent)?;
     }
 
-    // Out with the old first, quietly: there may be none.
-    let _ = launchctl(&["bootout", &format!("{}/{LABEL}", domain())]);
+    // Out with the old first, quietly: there may be none. launchd tears a
+    // job down asynchronously, and a load that lands during the teardown
+    // is dropped, so give it a moment.
+    if launchctl(&["bootout", &format!("{}/{LABEL}", domain())]).is_ok() {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+    }
     std::fs::write(
         &path,
         plist(&program, data_dir, port, &log_dir.join("genatrix.log")),
     )?;
-    launchctl(&["bootstrap", &domain(), &path.display().to_string()])?;
-    Ok((path, program))
+    // `bootstrap` needs the caller to be inside the user's GUI session; from
+    // SSH or a tool it fails with an I/O error. The older `load` reaches the
+    // session from anywhere, so it is the fallback rather than the error.
+    if let Err(bootstrap) = launchctl(&["bootstrap", &domain(), &path.display().to_string()]) {
+        launchctl(&["load", "-w", &path.display().to_string()])
+            .map_err(|load| anyhow::anyhow!("{bootstrap}; then {load}"))?;
+    }
+    // `load` straight after `bootout` of the same label is sometimes a
+    // no-op while launchd is still tearing the old one down. Look, and ask
+    // once more if it is not there.
+    for _ in 0..6 {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        if running() {
+            return Ok((path, program));
+        }
+        let _ = launchctl(&["load", "-w", &path.display().to_string()]);
+    }
+    if running() {
+        Ok((path, program))
+    } else {
+        anyhow::bail!(
+            "the agent was written to {} but launchd did not start it; \
+             `launchctl load -w` that file from a terminal on the machine",
+            path.display()
+        )
+    }
 }
 
 /// Stop the agent and remove its property list.
@@ -184,6 +212,16 @@ pub fn uninstall() -> anyhow::Result<bool> {
 /// Whether launchd currently knows the agent.
 pub fn installed() -> bool {
     launchctl(&["print", &format!("{}/{LABEL}", domain())]).is_ok()
+}
+
+/// Whether launchd has the agent and its process is up.
+fn running() -> bool {
+    Command::new("/bin/launchctl")
+        .args(["print", &format!("{}/{LABEL}", domain())])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .is_some_and(|o| String::from_utf8_lossy(&o.stdout).contains("state = running"))
 }
 
 fn launchctl(args: &[&str]) -> anyhow::Result<()> {

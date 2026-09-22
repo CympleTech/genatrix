@@ -30,16 +30,21 @@ impl Store {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        genatrix_vec::register();
         let conn = Connection::open_with_flags(path, flags)?;
         Self::init(conn, key)
     }
 
     /// An in-memory database, for tests and for import dry runs.
     pub fn open_in_memory(key: &DbKey) -> Result<Self> {
+        genatrix_vec::register();
         Self::init(Connection::open_in_memory()?, key)
     }
 
     fn init(mut conn: Connection, key: &DbKey) -> Result<Self> {
+        // Already registered before `conn` was opened, by `open` and
+        // `open_in_memory`; harmless to say again.
+        genatrix_vec::register();
         // The key pragma must be the first statement on the connection.
         conn.execute_batch(&format!("PRAGMA key = {};", key.pragma_literal()))?;
         // Touching the schema is how SQLCipher reports a wrong key.

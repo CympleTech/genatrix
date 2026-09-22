@@ -28,6 +28,7 @@ use genatrix_agent::run::{CallError, Called, ModelCaller};
 use genatrix_gate::gate::{EgressGate, Outcome, Prepared, Request};
 use genatrix_llm::local::LocalClient;
 use genatrix_llm::server::TICKET_HEADER;
+use genatrix_llm::ticket::Purpose;
 use genatrix_model::PersonId;
 
 /// Resolves a pseudonym key back to the name to show. The agent layer hands
@@ -87,11 +88,16 @@ impl<N: Names> GatewayCaller<N> {
     }
 
     /// Send a prepared call and record how it ended.
-    async fn send(&self, prepared: &Prepared) -> Result<String, CallError> {
+    async fn send(&self, prepared: &Prepared, purpose: Purpose) -> Result<String, CallError> {
+        let path = if purpose == Purpose::Embed {
+            "/v1/embeddings"
+        } else {
+            "/v1/chat/completions"
+        };
         let sent = self
             .gateway
             .post_with_header(
-                "/v1/chat/completions",
+                path,
                 prepared.body.clone(),
                 Some((TICKET_HEADER, &prepared.ticket)),
             )
@@ -162,8 +168,14 @@ impl<N: Names> ModelCaller for GatewayCaller<N> {
             decision = ?prepared.decision,
             "sending"
         );
-        let body = self.send(&prepared).await?;
-        let mut reply = Self::read_reply(&body)?;
+        let body = self.send(&prepared, request.purpose).await?;
+        // An embeddings reply is vectors, not words: the collar reads the
+        // JSON itself.
+        let mut reply = if request.purpose == Purpose::Embed {
+            RawReply::text(body)
+        } else {
+            Self::read_reply(&body)?
+        };
 
         // Names come back only here, on this machine, after the record of
         // what went out has already been written.

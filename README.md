@@ -142,11 +142,22 @@ socket = "$HOME/.genatrix-dev/run/gateway.sock"
 name = "local"                 # what callers ask for, and what a ticket names
 model = "qwen3-8b-4bit"        # what the inference process is serving
 context_length = 32768
-purposes = ["classify", "extract", "embed", "identity_suggestion",
+purposes = ["classify", "extract", "identity_suggestion",
             "summarize", "draft", "translate", "search_rewrite", "plan"]
+endpoint = { kind = "local_socket", path = "$HOME/.genatrix-dev/run/infer.sock" }
+
+[[models]]
+name = "embed"                       # the embedder: vectors, only here
+model = "multilingual-e5-small"      # the directory under models/
+context_length = 512
+purposes = ["embed"]
 endpoint = { kind = "local_socket", path = "$HOME/.genatrix-dev/run/infer.sock" }
 EOF
 ```
+
+Two local models, one process: the chat model answers everything but
+`embed`, and the small multilingual embedder answers that. Both are served
+by the same sandboxed inference process.
 
 **Initialise, and add your mailbox.**
 
@@ -203,10 +214,13 @@ within minutes, and takes new mail as it arrives: within seconds on servers
 with IDLE, within a minute elsewhere. Progress and state per account are on
 the page and in the menu.
 
-**Open the interface.** A timeline you can search and filter, each item
-expanding to show its full text and every judgement made about it, with who
-made it and when; a records page that opens with how many bytes have left
-the device and lists every model call; and a line per account at the top.
+**Open the interface.** A timeline you can search and filter, by words and,
+once the model side is up, by meaning in any language; each item expanding
+to show the model's summary, its full text and every judgement made about it,
+with who made it and when, and a way to confirm or correct the level; a
+review tab that draws the model's judgements for you to check; a records page
+that opens with how many bytes have left the device and lists every model
+call; and a line per account at the top.
 
 To look at it from a phone, bind somewhere else. That needs an access token,
 which is generated per run and printed inside the link:
@@ -237,7 +251,12 @@ model spike measured, about 4.3 GB.
 ```sh
 uvx --from huggingface_hub hf download mlx-community/Qwen3-8B-4bit \
   --local-dir $DEV/models/qwen3-8b-4bit
+uvx --from huggingface_hub hf download intfloat/multilingual-e5-small \
+  --local-dir $DEV/models/multilingual-e5-small
 ```
+
+The second is the embedder, about 470 MB, for searching by meaning in any
+language.
 
 (`uvx` runs it without installing anything. With the Hugging Face CLI already
 on your machine, `hf download` on its own does the same.)

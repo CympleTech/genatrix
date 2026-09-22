@@ -21,6 +21,8 @@ use genatrix_model::{Annotation, AnnotationKind, Item, ItemId, Level, Producer};
 use genatrix_store::{ItemQuery, ItemVersion};
 use serde::{Deserialize, Serialize};
 
+use genatrix_agent::run::RunContext;
+
 use crate::system::System;
 
 type Shared = State<Arc<System>>;
@@ -234,6 +236,10 @@ struct Status {
     data_dir: String,
     model: crate::models::ModelState,
     model_text: String,
+    /// Items with a vector, with a summary, with a model judgement.
+    embedded: u64,
+    summarized: u64,
+    judged: u64,
 }
 
 async fn status(State(system): Shared) -> Result<Json<Status>, ApiError> {
@@ -241,6 +247,9 @@ async fn status(State(system): Shared) -> Result<Json<Status>, ApiError> {
     Ok(Json(Status {
         model_text: model.describe(),
         model,
+        embedded: system.store.count_embedded_items()?,
+        summarized: system.store.count_annotated_items("summary")?,
+        judged: system.store.count_annotated_items("sensitivity")?,
         items: system.store.count_items()?,
         ledger_entries: system.ledger.len()?,
         cloud_enabled: system.gate.cloud_enabled(),
@@ -294,7 +303,20 @@ async fn timeline(
             ..Default::default()
         })?
     } else {
-        system.store.search_items(&query.q, query.limit)?
+        let mut items = system.store.search_items(&query.q, query.limit)?;
+        // By meaning as well as by words (design 06: full text and vectors,
+        // one timeline). Only while the model side answers; a search never
+        // waits for it.
+        if system.embedder_configured() && system.model_state.borrow().is_ready() {
+            for (item, _) in nearest(&system, &query.q, query.limit).await {
+                if !items.iter().any(|i| i.id == item.id) {
+                    items.push(item);
+                }
+            }
+            items.sort_by_key(|i| std::cmp::Reverse(i.occurred_at.timestamp_millis()));
+            items.truncate(query.limit as usize);
+        }
+        items
     };
 
     let mut rows = Vec::with_capacity(items.len());
@@ -310,6 +332,40 @@ async fn timeline(
     Ok(Json(rows))
 }
 
+/// Items near a typed query, by vector. The query is embedded as the
+/// user's own text at the level the rules give it; it never leaves the
+/// device either way, the embedder being local by design.
+async fn nearest(system: &System, q: &str, limit: u32) -> Vec<(Item, f32)> {
+    /// A unit-vector L2 distance this large means a cosine under about 0.8,
+    /// which for e5 is "not about the same thing".
+    const FAR: f32 = 0.63;
+    let Ok(mut ctx) = RunContext::begin(&system.ledger, &system.caller, "search", 2) else {
+        return Vec::new();
+    };
+    let level = system.gate.level_of_typed_text(q);
+    let vector = match crate::pipeline::embed::embed_query(&mut ctx, q, level).await {
+        Ok(v) => {
+            let _ = ctx.done();
+            v
+        }
+        Err(e) => {
+            let _ = ctx.stopped(e.to_string());
+            tracing::warn!(error = %e, "search embedding failed; full text only");
+            return Vec::new();
+        }
+    };
+    if vector.is_empty() {
+        return Vec::new();
+    }
+    match system.store.similar_items(&vector, limit) {
+        Ok(hits) => hits.into_iter().filter(|(_, d)| *d <= FAR).collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "vector search failed");
+            Vec::new()
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct Detail {
     row: Row,
@@ -317,6 +373,8 @@ struct Detail {
     subject: Option<String>,
     recipients: Vec<String>,
     judgements: Vec<Judgement>,
+    /// The model's summary, when the message was long enough to get one.
+    summary: Option<String>,
     tombstoned: bool,
 }
 
@@ -346,7 +404,14 @@ fn detail(system: &System, id: ItemId) -> Result<Detail, ApiError> {
         .ok_or_else(|| anyhow::anyhow!("item {id} vanished"))?;
 
     let mut judgements = Vec::new();
+    let mut summary = None;
     for annotation in system.store.annotations_of(id)? {
+        if annotation.superseded_by.is_none()
+            && let AnnotationKind::Summary { text, .. } = &annotation.kind
+        {
+            summary = Some(text.clone());
+            continue;
+        }
         let AnnotationKind::Sensitivity { level, .. } = &annotation.kind else {
             continue;
         };
@@ -382,6 +447,7 @@ fn detail(system: &System, id: ItemId) -> Result<Detail, ApiError> {
         subject,
         recipients,
         judgements,
+        summary,
         tombstoned: item.tombstoned,
     })
 }

@@ -88,6 +88,40 @@ impl Store {
         let rows = stmt.query_map([item.to_string()], |r| Ok(row_to_annotation(r)))?;
         rows.map(|r| r?).collect()
     }
+    /// Current items whose text is at least `min_chars` characters and that
+    /// have no summary yet, newest first.
+    pub fn items_without_summary(
+        &self,
+        min_chars: usize,
+        limit: u32,
+    ) -> Result<Vec<genatrix_model::Item>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT i.* FROM item i
+             WHERE i.tombstoned = 0 AND length(i.text) >= ?1
+               AND NOT EXISTS (SELECT 1 FROM item n WHERE n.supersedes = i.id)
+               AND NOT EXISTS (SELECT 1 FROM annotation a WHERE a.item_id = i.id
+                               AND a.kind = 'summary' AND a.superseded_by IS NULL)
+             ORDER BY i.occurred_ms DESC LIMIT ?2",
+        )?;
+        let mut rows = stmt.query(params![i64::try_from(min_chars).unwrap_or(i64::MAX), limit])?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            out.push(crate::item::row_to_item(r)?);
+        }
+        Ok(out)
+    }
+
+    /// How many items carry at least one annotation of a kind
+    /// (`summary`, `embedding`, `sensitivity`, ...).
+    pub fn count_annotated_items(&self, kind: &str) -> Result<u64> {
+        let n: i64 = self.conn().query_row(
+            "SELECT count(DISTINCT item_id) FROM annotation WHERE kind = ?1 AND superseded_by IS NULL",
+            params![kind],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
 
     /// All annotations. Used by export.
     pub fn all_annotations(&self) -> Result<Vec<Annotation>> {

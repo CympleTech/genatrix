@@ -51,7 +51,7 @@ pub(crate) fn level_from_col(table: &'static str, s: &str) -> Result<Level> {
     })
 }
 
-fn row_to_item(r: &Row<'_>) -> Result<Item> {
+pub(crate) fn row_to_item(r: &Row<'_>) -> Result<Item> {
     let id: String = r.get("id")?;
     let connector: String = r.get("connector")?;
     let raw_id: String = r.get("raw_id")?;

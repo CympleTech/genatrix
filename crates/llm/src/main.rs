@@ -80,5 +80,22 @@ async fn main() -> anyhow::Result<()> {
             );
         }
     };
+    leave_with_parent();
     serve(Arc::new(Gateway::new(config, key))).await
+}
+
+/// Leave when the core that started this process is gone: a child that
+/// outlives a killed parent would hold the model, and its memory, for
+/// nobody. The connector does the same.
+fn leave_with_parent() {
+    let parent = std::os::unix::process::parent_id();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            if std::os::unix::process::parent_id() != parent {
+                tracing::warn!("the parent process is gone; leaving");
+                std::process::exit(3);
+            }
+        }
+    });
 }

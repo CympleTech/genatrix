@@ -97,6 +97,17 @@ async fn models(State(gw): State<Arc<Gateway>>) -> Json<serde_json::Value> {
 }
 
 async fn chat(State(gw): State<Arc<Gateway>>, headers: HeaderMap, body: Bytes) -> Response {
+    forward(&gw, &headers, body, "/v1/chat/completions").await
+}
+
+/// Embeddings take the same door: a ticket for these bytes, a local model.
+/// The registry refuses an `embed` purpose on a cloud model at load, so
+/// this never has a cloud branch to take.
+async fn embeddings(State(gw): State<Arc<Gateway>>, headers: HeaderMap, body: Bytes) -> Response {
+    forward(&gw, &headers, body, "/v1/embeddings").await
+}
+
+async fn forward(gw: &Gateway, headers: &HeaderMap, body: Bytes, path: &str) -> Response {
     let ticket_header = headers
         .get(TICKET_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -117,15 +128,15 @@ async fn chat(State(gw): State<Arc<Gateway>>, headers: HeaderMap, body: Bytes) -
     };
 
     match &forward.entry.endpoint {
-        Endpoint::LocalSocket { path } => {
+        Endpoint::LocalSocket { path: socket } => {
             // Rewrite the registry name to the model identifier the local
             // process knows. The body is otherwise untouched.
             let upstream_body = match rewrite_model(&body, &forward.entry.model) {
                 Ok(b) => b,
                 Err(e) => return refuse(400, "bad_request", e),
             };
-            match LocalClient::new(path)
-                .post_json_streaming("/v1/chat/completions", upstream_body)
+            match LocalClient::new(socket)
+                .post_json_streaming(path, upstream_body)
                 .await
             {
                 Ok((status, incoming)) => {
@@ -176,6 +187,7 @@ pub fn router(gateway: Arc<Gateway>) -> Router {
         .route("/health", get(health))
         .route("/v1/models", get(models))
         .route("/v1/chat/completions", post(chat))
+        .route("/v1/embeddings", post(embeddings))
         .with_state(gateway)
 }
 

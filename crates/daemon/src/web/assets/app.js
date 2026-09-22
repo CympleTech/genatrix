@@ -86,7 +86,7 @@ async function loadStatus() {
       ? 'nothing has left this device'
       : `${s.bytes_left_device} bytes have left this device`;
     $('#status').textContent =
-      `${s.items} items · model ${s.model_text} · cloud ${s.cloud_enabled ? 'on' : 'off'} · ${bytes}`;
+      `${s.items} items · ${s.judged} judged · ${s.embedded} embedded · ${s.summarized} summarized · model ${s.model_text} · cloud ${s.cloud_enabled ? 'on' : 'off'} · ${bytes}`;
     // New mail shows up on the timeline without a reload.
     if (knownItems !== null && s.items !== knownItems && $('#timeline').classList.contains('is-on')) {
       loadTimeline();
@@ -158,6 +158,13 @@ function rowNode(row) {
       const d = await get(`/api/item/${row.id}`);
       detail.replaceChildren();
       if (d.subject) detail.append(el('p', null, d.subject));
+      // The model's summary, marked as its own and kept apart from the text
+      // (design 06). Never mixed into the content.
+      if (d.summary) {
+        const summary = el('div', 'summary');
+        summary.append(el('span', 'ai', 'AI summary'), el('p', null, d.summary));
+        detail.append(summary);
+      }
       detail.append(el('p', null, d.text));
       if (d.tombstoned) {
         detail.append(el('p', 'note', 'Deleted by the sender; kept here.'));

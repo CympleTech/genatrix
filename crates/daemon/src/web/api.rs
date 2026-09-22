@@ -391,6 +391,7 @@ struct Status {
 
 async fn status(State(system): Shared) -> Result<Json<Status>, ApiError> {
     let model = system.model_state.borrow().clone();
+    let slow = slow_status(&system)?;
     Ok(Json(Status {
         model_text: model.describe(),
         model,
@@ -401,10 +402,34 @@ async fn status(State(system): Shared) -> Result<Json<Status>, ApiError> {
         ledger_entries: system.ledger.len()?,
         cloud_enabled: system.gate.cloud_enabled(),
         rules_version: system.gate.rules().version.clone(),
-        bytes_left_device: bytes_out(&system)?,
-        bytes_on_disk: system.raw_files.size_on_disk()? + system.blob_files.size_on_disk()?,
+        bytes_left_device: slow.bytes_left_device,
+        bytes_on_disk: slow.bytes_on_disk,
         data_dir: system.config.data_dir.display().to_string(),
     }))
+}
+
+/// Walking tens of thousands of files and decoding every egress record
+/// takes seconds; the answers change slowly. Kept for half a minute.
+fn slow_status(system: &System) -> Result<crate::system::SlowStatus, ApiError> {
+    const KEEP: std::time::Duration = std::time::Duration::from_secs(30);
+    if let Some((at, cached)) = *system
+        .slow_status
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        && at.elapsed() < KEEP
+    {
+        return Ok(cached);
+    }
+    let fresh = crate::system::SlowStatus {
+        bytes_on_disk: system.raw_files.size_on_disk()? + system.blob_files.size_on_disk()?,
+        bytes_left_device: bytes_out(system)?,
+    };
+    *system
+        .slow_status
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some((std::time::Instant::now(), fresh));
+    Ok(fresh)
 }
 
 #[derive(Deserialize)]

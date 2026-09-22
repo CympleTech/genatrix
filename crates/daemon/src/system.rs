@@ -40,6 +40,19 @@ pub struct System {
     pub gateway_config: GatewayConfig,
     /// How the model side is doing, for the interface and the pipelines.
     pub model_state: tokio::sync::watch::Sender<crate::models::ModelState>,
+    /// Numbers that are slow to compute and slow to change: bytes on disk,
+    /// bytes that left the device. Refreshed at most every half minute
+    /// for a page that asks every five seconds.
+    pub slow_status: std::sync::Mutex<Option<(std::time::Instant, SlowStatus)>>,
+}
+
+/// The status numbers worth caching.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SlowStatus {
+    /// Raw records and attachments on disk.
+    pub bytes_on_disk: u64,
+    /// Payload bytes recorded as having left the device.
+    pub bytes_left_device: usize,
 }
 
 impl std::fmt::Debug for System {
@@ -140,6 +153,7 @@ impl System {
             accounts: crate::syncing::Accounts::default(),
             gateway_config: gateway,
             model_state: crate::models::idle_state(),
+            slow_status: std::sync::Mutex::new(None),
         })
     }
 }

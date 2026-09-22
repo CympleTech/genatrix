@@ -192,12 +192,15 @@ impl Actions {
     /// A nonce for a page that is about to show this action. Presenting it
     /// back is part of approving.
     pub fn nonce_for(&self, action_id: &str) -> String {
-        let nonce = format!("{}{}", ulid::Ulid::new(), ulid::Ulid::new());
+        // One nonce per action until an approval spends it. The Today page
+        // and the Approvals page both show pending actions; a fresh nonce
+        // on every view would void the one the other page's card holds.
         self.nonces
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(action_id.to_owned(), nonce.clone());
-        nonce
+            .entry(action_id.to_owned())
+            .or_insert_with(|| format!("{}{}", ulid::Ulid::new(), ulid::Ulid::new()))
+            .clone()
     }
 
     fn nonce_matches(&self, action_id: &str, nonce: &str) -> bool {
@@ -460,4 +463,28 @@ impl Actions {
 #[must_use]
 pub fn expires_in(action: &Action, now: DateTime<Utc>) -> i64 {
     (action.expires_at - now).num_seconds().max(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_nonce_stays_the_same_across_views_until_it_is_spent() {
+        let actions = Actions::default();
+        let first = actions.nonce_for("a1");
+        assert_eq!(
+            actions.nonce_for("a1"),
+            first,
+            "a second page does not void the first"
+        );
+        assert_ne!(actions.nonce_for("a2"), first);
+        assert!(actions.nonce_matches("a1", &first));
+        actions.take_nonce("a1");
+        assert_ne!(
+            actions.nonce_for("a1"),
+            first,
+            "spent, so the next one is new"
+        );
+    }
 }

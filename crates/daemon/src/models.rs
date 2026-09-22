@@ -261,9 +261,12 @@ fn spawn_gateway(
 /// starting when either goes away. Retrying is set by the supervisors and
 /// left alone here until the gateway answers again.
 async fn readiness(system: Arc<System>, infer_socket: PathBuf) {
+    // A socket file can be left over from an earlier run; only an answer
+    // means the process behind it is up.
+    let infer = genatrix_llm::LocalClient::new(infer_socket);
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let up = infer_socket.exists() && system.caller.gateway_healthy().await;
+        let up = infer.healthy().await && system.caller.gateway_healthy().await;
         let current = system.model_state.borrow().clone();
         if up && !current.is_ready() {
             tracing::info!("model side ready");

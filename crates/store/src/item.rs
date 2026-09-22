@@ -267,6 +267,29 @@ impl Store {
         Ok(())
     }
 
+    /// A random sample of current items the model has judged and the user
+    /// has not yet confirmed or corrected: what a review pass looks at
+    /// (design 04, "评测集": the user's overrides are the evaluation set).
+    pub fn items_for_review(&self, limit: u32) -> Result<Vec<Item>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT i.* FROM item i
+             WHERE i.tombstoned = 0
+               AND NOT EXISTS (SELECT 1 FROM item n WHERE n.supersedes = i.id)
+               AND EXISTS (SELECT 1 FROM annotation a WHERE a.item_id = i.id
+                           AND a.kind = 'sensitivity' AND a.producer LIKE '%\"by\":\"model\"%')
+               AND NOT EXISTS (SELECT 1 FROM annotation u WHERE u.item_id = i.id
+                           AND u.kind = 'sensitivity' AND u.producer LIKE '%\"by\":\"user\"%')
+             ORDER BY random() LIMIT ?1",
+        )?;
+        let mut rows = stmt.query(params![limit])?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            out.push(row_to_item(r)?);
+        }
+        Ok(out)
+    }
+
     /// Fetch an item by id.
     pub fn get_item(&self, id: ItemId) -> Result<Option<Item>> {
         self.conn()

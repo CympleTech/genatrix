@@ -49,7 +49,8 @@ Design 10, "理解". Done when every item has a level and a summary, vector sear
 |---|---|
 | The core starts and supervises the inference process (sandboxed) and the gateway; the ticket key is generated per run and left in `run/ticket.key` for the other commands | done |
 | Classification runs inside `serve` as mail arrives | done. Measured on the real mailbox: the model reads about 150 prompt tokens a second, so the prompt carries sender, subject and the first 200 characters without links, about 1,300 tokens for a batch of ten, 9 seconds a batch, under a second an item; whole bodies took 18 seconds a batch. Quality not yet measured |
-| Model selection against a real evaluation set: the author's mailbox, 100 sampled judgements | not started; the first pass over the real mailbox is the input |
+| Review on the page: the model's judgement of a message, confirmed or corrected with one click; the tally of agreement; a level chooser on every item (design 06) | done; the author's judgements are the evaluation set (design 04) |
+| Model selection against a real evaluation set: the author's mailbox, 100 sampled judgements | waiting on the author's review pass |
 | Chunking, embedder role, `sqlite-vec`, vector search on the page | not started |
 | Summarizer role; summary shown per item | not started |
 | Records page backed by the ledger for every model call | partly: the page reads the ledger; the item count of model calls will grow with the pipelines |

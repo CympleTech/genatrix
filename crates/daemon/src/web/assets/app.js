@@ -28,7 +28,51 @@ for (const tab of document.querySelectorAll('.tab')) {
     tab.classList.add('is-on');
     $('#' + tab.dataset.pane).classList.add('is-on');
     if (tab.dataset.pane === 'records') loadRecords();
+    if (tab.dataset.pane === 'review') loadReview();
   });
+}
+
+async function post(path, body) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || response.statusText);
+  return data;
+}
+
+// --- levels -----------------------------------------------------------
+
+const LEVELS = ['public', 'personal', 'secret'];
+
+// Design 06: three options. Raising takes effect on the click. Lowering
+// says what it means in the option itself, and the click on that line is
+// the confirmation; no modal, no second "OK".
+function levelChooser(itemId, current, agreeWith, onDone) {
+  const box = el('div', 'chooser');
+  for (const level of LEVELS) {
+    const rank = LEVELS.indexOf(level) - LEVELS.indexOf(current);
+    let label;
+    if (level === agreeWith) label = `Agree: ${level}`;
+    else if (rank > 0) label = `Raise to ${level}`;
+    else if (rank < 0) label = `Lower to ${level}: could later go to the cloud, redacted`;
+    else label = `Keep ${level}`;
+    const button = el('button', `choose level-${level}` + (rank < 0 ? ' lowers' : ''), label);
+    button.type = 'button';
+    button.addEventListener('click', async () => {
+      for (const b of box.querySelectorAll('button')) b.disabled = true;
+      try {
+        const d = await post(`/api/item/${itemId}/level`, { level });
+        onDone(d);
+      } catch (e) {
+        box.append(el('span', 'error', e.message));
+      }
+    });
+    box.append(button);
+  }
+  return box;
 }
 
 // --- status -----------------------------------------------------------
@@ -128,6 +172,14 @@ function rowNode(row) {
         judgements.append(line);
       }
       if (d.judgements.length) detail.append(judgements);
+      // Your say. The marker in the row follows.
+      const marker = li.querySelector('.level');
+      detail.append(levelChooser(row.id, d.row.level, null, (updated) => {
+        marker.replaceWith(levelMarker(updated.row.level, updated.row.level_reason));
+        detail.remove();
+        detail = null;
+        li.classList.remove('is-open');
+      }));
     } catch (e) {
       detail.replaceChildren(el('p', 'error', e.message));
     }
@@ -167,6 +219,61 @@ $('#q').addEventListener('input', () => {
 $('#level').addEventListener('change', loadTimeline);
 $('#connector').addEventListener('change', loadTimeline);
 $('#filters').addEventListener('submit', (e) => e.preventDefault());
+
+// --- review -----------------------------------------------------------
+
+function reviewNode(entry) {
+  const li = el('li', 'row is-open');
+  const meta = el('div', 'meta');
+  meta.append(
+    el('time', null, entry.row.at),
+    levelMarker(entry.row.level, entry.row.level_reason),
+    el('span', 'who', entry.row.author),
+  );
+  li.append(meta);
+  if (entry.subject) li.append(el('p', 'preview', entry.subject));
+  li.append(el('p', 'excerpt', entry.text));
+  li.append(el('p', 'note', `The model said ${entry.model_level}.`));
+  li.append(levelChooser(entry.row.id, entry.row.level, entry.model_level, () => {
+    li.remove();
+    loadTally();
+    if (!$('#review-rows').children.length) loadReview();
+  }));
+  return li;
+}
+
+async function loadTally() {
+  try {
+    const view = await get('/api/review?count=0');
+    const t = view.tally;
+    const rate = t.reviewed ? Math.round(100 * t.agreed / t.reviewed) : null;
+    $('#tally').textContent = t.judged === 0
+      ? 'The model has not judged anything yet.'
+      : `${t.judged} judged by the model · ${t.reviewed} reviewed by you` +
+        (rate === null ? '' : ` · agreed ${t.agreed} of ${t.reviewed} (${rate}%)`);
+  } catch (e) {
+    $('#tally').textContent = e.message;
+  }
+}
+
+async function loadReview() {
+  await loadTally();
+  try {
+    const view = await get('/api/review?count=20');
+    $('#review-rows').replaceChildren(...view.items.map(reviewNode));
+    const empty = $('#review-empty');
+    empty.hidden = view.items.length > 0;
+    empty.textContent = view.tally.judged === 0
+      ? 'Nothing to review until the model has judged some mail.'
+      : 'You have looked at everything the model judged.';
+  } catch (e) {
+    $('#review-rows').replaceChildren();
+    const empty = $('#review-empty');
+    empty.hidden = false;
+    empty.textContent = e.message;
+  }
+}
+$('#review-more').addEventListener('click', loadReview);
 
 // --- records ----------------------------------------------------------
 

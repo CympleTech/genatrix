@@ -199,3 +199,15 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--accent); out
 .account.needs_login .state,
 .account.stopped .state { color: var(--secret); }
 .account.retrying .state { opacity: 0.8; }
+
+/* --- your say on a level ------------------------------------------- */
+
+.chooser { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.choose {
+  font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer;
+}
+.choose:hover { border-color: var(--ink); }
+.choose:disabled { opacity: 0.5; cursor: default; }
+.choose.lowers { color: var(--muted); }
+.excerpt { white-space: pre-wrap; margin: 6px 0; font-size: 13px; }

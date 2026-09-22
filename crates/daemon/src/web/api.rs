@@ -1,20 +1,23 @@
-//! The JSON the page reads.
+//! The JSON the page reads, and the one thing it writes.
 //!
-//! Read-only for now: there are no actions to approve yet, and the approval
-//! endpoint is the one place that has to be built carefully rather than
-//! quickly (design 03). It arrives with the first pipeline that proposes
-//! something.
+//! The write is the user's judgement of an item's level (design 02: a user
+//! judgement wins outright; design 06: raise by a click, lower by a click
+//! on an option that says what lowering means). Nothing here proposes or
+//! approves an action: the approval endpoint is the one place that has to
+//! be built carefully rather than quickly (design 03), and it arrives with
+//! the first pipeline that proposes something.
 
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use genatrix_gate::gate::EgressRecord;
 use genatrix_ledger::{EntryFilter, kind};
-use genatrix_model::{AnnotationKind, Item, ItemId, Level, Producer};
+use genatrix_model::annotation::effective_level;
+use genatrix_model::{Annotation, AnnotationKind, Item, ItemId, Level, Producer};
 use genatrix_store::{ItemQuery, ItemVersion};
 use serde::{Deserialize, Serialize};
 
@@ -28,8 +31,163 @@ pub fn routes() -> Router<Arc<System>> {
         .route("/api/status", get(status))
         .route("/api/timeline", get(timeline))
         .route("/api/item/{id}", get(item))
+        .route("/api/item/{id}/level", post(set_level))
+        .route("/api/review", get(review))
         .route("/api/ledger", get(ledger))
         .route("/api/accounts", get(accounts))
+}
+
+#[derive(Deserialize)]
+struct SetLevel {
+    level: Level,
+}
+
+/// The user's judgement of one item. Recorded as an annotation of theirs,
+/// which the effective level then follows (design 02). Nothing the machine
+/// said is deleted: the record shows the disagreement.
+async fn set_level(
+    State(system): Shared,
+    Path(id): Path<String>,
+    Json(body): Json<SetLevel>,
+) -> Result<Response, ApiError> {
+    let Ok(id) = id.parse::<ItemId>() else {
+        return Ok(not_found("that is not an item identifier"));
+    };
+    if system.store.get_item(id)?.is_none() {
+        return Ok(not_found("no such item"));
+    }
+    system.store.insert_annotation(&Annotation::new(
+        id,
+        Producer::User,
+        AnnotationKind::Sensitivity {
+            level: body.level,
+            reason: "set by you".into(),
+        },
+    ))?;
+    let annotations = system.store.annotations_of(id)?;
+    system
+        .store
+        .set_item_sensitivity(id, effective_level(&annotations))?;
+    Ok(Json(detail(&system, id)?).into_response())
+}
+
+#[derive(Serialize)]
+struct ReviewRow {
+    row: Row,
+    subject: Option<String>,
+    text: String,
+    /// What the model said, for the "agree" button to agree with.
+    model_level: String,
+}
+
+#[derive(Serialize)]
+struct Tally {
+    /// Items the model has judged.
+    judged: u64,
+    /// Of those, items the user has confirmed or corrected.
+    reviewed: u64,
+    /// Of those, items where the user's level equals the model's.
+    agreed: u64,
+}
+
+#[derive(Serialize)]
+struct Review {
+    items: Vec<ReviewRow>,
+    tally: Tally,
+}
+
+#[derive(Deserialize)]
+struct ReviewQuery {
+    #[serde(default = "default_review_count")]
+    count: u32,
+}
+
+const fn default_review_count() -> u32 {
+    20
+}
+
+/// A sample to confirm or correct, and how the review stands. Design 04
+/// builds the evaluation set from the user's judgements; M2 is done when a
+/// hundred of them agree with the model nine times in ten.
+async fn review(
+    State(system): Shared,
+    Query(query): Query<ReviewQuery>,
+) -> Result<Json<Review>, ApiError> {
+    let mut items = Vec::new();
+    for item in system.store.items_for_review(query.count.min(200))? {
+        let model_level = system
+            .store
+            .annotations_of(item.id)?
+            .iter()
+            .rev()
+            .find_map(|a| match (&a.producer, &a.kind) {
+                (Producer::Model { .. }, AnnotationKind::Sensitivity { level, .. }) => {
+                    Some(level.as_str().to_owned())
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        let subject = match &item.payload {
+            genatrix_model::Payload::Mail { subject, .. } => Some(subject.clone()),
+            _ => None,
+        };
+        items.push(ReviewRow {
+            row: row(&system, &item)?,
+            subject,
+            text: item.text.chars().take(600).collect(),
+            model_level,
+        });
+    }
+    Ok(Json(Review {
+        items,
+        tally: tally(&system)?,
+    }))
+}
+
+/// How many items the model judged, how many the user has looked at, and how
+/// often they agreed. One pass over the annotations.
+fn tally(system: &System) -> Result<Tally, ApiError> {
+    use std::collections::BTreeMap;
+
+    /// What the model and the user last said about one item.
+    #[derive(Default)]
+    struct Said {
+        model: Option<Level>,
+        user: Option<(chrono::DateTime<chrono::Utc>, Level)>,
+    }
+
+    let mut per_item: BTreeMap<ItemId, Said> = BTreeMap::new();
+    for a in system.store.all_annotations()? {
+        let AnnotationKind::Sensitivity { level, .. } = &a.kind else {
+            continue;
+        };
+        let said = per_item.entry(a.item_id).or_default();
+        match &a.producer {
+            Producer::Model { .. } => said.model = Some(*level),
+            Producer::User => {
+                if said.user.is_none_or(|(t, _)| a.created_at >= t) {
+                    said.user = Some((a.created_at, *level));
+                }
+            }
+            Producer::Rule { .. } => {}
+        }
+    }
+    let mut tally = Tally {
+        judged: 0,
+        reviewed: 0,
+        agreed: 0,
+    };
+    for said in per_item.values() {
+        let Some(model) = said.model else { continue };
+        tally.judged += 1;
+        if let Some((_, user)) = said.user {
+            tally.reviewed += 1;
+            if user == model {
+                tally.agreed += 1;
+            }
+        }
+    }
+    Ok(tally)
 }
 
 #[derive(Serialize)]
@@ -174,9 +332,18 @@ async fn item(State(system): Shared, Path(id): Path<String>) -> Result<Response,
     let Ok(id) = id.parse::<ItemId>() else {
         return Ok(not_found("that is not an item identifier"));
     };
-    let Some(item) = system.store.get_item(id)? else {
+    if system.store.get_item(id)?.is_none() {
         return Ok(not_found("no such item"));
-    };
+    }
+    Ok(Json(detail(&system, id)?).into_response())
+}
+
+/// One item in full, with every judgement made about it.
+fn detail(system: &System, id: ItemId) -> Result<Detail, ApiError> {
+    let item = system
+        .store
+        .get_item(id)?
+        .ok_or_else(|| anyhow::anyhow!("item {id} vanished"))?;
 
     let mut judgements = Vec::new();
     for annotation in system.store.annotations_of(id)? {
@@ -202,22 +369,21 @@ async fn item(State(system): Shared, Path(id): Path<String>) -> Result<Response,
     let recipients = item
         .recipients
         .iter()
-        .map(|p| name_of(&system, Some(*p)))
+        .map(|p| name_of(system, Some(*p)))
         .collect();
     let subject = match &item.payload {
         genatrix_model::Payload::Mail { subject, .. } => Some(subject.clone()),
         _ => None,
     };
 
-    Ok(Json(Detail {
-        row: row(&system, &item)?,
+    Ok(Detail {
+        row: row(system, &item)?,
         text: item.text.clone(),
         subject,
         recipients,
         judgements,
         tombstoned: item.tombstoned,
     })
-    .into_response())
 }
 
 #[derive(Serialize)]

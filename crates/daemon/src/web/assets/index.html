@@ -12,6 +12,7 @@
   <h1>Genatrix</h1>
   <nav>
     <button class="tab is-on" data-pane="timeline">Timeline</button>
+    <button class="tab" data-pane="review">Review</button>
     <button class="tab" data-pane="records">Records</button>
   </nav>
   <p id="status" class="status"></p>
@@ -36,6 +37,16 @@
     </form>
     <ol id="rows" class="rows"></ol>
     <p id="timeline-empty" class="empty" hidden></p>
+  </section>
+
+  <section id="review" class="pane">
+    <p id="tally" class="headline"></p>
+    <p class="note">The model's judgement of a message, for you to confirm or correct. Your answer is
+      recorded as yours and wins; what the model said stays on the record. Twenty at a time,
+      drawn at random from what you have not looked at.</p>
+    <ol id="review-rows" class="rows"></ol>
+    <p id="review-empty" class="empty" hidden></p>
+    <p><button id="review-more" class="tab" type="button">Another twenty</button></p>
   </section>
 
   <section id="records" class="pane">

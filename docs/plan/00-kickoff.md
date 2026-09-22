@@ -69,6 +69,20 @@ Design 10, "摘要". Done when there has been a digest every morning for fourtee
 | Person page and relationship statistics | done: everyone the user exchanged messages with, most recent first; per person the counts each way, first and last contact, the user's median reply time, the language, twelve months of activity, handles, promises either way, recent messages; roles and notes are the user's to write (design 07) |
 | Mail and Telegram on one timeline | done since the Telegram connector |
 
+## M4 status
+
+Design 10, "行动". Done when design 00's success standard is met whole: the author has used it for thirty days running, at least one reply it drafted was approved and went out, and the records replay the whole path.
+
+| Task | State |
+|---|---|
+| Actions kept in the store and every step in the ledger: proposed, edited, approved, declined, expired, handed to a connector, executed, failed, unknown | done |
+| The approval endpoint: local only, version and hash and a page nonce; editing makes a new version and voids an earlier approval; three days to expiry | done |
+| The drafter: a reply in the user's voice from the conversation and the user's own messages, as version one of a pending action, on request from a message | done; quality to be judged in use |
+| The approval panel: evidence, why, an editable draft, "Approve and send", a decline with a reason; the Today page shows the first five | done |
+| Connectors execute approved actions and report; the sent message flows back as an outbound item | not started |
+| Edited drafts and decline reasons as signal (design 07) | recorded as versions and records; not yet used |
+| The conversation page | not started |
+
 ## Spike status
 
 | Spike | Status | Blocked on |

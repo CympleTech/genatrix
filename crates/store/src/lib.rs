@@ -15,6 +15,7 @@
 
 #![forbid(unsafe_code)]
 
+mod action;
 mod annotation;
 mod blob;
 mod commitment;
@@ -32,6 +33,7 @@ mod thread;
 mod time;
 mod vector;
 
+pub use action::{ActionColumns, StoredAction};
 pub use cursor::StoredCursor;
 pub use error::{Error, Result};
 pub use export::ExportSummary;

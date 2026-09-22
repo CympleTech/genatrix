@@ -31,6 +31,7 @@ for (const tab of document.querySelectorAll('.tab')) {
     if (tab.dataset.pane === 'review') loadReview();
     if (tab.dataset.pane === 'today') loadToday();
     if (tab.dataset.pane === 'people') loadPeople();
+    if (tab.dataset.pane === 'approvals') loadApprovals();
     if (tab.dataset.pane === 'timeline') loadTimeline();
   });
 }
@@ -182,6 +183,23 @@ function rowNode(row) {
         judgements.append(line);
       }
       if (d.judgements.length) detail.append(judgements);
+      // Ask for a reply. The drafter proposes; the approvals page decides.
+      if (row.direction === 'inbound' && (row.connector === 'imap' || row.connector === 'telegram')) {
+        const ask = el('button', 'choose', 'Draft a reply');
+        ask.type = 'button';
+        ask.addEventListener('click', async () => {
+          ask.disabled = true;
+          ask.textContent = 'drafting…';
+          try {
+            await post(`/api/item/${row.id}/draft`, {});
+            ask.textContent = 'Draft ready in Approvals';
+            loadApprovals();
+          } catch (e) {
+            ask.textContent = e.message;
+          }
+        });
+        detail.append(ask);
+      }
       // Your say. The marker in the row follows.
       const marker = li.querySelector('.level');
       detail.append(levelChooser(row.id, d.row.level, null, (updated) => {
@@ -323,6 +341,11 @@ async function loadToday() {
         box.append(ol);
       }
     }
+    $('#today-actions').replaceChildren(...t.actions.map(a => actionCard(a, loadToday)));
+    const noActions = $('#today-actions-empty');
+    noActions.hidden = t.actions.length > 0;
+    noActions.textContent = 'Nothing waiting for your approval.';
+    updateBadge(t.pending_actions);
     $('#commitments').replaceChildren(...t.commitments.map(commitmentNode));
     const empty = $('#commitments-empty');
     empty.hidden = t.commitments.length > 0;
@@ -331,6 +354,119 @@ async function loadToday() {
     $('#digest-headline').textContent = e.message;
     $('#digest-headline').classList.add('error');
   }
+}
+
+// --- approvals --------------------------------------------------------
+//
+// Design 06: the one screen where principle five is kept. Evidence before
+// the draft; the draft editable in place; the approve button names the
+// consequence; a decline wants a reason; what you approve is the version
+// you see, checked by hash and by the nonce this page was handed.
+
+const KIND_WORDS = { send_mail: 'Reply by mail', send_message: 'Reply on Telegram', create_event: 'Add an event', write_memory: 'Remember' };
+
+function expiresIn(secs) {
+  if (secs <= 0) return 'expired';
+  const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600);
+  if (d >= 1) return `expires in ${d} day${d === 1 ? '' : 's'}`;
+  if (h >= 1) return `expires in ${h} hour${h === 1 ? '' : 's'}`;
+  return 'expires within the hour';
+}
+
+function actionCard(a, onDone) {
+  const li = el('li', 'row is-open action ' + a.status);
+  const head = el('div', 'meta');
+  head.append(
+    el('span', 'who', `${KIND_WORDS[a.kind] || a.kind} → ${a.target}`),
+    el('span', 'faint', a.status === 'pending' ? expiresIn(a.expires_in_secs) : a.status + (a.status_detail ? ` · ${a.status_detail}` : '')),
+  );
+  li.append(head);
+
+  if (a.evidence.length) {
+    li.append(el('h4', 'card-label', 'Evidence'));
+    const sources = el('div', 'sources');
+    for (const s of a.evidence) sources.append(sourceNode(s));
+    li.append(sources);
+  }
+  if (a.rationale) {
+    li.append(el('h4', 'card-label', 'Why'));
+    li.append(el('p', 'rationale', a.rationale));
+  }
+  li.append(el('h4', 'card-label', `Draft${a.versions > 1 ? ` · version ${a.version}` : ''}`));
+  const draft = el('textarea', 'draft');
+  draft.value = a.draft;
+  draft.readOnly = a.status !== 'pending';
+  li.append(draft);
+  li.append(el('p', 'note', `Drafted ${a.drafted}. From ${a.account}.`));
+
+  if (a.status !== 'pending') return li;
+
+  let current = a; // the version and nonce this card holds
+  const box = el('div', 'chooser');
+  const msg = el('span', 'note');
+  const approve = el('button', 'choose primary', 'Approve and send');
+  approve.type = 'button';
+  const decline = el('button', 'choose lowers', 'Decline…');
+  decline.type = 'button';
+  const reason = el('input', 'reason');
+  reason.placeholder = 'why? a word or two';
+  reason.hidden = true;
+
+  const busy = (on) => { for (const b of box.querySelectorAll('button')) b.disabled = on; };
+  const saveEditIfAny = async () => {
+    if (draft.value !== current.draft) {
+      current = await post(`/api/action/${a.id}/edit`, { payload: draft.value });
+      draft.value = current.draft;
+    }
+  };
+  approve.addEventListener('click', async () => {
+    busy(true);
+    try {
+      await saveEditIfAny();
+      const done = await post(`/api/action/${a.id}/approve`, {
+        version: current.version, payload_hash: current.payload_hash, nonce: current.nonce,
+      });
+      li.className = 'row is-open action ' + done.status;
+      box.replaceChildren(el('span', 'note', 'Approved. The connector sends it and reports back here.'));
+      onDone && onDone();
+    } catch (e) { msg.textContent = e.message; msg.classList.add('error'); busy(false); }
+  });
+  decline.addEventListener('click', async () => {
+    if (reason.hidden) { reason.hidden = false; reason.focus(); return; }
+    busy(true);
+    try {
+      const done = await post(`/api/action/${a.id}/decline`, { reason: reason.value });
+      li.className = 'row is-open action ' + done.status;
+      box.replaceChildren(el('span', 'note', `Declined: ${done.status_detail}`));
+      onDone && onDone();
+    } catch (e) { msg.textContent = e.message; msg.classList.add('error'); busy(false); }
+  });
+  reason.addEventListener('keydown', (e) => { if (e.key === 'Enter') decline.click(); });
+  box.append(approve, decline, reason, msg);
+  li.append(box);
+  return li;
+}
+
+async function loadApprovals() {
+  try {
+    const pending = await get('/api/actions?status=pending&limit=100');
+    $('#approvals-pending').replaceChildren(...pending.map(a => actionCard(a, loadApprovals)));
+    const empty = $('#approvals-empty');
+    empty.hidden = pending.length > 0;
+    empty.textContent = 'Nothing waiting. A draft appears here when you ask for one from a message, or when the digest proposes a reply.';
+    const all = await get('/api/actions?limit=60');
+    $('#approvals-history').replaceChildren(...all.filter(a => a.status !== 'pending').map(a => actionCard(a)));
+    updateBadge(pending.length);
+  } catch (e) {
+    $('#approvals-empty').hidden = false;
+    $('#approvals-empty').textContent = e.message;
+  }
+}
+
+function updateBadge(n) {
+  const badge = $('#pending-badge');
+  badge.hidden = !n;
+  badge.textContent = n;
 }
 
 // --- people -----------------------------------------------------------

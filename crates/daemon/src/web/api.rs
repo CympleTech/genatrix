@@ -36,6 +36,12 @@ pub fn routes() -> Router<Arc<System>> {
         .route("/api/item/{id}/level", post(set_level))
         .route("/api/review", get(review))
         .route("/api/today", get(today))
+        .route("/api/item/{id}/draft", post(draft_reply))
+        .route("/api/actions", get(actions))
+        .route("/api/action/{id}", get(action))
+        .route("/api/action/{id}/edit", post(edit_action))
+        .route("/api/action/{id}/approve", post(approve_action))
+        .route("/api/action/{id}/decline", post(decline_action))
         .route("/api/people", get(people))
         .route("/api/person/{id}", get(person))
         .route("/api/person/{id}/relationship", post(set_relationship))
@@ -89,6 +95,9 @@ struct CommitmentView {
 struct Today {
     digest: Option<DigestView>,
     commitments: Vec<CommitmentView>,
+    /// Up to five pending actions (design 06); the rest are on their tab.
+    actions: Vec<ActionView>,
+    pending_actions: u64,
 }
 
 fn source_ref(system: &System, id: ItemId) -> Option<SourceRef> {
@@ -156,9 +165,16 @@ async fn today(State(system): Shared) -> Result<Json<Today>, ApiError> {
                 .collect(),
         })
         .collect();
+    let pending = system.actions.list(&system.store, Some("pending"), 5)?;
+    let actions = pending
+        .iter()
+        .map(|a| action_view(&system, a, Some(system.actions.nonce_for(&a.id))))
+        .collect();
     Ok(Json(Today {
         digest,
         commitments,
+        actions,
+        pending_actions: system.store.count_actions("pending")?,
     }))
 }
 
@@ -355,6 +371,270 @@ async fn set_relationship(
         },
     )?;
     Ok(Json(serde_json::json!({ "ok": true })).into_response())
+}
+
+#[derive(Serialize)]
+struct ActionView {
+    id: String,
+    kind: String,
+    /// Where it would go, in words: recipients and subject, or a chat's name.
+    target: String,
+    account: String,
+    rationale: String,
+    evidence: Vec<SourceRef>,
+    draft: String,
+    version: u32,
+    payload_hash: String,
+    status: String,
+    status_detail: String,
+    created_at: String,
+    expires_in_secs: i64,
+    /// Present on a read of one pending action: what approving must present
+    /// back.
+    nonce: Option<String>,
+    /// Drafted where. Local, always, in phase one.
+    drafted: &'static str,
+    versions: u32,
+}
+
+fn action_view(system: &System, a: &genatrix_agent::Action, nonce: Option<String>) -> ActionView {
+    use genatrix_agent::action::Status;
+    let (target, account) = match &a.effect {
+        genatrix_agent::Effect::SendMail {
+            account,
+            to,
+            subject,
+            ..
+        } => (format!("{} · {subject}", to.join(", ")), account.clone()),
+        genatrix_agent::Effect::SendMessage { account, chat, .. } => {
+            let title = system
+                .store
+                .find_thread(&genatrix_model::Source::new(
+                    genatrix_model::Connector::Telegram,
+                    account.clone(),
+                    chat.clone(),
+                ))
+                .ok()
+                .flatten()
+                .and_then(|t| t.title)
+                .unwrap_or_else(|| chat.clone());
+            (title, account.clone())
+        }
+        genatrix_agent::Effect::CreateEvent { account } => ("calendar".to_owned(), account.clone()),
+        genatrix_agent::Effect::WriteMemory { collection } => (collection.clone(), String::new()),
+    };
+    let status_detail = match &a.status {
+        Status::Declined { reason } => reason.clone(),
+        Status::Failed { detail } | Status::Unknown { detail } => detail.clone(),
+        Status::Executed { result } => result.map(|r| r.to_string()).unwrap_or_default(),
+        _ => String::new(),
+    };
+    let current = a.current();
+    ActionView {
+        id: a.id.clone(),
+        kind: a.effect.kind().to_owned(),
+        target,
+        account,
+        rationale: a.rationale.clone(),
+        evidence: a
+            .evidence
+            .iter()
+            .filter_map(|id| source_ref(system, *id))
+            .collect(),
+        draft: current.payload.clone(),
+        version: current.seq,
+        payload_hash: current.payload_hash.clone(),
+        status: crate::actions::status_of(a).to_owned(),
+        status_detail,
+        created_at: a.created_at.format("%Y-%m-%d %H:%M").to_string(),
+        expires_in_secs: crate::actions::expires_in(a, chrono::Utc::now()),
+        nonce,
+        drafted: "on this device",
+        versions: u32::try_from(a.versions.len()).unwrap_or(0),
+    }
+}
+
+#[derive(Deserialize)]
+struct ActionsQuery {
+    #[serde(default)]
+    status: String,
+    #[serde(default = "default_actions_limit")]
+    limit: u32,
+}
+
+const fn default_actions_limit() -> u32 {
+    50
+}
+
+/// Actions, pending ones with a nonce each (design 06: the approval panel;
+/// design 03: what was shown is what may be approved).
+async fn actions(
+    State(system): Shared,
+    Query(query): Query<ActionsQuery>,
+) -> Result<Json<Vec<ActionView>>, ApiError> {
+    let status = (!query.status.is_empty()).then_some(query.status.as_str());
+    let list = system
+        .actions
+        .list(&system.store, status, query.limit.min(500))?;
+    Ok(Json(
+        list.iter()
+            .map(|a| {
+                let nonce = matches!(a.status, genatrix_agent::action::Status::Pending)
+                    .then(|| system.actions.nonce_for(&a.id));
+                action_view(&system, a, nonce)
+            })
+            .collect(),
+    ))
+}
+
+async fn action(State(system): Shared, Path(id): Path<String>) -> Result<Response, ApiError> {
+    let Some(a) = system.actions.get(&system.store, &id)? else {
+        return Ok(not_found("no such action"));
+    };
+    let nonce = matches!(a.status, genatrix_agent::action::Status::Pending)
+        .then(|| system.actions.nonce_for(&a.id));
+    Ok(Json(action_view(&system, &a, nonce)).into_response())
+}
+
+/// Draft a reply to an item: a pending action, for the panel.
+async fn draft_reply(State(system): Shared, Path(id): Path<String>) -> Result<Response, ApiError> {
+    let Ok(id) = id.parse::<ItemId>() else {
+        return Ok(not_found("that is not an item identifier"));
+    };
+    let Some(item) = system.store.get_item(id)? else {
+        return Ok(not_found("no such item"));
+    };
+    if !system.model_state.borrow().is_ready() {
+        return Ok((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "the model side is not ready" })),
+        )
+            .into_response());
+    }
+    let mut ctx = RunContext::begin(&system.ledger, &system.caller, "draft", 4)?;
+    let run_id = ctx.run_id.clone();
+    let drafted = match crate::pipeline::draft::reply_to(&system.store, &mut ctx, &item).await {
+        Ok(d) => {
+            ctx.done()?;
+            d
+        }
+        Err(e) => {
+            ctx.stopped(e.to_string())?;
+            return Ok((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response());
+        }
+    };
+    // A chat reply goes to the conversation the item is in.
+    let effect = match drafted.effect {
+        genatrix_agent::Effect::SendMessage {
+            account, reply_to, ..
+        } => {
+            let chat = system
+                .store
+                .get_thread(item.thread_id)?
+                .map(|t| t.source.external_id)
+                .unwrap_or_default();
+            genatrix_agent::Effect::SendMessage {
+                account,
+                chat,
+                reply_to,
+            }
+        }
+        other => other,
+    };
+    let action = system.actions.propose(
+        &system.store,
+        &system.ledger,
+        &run_id,
+        effect,
+        drafted.reply,
+        drafted.rationale,
+        drafted.evidence,
+    )?;
+    let nonce = system.actions.nonce_for(&action.id);
+    Ok(Json(action_view(&system, &action, Some(nonce))).into_response())
+}
+
+#[derive(Deserialize)]
+struct EditAction {
+    payload: String,
+}
+
+async fn edit_action(
+    State(system): Shared,
+    Path(id): Path<String>,
+    Json(body): Json<EditAction>,
+) -> Result<Response, ApiError> {
+    match system
+        .actions
+        .edit(&system.store, &system.ledger, &id, body.payload)
+    {
+        Ok(a) => {
+            let nonce = system.actions.nonce_for(&a.id);
+            Ok(Json(action_view(&system, &a, Some(nonce))).into_response())
+        }
+        Err(e) => Ok(decision_error(&e)),
+    }
+}
+
+#[derive(Deserialize)]
+struct ApproveAction {
+    version: u32,
+    payload_hash: String,
+    nonce: String,
+}
+
+/// Approval: this version, this hash, from the page that showed it. Only
+/// reachable on this machine, like every route here.
+async fn approve_action(
+    State(system): Shared,
+    Path(id): Path<String>,
+    Json(body): Json<ApproveAction>,
+) -> Result<Response, ApiError> {
+    let approval = genatrix_agent::Approval {
+        version: body.version,
+        payload_hash: body.payload_hash,
+    };
+    match system
+        .actions
+        .approve(&system.store, &system.ledger, &id, &approval, &body.nonce)
+    {
+        Ok(a) => Ok(Json(action_view(&system, &a, None)).into_response()),
+        Err(e) => Ok(decision_error(&e)),
+    }
+}
+
+#[derive(Deserialize)]
+struct DeclineAction {
+    #[serde(default)]
+    reason: String,
+}
+
+async fn decline_action(
+    State(system): Shared,
+    Path(id): Path<String>,
+    Json(body): Json<DeclineAction>,
+) -> Result<Response, ApiError> {
+    match system
+        .actions
+        .decline(&system.store, &system.ledger, &id, &body.reason)
+    {
+        Ok(a) => Ok(Json(action_view(&system, &a, None)).into_response()),
+        Err(e) => Ok(decision_error(&e)),
+    }
+}
+
+fn decision_error(e: &crate::actions::DecisionError) -> Response {
+    use crate::actions::DecisionError;
+    let status = match e {
+        DecisionError::NotFound => StatusCode::NOT_FOUND,
+        DecisionError::BadNonce | DecisionError::Action(_) => StatusCode::CONFLICT,
+        DecisionError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response()
 }
 
 #[derive(Deserialize)]

@@ -291,3 +291,23 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--accent); out
   width: 100%; min-height: 64px; font: inherit; font-size: 14px; padding: 8px 10px; resize: vertical;
   border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--ink);
 }
+
+/* --- approvals ------------------------------------------------------- */
+
+.badge {
+  display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px;
+  background: var(--secret); color: #fff; font-size: 11px; line-height: 18px; text-align: center;
+}
+.card-label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); margin: 10px 0 4px; }
+.rationale { margin: 0; }
+.draft {
+  width: 100%; min-height: 96px; font: inherit; font-size: 14px; padding: 10px 12px; resize: vertical;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--ink);
+}
+.draft[readonly] { color: var(--muted); }
+.choose.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.reason { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); min-width: 200px; }
+.action.approved .meta .who::after { content: ' · approved'; color: var(--public); }
+.action.executed .meta .who::after { content: ' · sent'; color: var(--public); }
+.action.declined .meta .who::after { content: ' · declined'; color: var(--muted); }
+.action.failed .meta .who::after, .action.unknown .meta .who::after { content: ' · see below'; color: var(--secret); }

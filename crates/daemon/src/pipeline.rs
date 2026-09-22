@@ -5,6 +5,7 @@
 pub mod classify;
 pub mod commitments;
 pub mod digest;
+pub mod draft;
 pub mod embed;
 pub mod summarize;
 

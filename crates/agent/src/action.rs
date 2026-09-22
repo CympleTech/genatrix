@@ -43,6 +43,10 @@ pub enum Effect {
         subject: String,
         /// Message this replies to, if any.
         in_reply_to: Option<String>,
+        /// The conversation's `References` chain, ending with the message
+        /// replied to, so the other side's client threads it (design 05).
+        #[serde(default)]
+        references: Vec<String>,
     },
     /// Send a chat message.
     SendMessage {
@@ -164,6 +168,19 @@ impl ExecutionToken {
     #[must_use]
     pub fn default_invalid() -> Self {
         Self(String::new())
+    }
+
+    /// The token as text, for handing to the executor over the connector
+    /// protocol. The only way out of the type.
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+
+    /// A token as the executor presents it.
+    #[must_use]
+    pub fn from_text(text: &str) -> Self {
+        Self(text.to_owned())
     }
 }
 
@@ -312,6 +329,13 @@ impl Action {
             expires_at: now + Duration::days(DEFAULT_TTL_DAYS),
             token: None,
         }
+    }
+
+    /// The token issued at approval, while it is unspent. The core hands
+    /// it to the connector once; `begin_execution` then spends it.
+    #[must_use]
+    pub fn token_for_execution(&self) -> Option<ExecutionToken> {
+        self.token.clone().filter(ExecutionToken::is_valid)
     }
 
     /// The most recent draft.
@@ -500,6 +524,7 @@ mod tests {
                 to: vec!["maria@example.com".into()],
                 subject: "Re: proposal".into(),
                 in_reply_to: Some("<abc@example.com>".into()),
+                references: vec![],
             },
             "Maria, confirmed on both points.",
             "She is waiting on clause 4 and you stated your position last week.",

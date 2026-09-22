@@ -145,6 +145,7 @@ async fn a_pipeline_summarizes_and_proposes_a_reply() {
             to: vec!["maria@example.com".into()],
             subject: "Re: proposal".into(),
             in_reply_to: None,
+            references: vec![],
         },
         draft,
         summary.points[0].text.clone(),

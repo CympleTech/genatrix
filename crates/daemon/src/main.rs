@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 mod accounts;
+mod actions;
 mod caller;
 mod config;
 mod connectors;
@@ -741,6 +742,12 @@ async fn pipelines_as_mail_arrives(system: std::sync::Arc<System>) {
                     (r.summarized > 0).then(|| format!("summarized {} item(s)", r.summarized))
                 });
             finish_run(ctx, "summarize", result);
+        }
+
+        match system.actions.expire_due(&system.store, &system.ledger) {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(n, "action(s) expired"),
+            Err(e) => tracing::warn!(error = %e, "could not expire actions"),
         }
 
         if let Some(mut ctx) = begin_run(&system, "commitments") {

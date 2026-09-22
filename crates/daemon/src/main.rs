@@ -14,6 +14,7 @@ mod actions;
 mod caller;
 mod config;
 mod connectors;
+mod conversation;
 mod ingest;
 mod keychain;
 mod keys;

@@ -160,3 +160,31 @@ impl System {
         })
     }
 }
+
+/// A whole core in a temporary directory, for tests.
+#[cfg(test)]
+pub(crate) fn test_system() -> (tempfile::TempDir, std::sync::Arc<System>) {
+    let dir = tempfile::tempdir().unwrap();
+    let config = crate::config::Config::under(dir.path());
+    config.create_dirs().unwrap();
+    let run = dir.path().join("run");
+    std::fs::write(
+        config.gateway_config_path(),
+        format!(
+            r#"socket = "{}"
+
+[[models]]
+name = "local"
+model = "test"
+context_length = 4096
+purposes = ["classify", "extract", "embed", "identity_suggestion", "summarize", "draft", "translate", "search_rewrite", "plan"]
+endpoint = {{ kind = "local_socket", path = "{}" }}
+"#,
+            run.join("g.sock").display(),
+            run.join("i.sock").display()
+        ),
+    )
+    .unwrap();
+    let system = System::open(config, genatrix_keys::TicketKey::generate().unwrap()).unwrap();
+    (dir, std::sync::Arc::new(system))
+}

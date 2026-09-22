@@ -82,7 +82,8 @@ Design 10, "行动". Done when design 00's success standard is met whole: the au
 | Connectors pull approved actions, check them again, send once and report; the sent message flows back as an outbound item in the answered thread; an unknown outcome is confirmed by sync; a silent connector becomes unknown after ten minutes | done; to be exercised on a real reply |
 | Withdrawing an approval before the connector takes it | done |
 | Edited drafts and decline reasons as signal (design 07) | recorded as versions and records; not yet used |
-| The conversation page | not started |
+| The conversation page: a bounded plan of at most eight model calls, one tool per step (search, thread, person, time, draft), every step on record and openable from the answer, cites checked against what was shown, a proposed draft shown as the same card the Approvals page uses | done; quality to be judged in use |
+| The Records page shows every action step and every run, each run openable into its steps | done |
 
 ## Spike status
 

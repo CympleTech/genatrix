@@ -269,6 +269,16 @@ for sync to confirm", and the next sync settles it. Genatrix never sends a
 message twice on its own. An approval not yet taken by the connector can be
 withdrawn from the same card.
 
+**Ask.** The Ask page takes a question about your own mail and messages.
+The model works in steps, at most eight: it searches, reads a thread, looks
+someone up, checks the time, and then answers, citing the messages it read.
+Under each answer is what it did, as one line that opens into the run
+record, and where it was answered, which in this phase is always this
+device. If you ask it to reply to someone, the draft appears as a card in
+the conversation and on the Approvals page; nothing is sent until you
+approve it there. What you said in the conversation is kept by the page
+for the session only; it is not memory.
+
 **Read it all again.** When normalization improves, `genatrix reprocess`
 derives every item again from its stored raw record, in place; nothing is
 fetched.

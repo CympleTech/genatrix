@@ -13,6 +13,7 @@
   <nav>
     <button class="tab is-on" data-pane="today">Today</button>
     <button class="tab" data-pane="timeline">Timeline</button>
+    <button class="tab" data-pane="ask">Ask</button>
     <button class="tab" data-pane="approvals">Approvals <span id="pending-badge" class="badge" hidden></span></button>
     <button class="tab" data-pane="people">People</button>
     <button class="tab" data-pane="review">Review</button>
@@ -81,11 +82,27 @@
     <p><button id="review-more" class="tab" type="button">Another twenty</button></p>
   </section>
 
+  <section id="ask" class="pane">
+    <p class="note">A question about your own mail and messages. It looks things up here, in steps you can
+      open, and cites what it read. Nothing it proposes is sent without your approval.</p>
+    <ol id="turns" class="turns"></ol>
+    <form id="ask-form" class="ask">
+      <input id="ask-input" type="text" placeholder="Ask about your mail and messages…" autocomplete="off">
+      <button type="submit" class="choose primary">Ask</button>
+    </form>
+  </section>
+
   <section id="records" class="pane">
     <p id="headline" class="headline"></p>
     <p id="chain" class="note"></p>
+    <h2 class="group-title">What left this device</h2>
     <ol id="calls" class="rows"></ol>
     <p id="records-empty" class="empty" hidden></p>
+    <h2 class="group-title">Actions</h2>
+    <ol id="action-events" class="rows compact"></ol>
+    <p id="actions-empty" class="empty" hidden></p>
+    <h2 class="group-title">Runs</h2>
+    <ol id="runs" class="rows compact"></ol>
   </section>
 </main>
 

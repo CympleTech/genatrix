@@ -47,6 +47,8 @@ pub fn routes() -> Router<Arc<System>> {
         .route("/api/person/{id}/relationship", post(set_relationship))
         .route("/api/commitment/{id}", post(set_commitment))
         .route("/api/ledger", get(ledger))
+        .route("/api/run/{id}", get(run_record))
+        .route("/api/ask", post(ask))
         .route("/api/accounts", get(accounts))
 }
 
@@ -1123,6 +1125,34 @@ struct LedgerView {
     entries: i64,
     verified: bool,
     calls: Vec<Call>,
+    /// Every run, newest first: what ran and how it ended (design 06,
+    /// "运行记录").
+    runs: Vec<RunLine>,
+    /// Every step an action took, newest first (design 06, "动作记录").
+    actions: Vec<ActionEvent>,
+}
+
+#[derive(Serialize)]
+struct RunLine {
+    id: String,
+    at: String,
+    task: String,
+    max_steps: u32,
+    /// `done`, `stopped`, or `running`.
+    end: String,
+    steps: u32,
+    reason: String,
+}
+
+#[derive(Serialize)]
+struct ActionEvent {
+    at: String,
+    action: String,
+    event: String,
+    by: String,
+    kind: String,
+    version: u32,
+    detail: String,
 }
 
 #[derive(Serialize)]
@@ -1181,7 +1211,180 @@ async fn ledger(State(system): Shared) -> Result<Json<LedgerView>, ApiError> {
         entries: system.ledger.len()?,
         verified,
         calls,
+        runs: runs(&system)?,
+        actions: action_events(&system)?,
     }))
+}
+
+/// The last runs with how each ended.
+fn runs(system: &System) -> Result<Vec<RunLine>, ApiError> {
+    use genatrix_agent::run::{RunEnd, RunStart};
+    let starts = system.ledger.entries(&EntryFilter {
+        kind: Some(kind::RUN.into()),
+        limit: 60,
+        ..Default::default()
+    })?;
+    let ends = system.ledger.entries(&EntryFilter {
+        kind: Some(kind::RUN_END.into()),
+        limit: 200,
+        ..Default::default()
+    })?;
+    let mut out = Vec::with_capacity(starts.len());
+    for entry in starts.iter().rev() {
+        let Ok(start) = entry.decode::<RunStart>() else {
+            continue;
+        };
+        let end = ends
+            .iter()
+            .find(|e| e.subject == entry.subject)
+            .and_then(|e| e.decode::<RunEnd>().ok());
+        let (end, steps, reason) = match end {
+            Some(RunEnd::Done { steps, .. }) => ("done".to_owned(), steps, String::new()),
+            Some(RunEnd::Stopped { steps, reason }) => ("stopped".to_owned(), steps, reason),
+            None => ("running".to_owned(), 0, String::new()),
+        };
+        out.push(RunLine {
+            id: entry.subject.clone(),
+            at: entry.at.format("%Y-%m-%d %H:%M").to_string(),
+            task: start.task,
+            max_steps: start.max_steps,
+            end,
+            steps,
+            reason,
+        });
+    }
+    Ok(out)
+}
+
+/// Every recorded step of every action, newest first.
+fn action_events(system: &System) -> Result<Vec<ActionEvent>, ApiError> {
+    let entries = system.ledger.entries(&EntryFilter {
+        kind: Some(kind::ACTION.into()),
+        limit: 200,
+        ..Default::default()
+    })?;
+    Ok(entries
+        .iter()
+        .rev()
+        .filter_map(|entry| {
+            let r = entry.decode::<crate::actions::ActionRecord>().ok()?;
+            Some(ActionEvent {
+                at: entry.at.format("%Y-%m-%d %H:%M").to_string(),
+                action: r.action,
+                event: r.event,
+                by: r.by,
+                kind: r.kind,
+                version: r.version,
+                detail: r.detail,
+            })
+        })
+        .collect())
+}
+
+#[derive(Serialize)]
+struct RunStep {
+    at: String,
+    kind: String,
+    body: serde_json::Value,
+}
+
+/// One run, every record under it, oldest first: the replay design 03
+/// promises and design 06 opens from the folded steps line.
+async fn run_record(State(system): Shared, Path(id): Path<String>) -> Result<Response, ApiError> {
+    if id.len() != 26 || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Ok(not_found("that is not a run identifier"));
+    }
+    let entries = system.ledger.entries(&EntryFilter {
+        subject: Some(id),
+        limit: 200,
+        ..Default::default()
+    })?;
+    let steps: Vec<RunStep> = entries
+        .iter()
+        .filter(|e| e.kind.starts_with("run"))
+        .map(|e| RunStep {
+            at: e.at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            kind: e.kind.clone(),
+            body: e.body.clone(),
+        })
+        .collect();
+    if steps.is_empty() {
+        return Ok(not_found("no such run"));
+    }
+    Ok(Json(steps).into_response())
+}
+
+#[derive(Deserialize)]
+struct AskBody {
+    question: String,
+    #[serde(default)]
+    history: Vec<crate::conversation::Exchange>,
+}
+
+#[derive(Serialize)]
+struct AskReply {
+    run_id: String,
+    answer: String,
+    cited: Vec<SourceRef>,
+    steps: Vec<String>,
+    actions: Vec<ActionView>,
+    stopped: bool,
+    /// Where it was answered. Local, always, in phase one (design 06: every
+    /// reply says whether it was done here or in the cloud).
+    answered: &'static str,
+}
+
+/// A question to the conversation (design 03, "会话"; design 06, "对话").
+async fn ask(State(system): Shared, Json(body): Json<AskBody>) -> Result<Response, ApiError> {
+    let question = body.question.trim();
+    if question.is_empty() {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "ask something" })),
+        )
+            .into_response());
+    }
+    if !system.model_state.borrow().is_ready() {
+        return Ok((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "the model is not ready yet" })),
+        )
+            .into_response());
+    }
+    let history: Vec<_> = body.history.into_iter().rev().take(6).rev().collect();
+    let desk = crate::conversation::Desk {
+        store: &system.store,
+        ledger: &system.ledger,
+        actions: &system.actions,
+        typed_level: system.gate.level_of_typed_text(question),
+        embed: system.embedder_configured(),
+    };
+    let reply = crate::conversation::ask(&desk, &system.caller, &history, question)
+        .await
+        .map_err(|e| ApiError(anyhow::anyhow!(e.to_string())))?;
+    let actions = reply
+        .actions
+        .iter()
+        .filter_map(|id| system.actions.get(&system.store, id).ok().flatten())
+        .map(|a| {
+            let nonce = Some(system.actions.nonce_for(&a.id));
+            action_view(&system, &a, nonce)
+        })
+        .collect();
+    Ok(Json(AskReply {
+        run_id: reply.run_id,
+        answer: reply.answer,
+        cited: reply
+            .cited
+            .iter()
+            .filter_map(|id| source_ref(&system, *id))
+            .collect(),
+        steps: reply.steps,
+        actions,
+        stopped: reply.stopped,
+        answered: "on this device",
+    })
+    .into_response())
 }
 
 fn row(system: &System, item: &Item) -> Result<Row, ApiError> {

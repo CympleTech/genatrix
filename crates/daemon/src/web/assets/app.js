@@ -32,6 +32,7 @@ for (const tab of document.querySelectorAll('.tab')) {
     if (tab.dataset.pane === 'today') loadToday();
     if (tab.dataset.pane === 'people') loadPeople();
     if (tab.dataset.pane === 'approvals') loadApprovals();
+    if (tab.dataset.pane === 'ask') $('#ask-input').focus();
     if (tab.dataset.pane === 'timeline') loadTimeline();
   });
 }
@@ -727,7 +728,124 @@ async function loadReview() {
 }
 $('#review-more').addEventListener('click', loadReview);
 
+// --- ask --------------------------------------------------------------
+//
+// Design 06: not the main entrance, a complement. Under every answer the
+// items it cites; the tools it used as one folded line that opens into the
+// run record; any action it proposed as the same card the Approvals page
+// shows; and where it was answered. No avatar, no name, no pleasantries.
+
+const history = []; // this session only; gone with the page (design 03)
+
+function runRecordNode(runId) {
+  const box = el('div', 'detail');
+  box.append(el('p', null, 'loading…'));
+  get(`/api/run/${runId}`).then((steps) => {
+    box.replaceChildren();
+    for (const s of steps) {
+      const b = s.body;
+      let text;
+      if (s.kind === 'run') text = `run “${b.task}”, budget ${b.max_steps} steps`;
+      else if (s.kind === 'run_end') text = b.end === 'done' ? `done in ${b.steps} step(s)` : `stopped after ${b.steps} step(s): ${b.reason}`;
+      else if (b.step === 'model') text = `model · ${b.purpose} · attempt ${b.attempt} · ${b.result.result}${b.result.reason ? ': ' + b.result.reason : ''} · egress ${b.egress}`;
+      else if (b.step === 'tool') text = `tool · ${b.tool} ${JSON.stringify(b.arguments)} → ${b.items.length} item(s)`;
+      else if (b.step === 'note') text = `note · ${b.name}: ${b.detail}`;
+      else text = JSON.stringify(b);
+      const line = el('p', 'step');
+      line.append(el('time', null, s.at), ' ', text);
+      box.append(line);
+    }
+  }).catch((e) => box.replaceChildren(el('p', 'error', e.message)));
+  return box;
+}
+
+function answerNode(a) {
+  const li = el('li', 'turn answer');
+  li.append(el('p', a.stopped ? 'answer-text stopped' : 'answer-text', a.answer));
+  if (a.cited.length) {
+    const sources = el('div', 'sources');
+    for (const s of a.cited) sources.append(sourceNode(s));
+    li.append(sources);
+  }
+  const meta = el('div', 'meta');
+  if (a.steps.length) {
+    const fold = el('button', 'fold', a.steps.join(' · '));
+    fold.type = 'button';
+    let open = null;
+    fold.addEventListener('click', () => {
+      if (open) { open.remove(); open = null; return; }
+      open = runRecordNode(a.run_id);
+      li.append(open);
+    });
+    meta.append(fold);
+  } else {
+    meta.append(el('span', 'faint', 'answered without looking anything up'));
+  }
+  meta.append(el('span', 'faint', a.answered));
+  li.append(meta);
+  for (const action of a.actions) li.append(actionCard(action, loadApprovals));
+  return li;
+}
+
+$('#ask-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = $('#ask-input');
+  const question = input.value.trim();
+  if (!question) return;
+  input.value = '';
+  input.disabled = true;
+  const turns = $('#turns');
+  turns.append(el('li', 'turn question', question));
+  const waiting = el('li', 'turn answer faint', 'looking…');
+  turns.append(waiting);
+  waiting.scrollIntoView({ block: 'end' });
+  try {
+    const a = await post('/api/ask', { question, history: history.slice(-6) });
+    waiting.replaceWith(answerNode(a));
+    history.push({ user: question, answer: a.answer });
+    if (a.actions.length) loadApprovals();
+  } catch (err) {
+    waiting.replaceWith(el('li', 'turn answer error', err.message));
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
+});
+
 // --- records ----------------------------------------------------------
+
+function actionEventNode(ev) {
+  const li = el('li', 'row');
+  const meta = el('div', 'meta');
+  meta.append(
+    el('time', null, ev.at),
+    el('span', 'who', `${ev.event} · ${ev.by}`),
+    el('span', null, `${KIND_WORDS[ev.kind] || ev.kind} · v${ev.version}`),
+    el('span', 'thread', ev.action),
+  );
+  li.append(meta);
+  if (ev.detail) li.append(el('p', 'preview', ev.detail));
+  return li;
+}
+
+function runNode(r) {
+  const li = el('li', 'row');
+  const meta = el('div', 'meta');
+  meta.append(
+    el('time', null, r.at),
+    el('span', 'who', r.task),
+    el('span', null, r.end === 'running' ? 'running' : `${r.end} · ${r.steps} of ${r.max_steps} steps`),
+  );
+  li.append(meta);
+  if (r.reason) li.append(el('p', 'preview', r.reason));
+  let open = null;
+  li.addEventListener('click', () => {
+    if (open) { open.remove(); open = null; return; }
+    open = runRecordNode(r.id);
+    li.append(open);
+  });
+  return li;
+}
 
 function callNode(call) {
   const li = el('li', 'row');
@@ -759,6 +877,11 @@ async function loadRecords() {
     const empty = $('#records-empty');
     empty.hidden = view.calls.length > 0;
     empty.textContent = 'No model calls recorded yet.';
+    $('#action-events').replaceChildren(...view.actions.map(actionEventNode));
+    const noActions = $('#actions-empty');
+    noActions.hidden = view.actions.length > 0;
+    noActions.textContent = 'No actions yet.';
+    $('#runs').replaceChildren(...view.runs.map(runNode));
   } catch (e) {
     $('#headline').textContent = e.message;
     $('#headline').classList.add('error');

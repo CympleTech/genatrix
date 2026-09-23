@@ -1,7 +1,9 @@
 /* Genatrix. Design 06: the job is to be trusted, not to be pretty; and a
    page that is a pleasure to be in is trusted more readily. Phone first.
-   Palette: a warm, gentle teal (#3FA796) for what acts, sand (#E8D9B5) for
-   what holds, and neutrals with a little warmth in them. Nothing here is
+   Palette: a soft violet (#8877C7) for what acts, a warm cream (#F0E7DB)
+   for what holds, and neutrals with a little warmth in them. Every button
+   is one of three: filled (the one thing to do), outlined (a choice), or
+   quiet (a link-sized action); same height, same radius, same weight. Nothing here is
    fetched from anywhere: system fonts, inline icons. */
 
 @import "tailwindcss";
@@ -10,24 +12,23 @@
   --font-sans: ui-sans-serif, -apple-system, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 
-  --color-teal-50: #f1faf7;
-  --color-teal-100: #dcf2ec;
-  --color-teal-200: #b8e4d9;
-  --color-teal-300: #8bd1c2;
-  --color-teal-400: #62bcaa;
-  --color-teal-500: #3fa796;
-  --color-teal-600: #33897b;
-  --color-teal-700: #2c6e64;
-  --color-teal-800: #265851;
-  --color-teal-900: #1f4842;
+  --color-violet-50: #f6f4fb;
+  --color-violet-100: #ece8f7;
+  --color-violet-200: #d9d2ef;
+  --color-violet-300: #c0b4e3;
+  --color-violet-400: #a596d6;
+  --color-violet-500: #8877c7;
+  --color-violet-600: #715fb0;
+  --color-violet-700: #5d4d93;
+  --color-violet-800: #4b3f76;
+  --color-violet-900: #3d3460;
 
-  --color-sand-50: #fcfaf5;
-  --color-sand-100: #f6efdf;
-  --color-sand-200: #e8d9b5;
-  --color-sand-300: #dcc796;
-  --color-sand-400: #cdb079;
-  --color-sand-500: #b8955a;
-  --color-sand-700: #7f663b;
+  --color-cream-50: #fbf8f3;
+  --color-cream-100: #f0e7db;
+  --color-cream-200: #e3d6c3;
+  --color-cream-300: #d2bfa3;
+  --color-cream-500: #a98f6e;
+  --color-cream-700: #75603f;
 
   --radius-card: 16px;
   --radius-control: 10px;
@@ -36,48 +37,48 @@
 /* Semantic tokens that follow light and dark; `inline` makes the utilities
    read the variable at paint time. */
 :root {
-  --bg: #f8f6f1;
-  --bg-tint: radial-gradient(900px 420px at 15% -10%, rgba(63, 167, 150, 0.10), transparent 60%),
-             radial-gradient(700px 360px at 100% 0%, rgba(232, 217, 181, 0.35), transparent 60%);
-  --surface: #ffffff;
-  --surface-2: #fbf9f4;
-  --ink: #223230;
-  --muted: #667471;
-  --faint: #98a4a1;
-  --line: #e7e1d5;
-  --line-strong: #d6cdbb;
-  --accent: #3fa796;
-  --accent-ink: #2c6e64;
-  --accent-soft: #e4f3ef;
-  --sand: #e8d9b5;
-  --sand-soft: #f6efdf;
-  --public: #5f9c6b;
-  --personal: #6b8fb5;
-  --secret: #c6704f;
-  --shadow: 0 1px 2px rgba(34, 50, 48, 0.04), 0 10px 30px -18px rgba(34, 50, 48, 0.25);
+  --bg: #f7f4ee;
+  --bg-tint: radial-gradient(900px 420px at 15% -10%, rgba(136, 119, 199, 0.12), transparent 60%),
+             radial-gradient(700px 360px at 100% 0%, rgba(240, 231, 219, 0.9), transparent 60%);
+  --surface: #fffdfa;
+  --surface-2: #f9f5ef;
+  --ink: #2a2733;
+  --muted: #6d687a;
+  --faint: #9d98a8;
+  --line: #e6dfd4;
+  --line-strong: #d3c9ba;
+  --accent: #8877c7;
+  --accent-ink: #5d4d93;
+  --accent-soft: #ece8f7;
+  --sand: #f0e7db;
+  --sand-soft: #f7f1e8;
+  --public: #6aa88a;
+  --personal: #6f8fc7;
+  --secret: #c97b6a;
+  --shadow: 0 1px 2px rgba(42, 39, 51, 0.04), 0 10px 30px -18px rgba(42, 39, 51, 0.25);
   --bar-h: 60px;
   --safe-b: env(safe-area-inset-bottom, 0px);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #141918;
-    --bg-tint: radial-gradient(900px 420px at 15% -10%, rgba(63, 167, 150, 0.14), transparent 60%),
-               radial-gradient(700px 360px at 100% 0%, rgba(232, 217, 181, 0.08), transparent 60%);
-    --surface: #1b2220;
-    --surface-2: #202826;
-    --ink: #e8e5dc;
-    --muted: #9ba7a3;
-    --faint: #6d7875;
-    --line: #2b3533;
-    --line-strong: #3a4744;
-    --accent: #5dbcab;
-    --accent-ink: #8bd1c2;
-    --accent-soft: #1f3330;
-    --sand: #d9c9a3;
+    --bg: #17151d;
+    --bg-tint: radial-gradient(900px 420px at 15% -10%, rgba(136, 119, 199, 0.18), transparent 60%),
+               radial-gradient(700px 360px at 100% 0%, rgba(240, 231, 219, 0.06), transparent 60%);
+    --surface: #1f1c27;
+    --surface-2: #26222f;
+    --ink: #ebe6e0;
+    --muted: #a39dae;
+    --faint: #736d7f;
+    --line: #322d3d;
+    --line-strong: #443d52;
+    --accent: #a596d6;
+    --accent-ink: #c0b4e3;
+    --accent-soft: #2c2740;
+    --sand: #d2bfa3;
     --sand-soft: #2a2620;
-    --public: #7fb58a;
-    --personal: #8fabc9;
-    --secret: #d9917a;
+    --public: #86bd9f;
+    --personal: #8faad9;
+    --secret: #dc9484;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px -18px rgba(0, 0, 0, 0.6);
   }
 }
@@ -147,6 +148,7 @@
   }
   .nav {
     @apply relative flex flex-col items-center justify-center gap-0.5 border-0 bg-transparent text-[11px] font-medium text-muted transition-colors;
+    -webkit-tap-highlight-color: transparent;
   }
   .nav.is-on { @apply text-accent-ink; }
   .nav .badge { @apply absolute top-1.5 right-[calc(50%-22px)]; }
@@ -232,7 +234,7 @@
     background: var(--sand-soft);
     border-left: 3px solid var(--sand);
   }
-  .summary .ai { @apply mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em]; color: var(--color-sand-500); }
+  .summary .ai { @apply mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em]; color: var(--color-cream-500); }
   .summary p { @apply m-0 whitespace-pre-wrap; }
 
   /* A level is a dot and a word (design 06). */
@@ -243,17 +245,27 @@
   .level-secret { color: var(--secret); background: color-mix(in srgb, var(--secret) 12%, transparent); }
   .level-secret::before { border-radius: 2px; }
 
-  /* ---- controls ---- */
+  /* ---- controls: one button system ---- */
   .chooser { @apply mt-2.5 flex flex-wrap items-center gap-1.5; }
+  .choose, .back, .fold, .source, .role.removable, .row-head, button.preview { -webkit-tap-highlight-color: transparent; }
+  /* Outlined: a choice among several. */
   .choose {
-    @apply min-h-[38px] rounded-control border border-line bg-surface px-3.5 py-1.5 text-[13.5px] font-medium text-ink transition-colors;
+    @apply inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-control border border-line bg-surface px-3.5 py-1.5 text-[13.5px] font-medium text-ink transition-colors;
   }
-  .choose:hover { border-color: var(--line-strong); background: var(--surface-2); }
+  .choose:hover { border-color: var(--accent); color: var(--accent-ink); }
+  .choose:active { background: var(--accent-soft); }
   .choose:disabled { @apply cursor-default opacity-50; }
   .choose.lowers { color: var(--muted); }
+  .choose.lowers:hover { color: var(--secret); border-color: var(--secret); }
+  /* Filled: the one thing to do here. */
   .choose.primary { @apply border-transparent text-white; background: var(--accent); }
-  .choose.primary:hover { background: var(--accent-ink); }
+  .choose.primary:hover { background: var(--accent-ink); color: #fff; }
   .choose.level-public, .choose.level-personal, .choose.level-secret { background: var(--surface); }
+  /* Quiet: link-sized, same shape. */
+  .back, .fold {
+    @apply inline-flex min-h-[30px] items-center gap-1 rounded-full border border-transparent bg-transparent px-2.5 py-0.5 text-[12.5px] font-medium text-muted transition-colors;
+  }
+  .back:hover, .fold:hover { color: var(--accent-ink); background: var(--accent-soft); }
   .reason, .role-input, .ask input, .filters input, .filters select, .pair-form input {
     @apply min-h-[38px] rounded-control border border-line bg-surface px-3 py-2;
   }
@@ -263,7 +275,7 @@
     background: var(--surface-2);
   }
   textarea.draft[readonly] { color: var(--muted); }
-  .card-label { @apply mb-1 mt-3 text-[11px] font-semibold uppercase tracking-[0.08em]; color: var(--color-sand-500); }
+  .card-label { @apply mb-1 mt-3 text-[11px] font-semibold uppercase tracking-[0.08em]; color: var(--color-cream-700); }
   .rationale { @apply m-0; }
 
   /* ---- sources ---- */
@@ -282,7 +294,7 @@
   .point .text { @apply block; }
   .point.unfounded .text { color: var(--muted); }
   .point.empty-point { @apply text-[13px] text-muted; }
-  .digest-card .group-title { @apply mt-0 mb-0 px-4 py-2.5 rounded-t-card; background: var(--sand-soft); color: var(--color-sand-700); }
+  .digest-card .group-title { @apply mt-0 mb-0 px-4 py-2.5 rounded-t-card; background: var(--sand-soft); color: var(--color-cream-700); }
   .digest-card { @apply mb-3 overflow-hidden; }
   .commitment .standing { @apply text-[12px] text-muted; }
   .commitment.overdue .preview { color: var(--secret); }
@@ -315,7 +327,6 @@
   @media (min-width: 900px) { .ask { bottom: 0; } }
   .ask input { @apply flex-1 rounded-full px-4 text-[15px]; }
   .ask .choose { @apply rounded-full px-4; }
-  .fold { @apply border-0 bg-transparent p-0 text-left text-[12px] text-muted underline decoration-dotted; }
   .record .step { @apply my-0.5 whitespace-pre-wrap text-[12px] text-muted; }
   .record .step time { @apply mr-1.5; color: var(--faint); }
 
@@ -323,7 +334,7 @@
   .people-pane { @apply grid max-w-none grid-cols-1 gap-5; }
   .people { @apply m-0 flex list-none flex-col gap-2 p-0; }
   .people-pane.has-detail .people { @apply hidden; }
-  .back { @apply mb-2.5 inline-flex items-center gap-1 border-0 bg-transparent p-0 text-[13px] text-muted; }
+  .back { @apply mb-2.5; }
   @media (min-width: 900px) {
     .people-pane { @apply grid-cols-[minmax(240px,340px)_minmax(0,1fr)] items-start; }
     .people-pane.has-detail .people { @apply flex overflow-auto; max-height: calc(100dvh - 120px); }
@@ -346,8 +357,9 @@
   .person-line { @apply flex flex-wrap gap-2.5 text-[12px] text-muted; }
   .count.in { color: var(--personal); }
   .count.out { color: var(--public); }
-  .role { @apply rounded-full border-0 px-2 py-px text-[11px] font-medium; background: var(--sand-soft); color: var(--color-sand-700); }
-  .role.removable:hover { text-decoration: line-through; }
+  .role { @apply rounded-full border-0 px-2 py-px text-[11px] font-medium; background: var(--sand-soft); color: var(--color-cream-700); }
+  .role.removable { cursor: pointer; }
+  .role.removable:hover { text-decoration: line-through; color: var(--secret); }
   .role-input { @apply min-h-[28px] min-w-[100px] border-0 bg-transparent text-[12px]; }
   .person { @apply min-w-0 rounded-card border border-line bg-surface p-4; box-shadow: var(--shadow); }
   @media (min-width: 900px) { .person { @apply px-7 py-5; } }

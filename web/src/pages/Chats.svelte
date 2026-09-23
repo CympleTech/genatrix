@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { get, type PersonCard } from '../lib/api';
+  import { get, type Party } from '../lib/api';
   import { t } from '../lib/i18n';
   import { initials } from '../lib/format';
   import { go } from '../lib/router';
@@ -7,25 +7,27 @@
   import Empty from '../components/Empty.svelte';
   import Icon from '../components/Icon.svelte';
 
-  // Design 06 v0.5, "对话": one list of the parties you talk to, and one
-  // conversation per party. Today every party is a person; an agent will be
-  // one more kind of party in the same list.
-  let { id = null }: { id?: string | null } = $props();
-  let cards = $state<PersonCard[] | null>(null);
+  // Design 06 v0.6, "对话": one list of conversations. A party is a person
+  // (what passed one to one) or a group or channel (the container is one
+  // party; its members are not listed one by one). An agent will be one more
+  // kind of party in the same list.
+  let { kind = 'person', id = null }: { kind?: 'person' | 'group'; id?: string | null } = $props();
+  let parties = $state<Party[] | null>(null);
   let error = $state('');
   let filter = $state('');
 
   $effect(() => {
-    get<PersonCard[]>('/api/people?limit=200')
-      .then((c) => { cards = c; })
-      .catch((e) => { error = e.message; cards = []; });
+    get<Party[]>('/api/chats')
+      .then((p) => { parties = p; })
+      .catch((e) => { error = e.message; parties = []; });
   });
   const shown = $derived.by(() => {
     const q = filter.trim().toLowerCase();
-    if (!cards) return [];
-    return q ? cards.filter((c) => c.name.toLowerCase().includes(q) || c.handles.some((h) => h.value.toLowerCase().includes(q))) : cards;
+    if (!parties) return [];
+    return q ? parties.filter((p) => p.name.toLowerCase().includes(q)) : parties;
   });
-  const current = $derived(cards?.find((c) => c.id === id) ?? null);
+  const current = $derived(parties?.find((p) => p.id === id) ?? null);
+  const href = (p: Party) => (p.kind === 'person' ? `/chats/${p.id}` : `/chats/g/${p.id}`);
 </script>
 
 <section class="pane chats-pane" class:has-detail={!!id}>
@@ -36,21 +38,25 @@
     </label>
     <ol class="parties">
       {#if error}<li><Empty text={error} error /></li>
-      {:else if !cards}<li><Empty text={t('loading')} /></li>
-      {:else if !cards.length}<li><Empty text={t('chats.empty')} /></li>
+      {:else if !parties}<li><Empty text={t('loading')} /></li>
+      {:else if !parties.length}<li><Empty text={t('chats.empty')} /></li>
       {:else if !shown.length}<li><Empty text={t('chats.nomatch')} /></li>{/if}
-      {#each shown as card (card.id)}
+      {#each shown as p (p.kind + p.id)}
         <li>
-          <button type="button" class="party" class:is-on={card.id === id} onclick={() => go(`/chats/${card.id}`)}>
-            <span class="avatar">{initials(card.name)}</span>
+          <button type="button" class="party" class:is-on={p.id === id} onclick={() => go(href(p))}>
+            <span class="avatar" class:multi={p.kind !== 'person'}>
+              {#if p.kind === 'person'}{initials(p.name)}{:else}<Icon name={p.kind} size={18} />{/if}
+            </span>
             <span class="party-body">
               <span class="party-top">
-                <span class="party-name">{card.name}</span>
-                {#if card.last_at}<span class="party-when">{card.last_at.slice(5)}</span>{/if}
+                <span class="party-name">{p.name}</span>
+                {#if p.last_at}<span class="party-when">{p.last_at.slice(5)}</span>{/if}
               </span>
-              <span class="party-last">{card.last_text || ''}</span>
-              {#if card.roles.length}
-                <span class="party-roles">{#each card.roles as r}<span class="role">{r}</span>{/each}</span>
+              <span class="party-last">
+                {#if p.last_author}<b>{p.last_author}:</b> {/if}{p.last_text || ''}
+              </span>
+              {#if p.roles.length}
+                <span class="party-roles">{#each p.roles as r}<span class="role">{r}</span>{/each}</span>
               {/if}
             </span>
           </button>
@@ -60,8 +66,8 @@
   </div>
 
   {#if id}
-    {#key id}
-      <Conversation {id} card={current} />
+    {#key kind + id}
+      <Conversation {kind} {id} name={current?.name ?? ''} />
     {/key}
   {/if}
 </section>

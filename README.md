@@ -232,11 +232,16 @@ the page and in the menu.
 **Open the interface.** Four places, one tap apart. **Today** is the day:
 the morning digest with its sources, what waits for your approval, and the
 promises found in your messages. **Approvals** is every draft waiting for
-your word. **Chats** is everyone you talk to: a list ordered by the latest
-exchange, and for each person their conversation, theirs on the left and
-yours on the right, mail and chat together, with what you have in numbers
-and in promises above it, and a button at the bottom that drafts a reply as
-an approval card, never a message that goes out on its own. **Ask** takes a
+your word. **Chats** is every conversation you have: a list ordered by the latest
+exchange, where a party is either a person, meaning what passed between the
+two of you by mail or one to one, or a group or channel, which is one entry
+however many people are in it. Someone you have only ever seen in a group
+is not a party of their own. Open a person and you get your conversation,
+theirs on the left and yours on the right, with the counts and the open
+promises above it; open a group and you get its conversation with each
+speaker named, and who speaks most. At the bottom a button drafts a reply
+as an approval card, to the person or to the group, never a message that
+goes out on its own. **Ask** takes a
 question about your own mail and messages. Behind "more" are the archive
 and the audit: the timeline of every item, searchable by words and by
 meaning, each one expanding to its full text, its summary and every

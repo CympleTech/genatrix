@@ -86,7 +86,9 @@
     {:else if section === 'timeline'}<Timeline />
     {:else if section === 'ask'}<Ask />
     {:else if section === 'approvals'}<Approvals />
-    {:else if section === 'chats'}<Chats id={$route.parts[1] ?? null} />
+    {:else if section === 'chats'}
+      {#if $route.parts[1] === 'g'}<Chats kind="group" id={$route.parts[2] ?? null} />
+      {:else}<Chats kind="person" id={$route.parts[1] ?? null} />{/if}
     {:else if section === 'review'}<Review />
     {:else if section === 'records'}<Records />
     {:else if section === 'settings'}<Settings />

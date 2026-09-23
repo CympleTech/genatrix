@@ -54,6 +54,9 @@ pub struct System {
     /// the user can change from the page, the roles and the notes, is not
     /// in here and is read afresh every time.
     pub people: std::sync::Mutex<Option<(std::time::Instant, Vec<genatrix_store::PersonOverview>)>>,
+    /// The same for groups and channels: size and last activity of every
+    /// multi-party container, which is a pass over all their messages.
+    pub groups: std::sync::Mutex<Option<(std::time::Instant, Vec<genatrix_store::GroupOverview>)>>,
 }
 
 /// The status numbers worth caching.
@@ -165,6 +168,7 @@ impl System {
             model_state: crate::models::idle_state(),
             slow_status: std::sync::Mutex::new(None),
             people: std::sync::Mutex::new(None),
+            groups: std::sync::Mutex::new(None),
             actions: crate::actions::Actions::default(),
             pairing: crate::web::Pairing::default(),
         })

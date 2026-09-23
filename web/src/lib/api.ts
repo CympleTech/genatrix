@@ -97,6 +97,17 @@ export interface Device { id: string; name: string; created_at: string; last_see
 export interface ChatMessage {
   id: string; day: string; time: string; ms: number; mine: boolean; connector: string;
   place: 'mail' | 'direct' | 'group' | 'channel'; place_name: string | null;
-  subject: string | null; text: string; folded: boolean; level: string;
+  subject: string | null; text: string; folded: boolean; level: string; author: string | null;
 }
 export interface ChatPage { messages: ChatMessage[]; earlier: boolean }
+
+export interface Party {
+  kind: 'person' | 'group' | 'channel'; id: string; name: string;
+  last_at: string | null; last_ms: number; last_text: string | null; last_author: string | null;
+  roles: string[]; messages: number;
+}
+export interface Speaker { name: string; count: number; me: boolean }
+export interface GroupDetail {
+  id: string; name: string; kind: 'group' | 'channel'; voices: number; messages: number; mine: number;
+  first_at: string | null; last_at: string | null; speakers: Speaker[];
+}

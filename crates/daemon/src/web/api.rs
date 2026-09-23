@@ -45,6 +45,9 @@ pub fn routes() -> Router<Arc<System>> {
         .route("/api/people", get(people))
         .route("/api/person/{id}", get(person))
         .route("/api/person/{id}/chat", get(chat))
+        .route("/api/chats", get(chats))
+        .route("/api/group/{id}", get(group))
+        .route("/api/group/{id}/chat", get(group_chat))
         .route("/api/person/{id}/relationship", post(set_relationship))
         .route("/api/commitment/{id}", post(set_commitment))
         .route("/api/ledger", get(ledger))
@@ -272,6 +275,9 @@ struct ChatMessage {
     text: String,
     folded: bool,
     level: String,
+    /// Who said it, in a group or channel, where there is more than one
+    /// other voice. Absent in a one-to-one conversation.
+    author: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -280,6 +286,67 @@ struct ChatPage {
     messages: Vec<ChatMessage>,
     /// Whether there is more before the first of these.
     earlier: bool,
+}
+
+/// Messages as the conversation draws them, oldest first as given.
+fn chat_messages(
+    system: &System,
+    items: &[Item],
+    with_author: bool,
+) -> Result<Vec<ChatMessage>, ApiError> {
+    let thread_ids: Vec<_> = items.iter().map(|i| i.thread_id).collect();
+    let threads = system.store.threads_by_id(&thread_ids)?;
+    // A page names a handful of people; look each up once.
+    let mut names: std::collections::BTreeMap<genatrix_model::PersonId, String> =
+        std::collections::BTreeMap::new();
+    Ok(items
+        .iter()
+        .map(|item| {
+            let thread = threads.get(&item.thread_id);
+            let place = match thread.map(|t| t.kind) {
+                Some(genatrix_model::ThreadKind::GroupChat) => "group",
+                Some(genatrix_model::ThreadKind::Channel) => "channel",
+                Some(genatrix_model::ThreadKind::DirectChat) => "direct",
+                _ => "mail",
+            };
+            let mine = item.direction == genatrix_model::Direction::Outbound;
+            let author = (with_author && !mine)
+                .then(|| {
+                    item.author.map(|a| {
+                        names
+                            .entry(a)
+                            .or_insert_with(|| name_of(system, Some(a)))
+                            .clone()
+                    })
+                })
+                .flatten();
+            let local = item.occurred_at.with_timezone(&chrono::Local);
+            let text = item.text.trim();
+            let shown: String = text.chars().take(CHAT_TEXT).collect();
+            ChatMessage {
+                id: item.id.to_string(),
+                day: local.format("%Y-%m-%d").to_string(),
+                time: local.format("%H:%M").to_string(),
+                ms: item.occurred_at.timestamp_millis(),
+                mine,
+                connector: item.source.connector.as_str().to_owned(),
+                place,
+                place_name: matches!(place, "group" | "channel")
+                    .then(|| thread.and_then(|t| t.title.clone()))
+                    .flatten(),
+                subject: match &item.payload {
+                    genatrix_model::Payload::Mail { subject, .. } if !subject.is_empty() => {
+                        Some(subject.clone())
+                    }
+                    _ => None,
+                },
+                folded: shown.len() < text.len(),
+                text: shown,
+                level: item.sensitivity.as_str().to_owned(),
+                author,
+            }
+        })
+        .collect())
 }
 
 /// A conversation with one person, a page at a time, newest page first.
@@ -299,44 +366,7 @@ async fn chat(
     let earlier = items.len() > limit as usize;
     items.truncate(limit as usize);
     items.reverse();
-    let thread_ids: Vec<_> = items.iter().map(|i| i.thread_id).collect();
-    let threads = system.store.threads_by_id(&thread_ids)?;
-    let messages = items
-        .iter()
-        .map(|item| {
-            let thread = threads.get(&item.thread_id);
-            let place = match thread.map(|t| t.kind) {
-                Some(genatrix_model::ThreadKind::GroupChat) => "group",
-                Some(genatrix_model::ThreadKind::Channel) => "channel",
-                Some(genatrix_model::ThreadKind::DirectChat) => "direct",
-                _ => "mail",
-            };
-            let local = item.occurred_at.with_timezone(&chrono::Local);
-            let text = item.text.trim();
-            let shown: String = text.chars().take(CHAT_TEXT).collect();
-            ChatMessage {
-                id: item.id.to_string(),
-                day: local.format("%Y-%m-%d").to_string(),
-                time: local.format("%H:%M").to_string(),
-                ms: item.occurred_at.timestamp_millis(),
-                mine: item.direction == genatrix_model::Direction::Outbound,
-                connector: item.source.connector.as_str().to_owned(),
-                place,
-                place_name: matches!(place, "group" | "channel")
-                    .then(|| thread.and_then(|t| t.title.clone()))
-                    .flatten(),
-                subject: match &item.payload {
-                    genatrix_model::Payload::Mail { subject, .. } if !subject.is_empty() => {
-                        Some(subject.clone())
-                    }
-                    _ => None,
-                },
-                folded: shown.len() < text.len(),
-                text: shown,
-                level: item.sensitivity.as_str().to_owned(),
-            }
-        })
-        .collect();
+    let messages = chat_messages(&system, &items, false)?;
     Ok(Json(ChatPage { messages, earlier }).into_response())
 }
 
@@ -400,6 +430,226 @@ fn handle_view(h: genatrix_model::Handle) -> HandleView {
         value: h.value,
         inferred: h.confidence == genatrix_model::Confidence::Inferred,
     }
+}
+
+/// One entry in the list of conversations: a person, or a group or channel
+/// (design 06 v0.6: a multi-party container is one party).
+#[derive(Serialize)]
+struct Party {
+    /// `person`, `group` or `channel`.
+    kind: &'static str,
+    id: String,
+    name: String,
+    last_at: Option<String>,
+    last_ms: i64,
+    last_text: Option<String>,
+    /// In a group, who said the last thing.
+    last_author: Option<String>,
+    roles: Vec<String>,
+    /// For a person, the messages either way one to one; for a group, all
+    /// of its messages kept here.
+    messages: u64,
+}
+
+/// Size and last activity of every group and channel, at most once a minute,
+/// off the async runtime; the same reasoning as [`people_overview`].
+async fn group_overview(
+    system: &Arc<System>,
+) -> Result<Vec<genatrix_store::GroupOverview>, ApiError> {
+    const KEEP: std::time::Duration = std::time::Duration::from_secs(60);
+    if let Some((at, cached)) = system
+        .groups
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        && at.elapsed() < KEEP
+    {
+        return Ok(cached.clone());
+    }
+    let for_task = Arc::clone(system);
+    let fresh = tokio::task::spawn_blocking(move || for_task.store.group_overview())
+        .await
+        .map_err(|e| ApiError(anyhow::anyhow!(e)))??;
+    *system
+        .groups
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some((std::time::Instant::now(), fresh.clone()));
+    Ok(fresh)
+}
+
+fn day_of_ms(ms: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp_millis(ms).map(|t| {
+        t.with_timezone(&chrono::Local)
+            .format("%Y-%m-%d")
+            .to_string()
+    })
+}
+
+/// Every conversation, people and groups together, most recent first.
+async fn chats(State(system): Shared) -> Result<Json<Vec<Party>>, ApiError> {
+    const SHOWN: usize = 300;
+    let people = people_overview(&system).await?;
+    let groups = group_overview(&system).await?;
+
+    let mut parties: Vec<(i64, bool, usize)> = people
+        .iter()
+        .enumerate()
+        .map(|(i, o)| (o.last_at.map_or(0, |t| t.timestamp_millis()), true, i))
+        .chain(
+            groups
+                .iter()
+                .enumerate()
+                .map(|(i, g)| (g.last_ms, false, i)),
+        )
+        .collect();
+    parties.sort_by_key(|(ms, _, _)| std::cmp::Reverse(*ms));
+    parties.truncate(SHOWN);
+
+    let person_ids: Vec<_> = parties
+        .iter()
+        .filter(|p| p.1)
+        .map(|p| people[p.2].person.id)
+        .collect();
+    let thread_ids: Vec<_> = parties
+        .iter()
+        .filter(|p| !p.1)
+        .map(|p| groups[p.2].thread.id)
+        .collect();
+    let mut person_words = system.store.last_words(&person_ids)?;
+    let mut roles = system.store.roles_for(&person_ids)?;
+    let mut group_words = system.store.group_last_words(&thread_ids)?;
+    let flat = |t: String| t.replace('\n', " ").trim().to_owned();
+
+    let out = parties
+        .into_iter()
+        .map(|(ms, is_person, i)| {
+            if is_person {
+                let o = &people[i];
+                Party {
+                    kind: "person",
+                    id: o.person.id.to_string(),
+                    name: o.person.display_name.clone(),
+                    last_at: day_of_ms(ms),
+                    last_ms: ms,
+                    last_text: person_words.remove(&o.person.id).map(flat),
+                    last_author: None,
+                    roles: roles.remove(&o.person.id).unwrap_or_default(),
+                    messages: o.from_them + o.to_them,
+                }
+            } else {
+                let g = &groups[i];
+                let word = group_words.remove(&g.thread.id);
+                Party {
+                    kind: if g.thread.kind == genatrix_model::ThreadKind::Channel {
+                        "channel"
+                    } else {
+                        "group"
+                    },
+                    id: g.thread.id.to_string(),
+                    name: g.thread.title.clone().unwrap_or_default(),
+                    last_at: day_of_ms(ms),
+                    last_ms: ms,
+                    last_author: word
+                        .as_ref()
+                        .and_then(|w| w.author)
+                        .map(|a| name_of(&system, Some(a))),
+                    last_text: word.map(|w| flat(w.text)),
+                    roles: Vec::new(),
+                    messages: g.messages,
+                }
+            }
+        })
+        .collect();
+    Ok(Json(out))
+}
+
+#[derive(Serialize)]
+struct Speaker {
+    name: String,
+    count: u64,
+    me: bool,
+}
+
+#[derive(Serialize)]
+struct GroupDetail {
+    id: String,
+    name: String,
+    /// `group` or `channel`.
+    kind: &'static str,
+    /// People who have said something here; not its membership, which is
+    /// not known.
+    voices: u64,
+    messages: u64,
+    mine: u64,
+    first_at: Option<String>,
+    last_at: Option<String>,
+    speakers: Vec<Speaker>,
+}
+
+/// The facts about one group or channel: its own, not any member's.
+async fn group(State(system): Shared, Path(id): Path<String>) -> Result<Response, ApiError> {
+    let Ok(id) = id.parse::<genatrix_model::ThreadId>() else {
+        return Ok(not_found("that is not a thread identifier"));
+    };
+    let Some(thread) = system.store.get_thread(id)? else {
+        return Ok(not_found("no such conversation"));
+    };
+    if !matches!(
+        thread.kind,
+        genatrix_model::ThreadKind::GroupChat | genatrix_model::ThreadKind::Channel
+    ) {
+        return Ok(not_found("that is not a group or a channel"));
+    }
+    let overview = group_overview(&system).await?;
+    let row = overview.iter().find(|g| g.thread.id == id);
+    let me = system.store.self_person()?.map(|p| p.id);
+    let speakers = system
+        .store
+        .speakers(id, 6)?
+        .into_iter()
+        .map(|(p, count)| Speaker {
+            name: name_of(&system, Some(p)),
+            count,
+            me: me == Some(p),
+        })
+        .collect();
+    Ok(Json(GroupDetail {
+        id: id.to_string(),
+        name: thread.title.clone().unwrap_or_default(),
+        kind: if thread.kind == genatrix_model::ThreadKind::Channel {
+            "channel"
+        } else {
+            "group"
+        },
+        voices: system.store.voices(id)?,
+        messages: row.map_or(0, |g| g.messages),
+        mine: row.map_or(0, |g| g.mine),
+        first_at: row.and_then(|g| day_of_ms(g.first_ms)),
+        last_at: row.and_then(|g| day_of_ms(g.last_ms)),
+        speakers,
+    })
+    .into_response())
+}
+
+/// A group's or channel's conversation, a page at a time.
+async fn group_chat(
+    State(system): Shared,
+    Path(id): Path<String>,
+    Query(query): Query<ChatQuery>,
+) -> Result<Response, ApiError> {
+    let Ok(id) = id.parse::<genatrix_model::ThreadId>() else {
+        return Ok(not_found("that is not a thread identifier"));
+    };
+    let limit = query.limit.clamp(1, 200);
+    let mut items = system
+        .store
+        .items_in_thread_before(id, query.before, limit + 1)?;
+    let earlier = items.len() > limit as usize;
+    items.truncate(limit as usize);
+    items.reverse();
+    let messages = chat_messages(&system, &items, true)?;
+    Ok(Json(ChatPage { messages, earlier }).into_response())
 }
 
 /// The arithmetic behind the People page, worked out at most once a minute.

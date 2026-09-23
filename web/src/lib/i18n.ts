@@ -5,6 +5,12 @@
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  'chat.group': 'group', 'chat.channel': 'channel', 'chat.voices': '{n} people have spoken here',
+  'chat.messages': 'messages', 'chat.yours': 'yours', 'chat.voicesShort': 'voices', 'chat.speakers': 'Who speaks most',
+  'chat.draftnote.group': 'A draft appears below as an approval card; approved, it goes to the whole group.',
+  'chat.you': 'you',
+  'today.stat.needs_reply': 'need your reply', 'today.stat.promised': 'you promised',
+  'today.stat.worth_knowing': 'worth knowing', 'today.stat.waiting': 'waiting for you',
   chats: 'Chats', 'chats.search': 'Find a conversation', 'chats.empty': 'No conversations yet.',
   'chats.nomatch': 'No one by that name.',
   'chat.loadEarlier': 'Earlier messages', 'chat.beginning': 'The beginning of what is on this device.',
@@ -94,6 +100,12 @@ const en: Dict = {
 };
 
 const zh: Dict = {
+  'chat.group': '群', 'chat.channel': '频道', 'chat.voices': '{n} 人在这里说过话',
+  'chat.messages': '条消息', 'chat.yours': '你发的', 'chat.voicesShort': '人说过话', 'chat.speakers': '说话最多的人',
+  'chat.draftnote.group': '草稿会以审批卡片出现在下面；批准后发进整个群。',
+  'chat.you': '你',
+  'today.stat.needs_reply': '需要你回复', 'today.stat.promised': '你答应过的',
+  'today.stat.worth_knowing': '值得知道', 'today.stat.waiting': '等你批准',
   chats: '对话', 'chats.search': '找一个对话', 'chats.empty': '还没有对话。',
   'chats.nomatch': '没有这个名字的人。',
   'chat.loadEarlier': '更早的消息', 'chat.beginning': '这台设备上和对方的往来从这里开始。',

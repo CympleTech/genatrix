@@ -11,6 +11,19 @@
   const needsReply = $derived(
     today?.digest?.groups.find((g) => g.group === 'needs_reply')?.points.length ?? 0,
   );
+  // Always the same four, zeros included, so the card keeps its shape from
+  // one morning to the next.
+  const stats = $derived.by(() => {
+    const count = (g: string) => today?.digest?.groups.find((x) => x.group === g)?.points.length ?? 0;
+    return [
+      { key: 'needs_reply', n: count('needs_reply') },
+      // The day's promises, from the same digest as the other figures; the
+      // whole backlog is below the digest and on each person's page.
+      { key: 'promised', n: count('promised') },
+      { key: 'worth_knowing', n: count('worth_knowing') },
+      { key: 'waiting', n: today?.pending_actions ?? 0 },
+    ];
+  });
 
   async function load() {
     try { today = await get<Today>('/api/today'); error = ''; } catch (e: any) { error = e.message; }
@@ -31,15 +44,15 @@
         <p class="hero-line">
           {needsReply === 0 ? t('today.hero.needsreply.zero') : needsReply === 1 ? t('today.hero.needsreply.one') : t('today.hero.needsreply', { n: needsReply })}
         </p>
-        <div class="hero-chips">
-          {#each today.digest.groups.filter((g) => g.group !== 'needs_reply' && g.points.length) as g}
-            <span class="hero-chip"><b>{g.points.length}</b> {t(`group.${g.group}`)}</span>
-          {/each}
-          {#if today.pending_actions}
-            <span class="hero-chip"><b>{today.pending_actions}</b> {t('today.hero.waiting')}</span>
-          {/if}
-        </div>
         <p class="hero-foot">{t('today.hero.made', { at: today.digest.generated_at, n: today.digest.considered })}</p>
+        <div class="hero-stats">
+          {#each stats as st}
+            <div class="hero-stat" class:zero={st.n === 0}>
+              <span class="hero-stat-n">{st.n}</span>
+              <span class="hero-stat-label">{t(`today.stat.${st.key}`)}</span>
+            </div>
+          {/each}
+        </div>
       {/if}
     </div>
     {#if today.digest}

@@ -99,6 +99,7 @@ first month of use began and the test page was not something to hand a phone.
 | `service install --bind` and `serve --bind` for a private network address | done |
 | Design 06 v0.5: four faces, Today, Approvals, Chats, Ask; the timeline and the records behind "more" | done |
 | Chats: a list of parties with each one's last word, and per party a conversation (theirs left, yours right, mail and chat together, group messages marked, paging back), the facts and the promises above it, and a reply drafted as an approval card in the stream | done; to be judged in use |
+| Design 06 v0.6: a group or channel is one party; its members are not listed unless there is a one-to-one exchange; a person's conversation and statistics count only what passed one to one | done |
 | Agents as parties in Chats (design 06 v0.5) | designed; waits for the first agent |
 | Backup, recovery code, export, delete, diagnostics on the Settings page (design 09) | not started |
 | First-run wizard (design 09) | not started |

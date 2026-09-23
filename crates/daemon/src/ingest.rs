@@ -563,4 +563,83 @@ Friday?\r\n";
         ));
         assert_eq!(store.all_items().unwrap().len(), 1);
     }
+
+    /// Design 06 v0.6: a group is one party; someone who has only ever
+    /// spoken in it is not a party of their own, and what a person said in a
+    /// group is not part of their conversation with the user.
+    #[test]
+    fn a_group_is_one_party_and_its_members_are_not() {
+        use genatrix_connector::protocol::{ChatMessage, ChatSender};
+        let (_dir, system) = crate::system::test_system();
+        let msg = |n: u32, thread: &str, kind: &str, title: &str, who: (i64, &str), text: &str| {
+            ChatMessage {
+                external_id: format!("{thread}/msg:{n}"),
+                thread_key: thread.to_owned(),
+                thread_kind: kind.to_owned(),
+                thread_title: title.to_owned(),
+                sender: Some(ChatSender {
+                    id: who.0,
+                    username: None,
+                    name: who.1.to_owned(),
+                }),
+                outgoing: false,
+                date: format!("2026-09-2{n}T10:00:00+00:00"),
+                text: text.to_owned(),
+                raw: format!("raw-{thread}-{n}").into_bytes(),
+                ..ChatMessage::default()
+            }
+        };
+        let ann = (11, "Ann");
+        let bob = (22, "Bob");
+        for m in [
+            msg(1, "chat:11", "direct", "Ann", ann, "lunch?"),
+            msg(2, "chat:-100", "group", "Friends", ann, "hello all"),
+            msg(3, "chat:-100", "group", "Friends", bob, "hi everyone"),
+            msg(4, "chat:-100", "group", "Friends", bob, "see you"),
+        ] {
+            chat(&system.store, &system.raw_files, "+100", &m).unwrap();
+        }
+
+        let people = system.store.people_overview(50).unwrap();
+        let names: Vec<_> = people
+            .iter()
+            .map(|o| o.person.display_name.as_str())
+            .collect();
+        assert!(names.contains(&"Ann"), "{names:?}");
+        assert!(!names.contains(&"Bob"), "only ever in the group: {names:?}");
+        let ann_row = people
+            .iter()
+            .find(|o| o.person.display_name == "Ann")
+            .unwrap();
+        assert_eq!(
+            ann_row.from_them, 1,
+            "her group message is the group's, not hers"
+        );
+
+        let ann_items = system
+            .store
+            .items_with_person(ann_row.person.id, 10)
+            .unwrap();
+        assert_eq!(ann_items.len(), 1);
+        assert_eq!(ann_items[0].text, "lunch?");
+
+        let groups = system.store.group_overview().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].thread.title.as_deref(), Some("Friends"));
+        assert_eq!(groups[0].messages, 3);
+        let words = system
+            .store
+            .group_last_words(&[groups[0].thread.id])
+            .unwrap();
+        assert_eq!(words[&groups[0].thread.id].text, "see you");
+        let page = system
+            .store
+            .items_in_thread_before(groups[0].thread.id, None, 2)
+            .unwrap();
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[0].text, "see you", "newest first");
+        let top = system.store.speakers(groups[0].thread.id, 5).unwrap();
+        assert_eq!(top[0].1, 2, "Bob spoke most");
+        assert_eq!(system.store.voices(groups[0].thread.id).unwrap(), 2);
+    }
 }

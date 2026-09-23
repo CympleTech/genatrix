@@ -16,6 +16,13 @@ use crate::item::row_to_item;
 use crate::store::Store;
 use crate::time::{utc_from_col, utc_to_col};
 
+/// What counts between the user and a person: what passed one to one, by
+/// mail or in a direct chat. What they said in a group or a channel belongs
+/// to that group's conversation, not to theirs (design 06 v0.6), so every
+/// person query here carries this condition.
+const ONE_TO_ONE: &str =
+    "thread_id NOT IN (SELECT id FROM thread WHERE kind IN ('group_chat', 'channel'))";
+
 /// What the user has said about a person.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Relationship {
@@ -91,10 +98,11 @@ impl Store {
 
         // Counts and the newest, from `item_author_live` alone. Ordering on
         // occurred_ms rather than the RFC 3339 text keeps it in the index.
-        let mut by_author = conn.prepare(
+        let mut by_author = conn.prepare(&format!(
             "SELECT author, count(*), max(occurred_ms)
-             FROM item WHERE tombstoned = 0 AND author IS NOT NULL GROUP BY author",
-        )?;
+                 FROM item WHERE tombstoned = 0 AND author IS NOT NULL AND {ONE_TO_ONE}
+                 GROUP BY author"
+        ))?;
         for row in by_author.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -117,10 +125,10 @@ impl Store {
         // Which connectors each person has been seen on, from
         // `item_author_conn`. As its own pass because asking for it in the
         // one above costs a temporary b-tree for every person.
-        let mut by_connector = conn.prepare(
+        let mut by_connector = conn.prepare(&format!(
             "SELECT DISTINCT author, connector
-             FROM item WHERE tombstoned = 0 AND author IS NOT NULL",
-        )?;
+                 FROM item WHERE tombstoned = 0 AND author IS NOT NULL AND {ONE_TO_ONE}"
+        ))?;
         for row in
             by_connector.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
         {
@@ -132,9 +140,10 @@ impl Store {
         drop(by_connector);
 
         if let Some(me) = me {
-            let mut outbound = conn.prepare(
-                "SELECT recipients, occurred_at FROM item WHERE tombstoned = 0 AND author = ?1",
-            )?;
+            let mut outbound = conn.prepare(&format!(
+                "SELECT recipients, occurred_at FROM item
+                     WHERE tombstoned = 0 AND author = ?1 AND {ONE_TO_ONE}"
+            ))?;
             for row in outbound.query_map(params![me.to_string()], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
             })? {
@@ -215,13 +224,13 @@ impl Store {
             .map(|p| p.id.to_string())
             .unwrap_or_default();
         let conn = self.conn();
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT occurred_at, author, thread_id, connector, substr(text, 1, 400)
              FROM item
-             WHERE tombstoned = 0
+             WHERE tombstoned = 0 AND {ONE_TO_ONE}
                AND (author = ?1 OR (author = ?2 AND recipients LIKE ?3))
-             ORDER BY occurred_ms",
-        )?;
+             ORDER BY occurred_ms"
+        ))?;
         let pid = person.to_string();
         let touches: Vec<Touch> = stmt
             .query_map(params![pid, me, format!("%\"{pid}\"%")], |r| {
@@ -316,14 +325,14 @@ impl Store {
             .map(|p| p.id.to_string())
             .unwrap_or_default();
         let conn = self.conn();
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT i.* FROM item i
-             WHERE i.tombstoned = 0
+             WHERE i.tombstoned = 0 AND i.{ONE_TO_ONE}
                AND NOT EXISTS (SELECT 1 FROM item n WHERE n.supersedes = i.id)
                AND (i.author = ?1 OR (i.author = ?2 AND i.recipients LIKE ?3))
                AND i.occurred_ms < ?5
-             ORDER BY i.occurred_ms DESC LIMIT ?4",
-        )?;
+             ORDER BY i.occurred_ms DESC LIMIT ?4"
+        ))?;
         let pid = person.to_string();
         let mut rows = stmt.query(params![
             pid,
@@ -352,9 +361,10 @@ impl Store {
         let conn = self.conn();
         let mut stmt = conn.prepare(&format!(
             "SELECT i.author, substr(i.text, 1, 160) FROM item i
-             WHERE i.tombstoned = 0 AND i.author IN ({list})
+             WHERE i.tombstoned = 0 AND i.author IN ({list}) AND i.{ONE_TO_ONE}
                AND i.occurred_ms = (SELECT max(j.occurred_ms) FROM item j
-                                    WHERE j.author = i.author AND j.tombstoned = 0)"
+                                    WHERE j.author = i.author AND j.tombstoned = 0
+                                      AND j.{ONE_TO_ONE})"
         ))?;
         let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))

@@ -348,8 +348,36 @@
   .point .text { @apply block; }
   .point.unfounded .text { color: var(--muted); }
   .point.empty-point { @apply text-[13px] text-muted; }
-  .digest-card .group-title { @apply mt-0 mb-0 px-4 py-2.5 rounded-t-card; background: var(--sand-soft); color: var(--color-cream-700); }
-  .digest-card { @apply mb-3 overflow-hidden; }
+  .digest-card { @apply mb-5 overflow-hidden; }
+  .digest-card .group-title { @apply mt-0 mb-0 px-5 pt-5 pb-2 text-[15px]; }
+  .digest-card .point:last-child { border-bottom: 0; }
+
+  /* Design 06 opens on Today, and this is the first thing on it: the one
+     place the page speaks in full colour, so that the day has a face. The
+     field is deeper than the brand so that text dimmed for hierarchy still
+     clears 4.5:1 on it. */
+  .hero {
+    @apply mb-10 rounded-card px-6 py-6;
+    background: linear-gradient(135deg, var(--hero-from), var(--hero-to) 92%);
+    color: var(--on-hero);
+    box-shadow: var(--shadow-lift);
+  }
+  @media (min-width: 900px) { .hero { @apply px-8 py-7; } }
+  .hero-eyebrow { @apply m-0 text-[11px] font-semibold uppercase tracking-[0.1em]; opacity: 0.8; }
+  .hero-line { @apply mt-1.5 mb-0 text-[24px] font-semibold leading-[1.25] tracking-[-0.02em]; }
+  .hero-foot { @apply mt-2 mb-0 text-[13px]; opacity: 0.8; }
+  /* The day's numbers: four frosted tiles inside the field, each a figure
+     and what it counts, always all four so the card keeps its shape. */
+  .hero-stats { @apply mt-5 grid grid-cols-2 gap-2.5; }
+  @media (min-width: 640px) { .hero-stats { @apply grid-cols-4; } }
+  .hero-stat {
+    @apply flex flex-col gap-0.5 rounded-[14px] px-4 py-3;
+    background: color-mix(in srgb, var(--on-hero) 13%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--on-hero) 20%, transparent);
+  }
+  .hero-stat-n { @apply text-[24px] font-semibold leading-[1.1] tracking-[-0.02em]; }
+  .hero-stat-label { @apply text-[13px]; opacity: 0.85; }
+  .hero-stat.zero .hero-stat-n { opacity: 0.55; }
   .commitment .standing { @apply text-[13px] text-muted; }
   .commitment.overdue .preview { color: var(--secret); }
 
@@ -390,6 +418,12 @@
     background: linear-gradient(140deg, var(--accent-fill), var(--accent-fill-deep));
     color: var(--on-accent);
   }
+  .avatar.multi {
+    @apply rounded-[12px];
+    background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 22%, var(--surface)), color-mix(in srgb, var(--accent) 38%, var(--surface)));
+    color: var(--accent-ink);
+  }
+  .avatar.small { @apply h-7 w-7 text-[11px]; }
   .role { @apply rounded-full border-0 px-2 py-0.5 text-[11px] font-medium; background: var(--accent-soft); color: var(--accent-ink); }
   .role.removable { cursor: pointer; }
   .role.removable:hover { text-decoration: line-through; color: var(--secret); }
@@ -420,6 +454,7 @@
   .party-name { @apply truncate font-semibold; }
   .party-when { @apply flex-none text-[11px]; color: var(--faint); }
   .party-last { @apply truncate text-[13px] text-muted; }
+  .party-last b { @apply font-medium text-ink; }
   .party-roles { @apply mt-0.5 flex flex-wrap gap-1; }
   @media (min-width: 900px) {
     .chats-pane { @apply grid-cols-[minmax(260px,330px)_minmax(0,1fr)] items-start; }
@@ -481,7 +516,8 @@
   .msg { @apply mt-3 flex flex-col items-start; }
   .msg.tight { @apply mt-1; }
   .msg.mine { @apply items-end; }
-  .msg-where { @apply mb-1 px-3 text-[11px]; color: var(--faint); }
+  .msg-author { @apply mb-1 px-3 text-[12px] font-medium; color: var(--accent-ink); }
+  .msg:not(.mine):has(.msg-author) { @apply mt-4; }
   .bubble {
     @apply max-w-[82%] rounded-[18px] px-3.5 py-2.5 bg-surface;
     border-bottom-left-radius: 6px; box-shadow: var(--shadow);
@@ -508,6 +544,11 @@
   .msg.mine .bubble-item { border-top-color: color-mix(in srgb, var(--on-accent) 30%, transparent); }
   .msg.mine .bubble .summary { color: var(--ink); }
   .stream-drafts { @apply mt-5; }
+  .speakers { @apply m-0 flex list-none flex-col gap-2 p-0; }
+  .speaker { @apply grid items-center gap-3 text-[13px]; grid-template-columns: auto minmax(0, 9rem) 1fr auto; }
+  .speaker-name { @apply truncate; }
+  .speaker-bar { @apply h-1.5 overflow-hidden rounded-full; background: var(--line); }
+  .speaker-bar span { @apply block h-full rounded-full; background: var(--accent); }
 
   .composer {
     @apply flex flex-wrap items-center gap-3 px-4 py-3;

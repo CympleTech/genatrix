@@ -35,7 +35,7 @@ fn kind_from_col(s: &str) -> Result<ThreadKind> {
     })
 }
 
-fn row_to_thread(r: &Row<'_>) -> Result<Thread> {
+pub(crate) fn row_to_thread(r: &Row<'_>) -> Result<Thread> {
     let id: String = r.get("id")?;
     let kind: String = r.get("kind")?;
     let connector: String = r.get("connector")?;

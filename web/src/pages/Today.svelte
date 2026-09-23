@@ -24,6 +24,7 @@
     {:else}
       <p class="headline">{t('today.digest', { day: today.digest.day, at: today.digest.generated_at, n: today.digest.considered })}</p>
       {#each today.digest.groups.filter((g) => g.group !== 'promised') as g}
+        <div class="card digest-card">
         <h2 class="group-title">{t(`group.${g.group}`)} ({g.points.length})</h2>
         <ol class="points">
           {#if !g.points.length}<li class="point empty-point">{t('point.nothing')}</li>{/if}
@@ -36,17 +37,18 @@
             </li>
           {/each}
         </ol>
+        </div>
       {/each}
     {/if}
 
     <h2 class="group-title">{t('today.waiting')}</h2>
     {#if today.actions.length}
-      <ol class="rows">{#each today.actions as a (a.id)}<ActionCard action={a} ondone={load} />{/each}</ol>
+      <ol class="rows cards">{#each today.actions as a (a.id)}<ActionCard action={a} ondone={load} />{/each}</ol>
     {:else}<Empty text={t('today.nowaiting')} />{/if}
 
     <h2 class="group-title">{t('today.promised')}</h2>
     {#if today.commitments.length}
-      <ol class="rows">{#each today.commitments as c (c.id)}<CommitmentRow {c} />{/each}</ol>
+      <ol class="rows cards">{#each today.commitments as c (c.id)}<CommitmentRow {c} />{/each}</ol>
     {:else}<Empty text={t('today.nopromises')} />{/if}
   {/if}
 </section>

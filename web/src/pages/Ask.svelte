@@ -5,6 +5,7 @@
   import SourceChip from '../components/SourceChip.svelte';
   import ActionCard from '../components/ActionCard.svelte';
   import RunRecord from '../components/RunRecord.svelte';
+  import Icon from '../components/Icon.svelte';
 
   interface Turn { question: string; reply?: AskReply; error?: string; open?: boolean }
   // This session only; gone with the page (design 03: a conversation's
@@ -58,7 +59,7 @@
           </div>
           {#if turn.open}<RunRecord runId={turn.reply.run_id} />{/if}
           {#if turn.reply.actions.length}
-            <ol class="rows">{#each turn.reply.actions as a (a.id)}<ActionCard action={a} />{/each}</ol>
+            <ol class="rows cards mt-3">{#each turn.reply.actions as a (a.id)}<ActionCard action={a} />{/each}</ol>
           {/if}
         {/if}
       </li>

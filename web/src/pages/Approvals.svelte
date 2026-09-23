@@ -25,10 +25,10 @@
   {:else if !pending}<Empty text={t('loading')} />
   {:else if !pending.length}<Empty text={t('approvals.empty')} />
   {:else}
-    <ol class="rows">{#each pending as a (a.id)}<ActionCard action={a} ondone={load} />{/each}</ol>
+    <ol class="rows cards">{#each pending as a (a.id)}<ActionCard action={a} ondone={load} />{/each}</ol>
   {/if}
   {#if history.length}
     <h2 class="group-title">{t('approvals.decided')}</h2>
-    <ol class="rows">{#each history as a (a.id)}<ActionCard action={a} />{/each}</ol>
+    <ol class="rows cards">{#each history as a (a.id)}<ActionCard action={a} />{/each}</ol>
   {/if}
 </section>

@@ -11,6 +11,7 @@
   import Records from './pages/Records.svelte';
   import Settings from './pages/Settings.svelte';
   import Pair from './pages/Pair.svelte';
+  import Icon from './components/Icon.svelte';
 
   startPolling();
 
@@ -58,12 +59,12 @@
   <nav class="rail" aria-label="sections">
     {#each primary as n}
       <button type="button" class="nav" class:is-on={on(n.path)} onclick={() => nav(n.path)}>
-        {t(n.key)}{#if n.key === 'approvals' && $pending}<span class="badge">{$pending}</span>{/if}
+        <Icon name={n.key} /><span>{t(n.key)}</span>{#if n.key === 'approvals' && $pending}<span class="badge">{$pending}</span>{/if}
       </button>
     {/each}
     <span class="rail-gap"></span>
     {#each secondary as n}
-      <button type="button" class="nav secondary" class:is-on={on(n.path)} onclick={() => nav(n.path)}>{t(n.key)}</button>
+      <button type="button" class="nav secondary" class:is-on={on(n.path)} onclick={() => nav(n.path)}><Icon name={n.key} size={18} /><span>{t(n.key)}</span></button>
     {/each}
   </nav>
 
@@ -89,15 +90,15 @@
   <nav class="bar" aria-label="sections">
     {#each primary as n}
       <button type="button" class="nav" class:is-on={on(n.path)} onclick={() => nav(n.path)}>
-        {t(n.key)}{#if n.key === 'approvals' && $pending}<span class="badge">{$pending}</span>{/if}
+        <Icon name={n.key} size={22} /><span>{t(n.key)}</span>{#if n.key === 'approvals' && $pending}<span class="badge">{$pending}</span>{/if}
       </button>
     {/each}
-    <button type="button" class="nav" class:is-on={more || secondary.some((n) => on(n.path))} onclick={() => (more = !more)}>{t('more')}</button>
+    <button type="button" class="nav" class:is-on={more || secondary.some((n) => on(n.path))} onclick={() => (more = !more)}><Icon name="more" size={22} /><span>{t('more')}</span></button>
   </nav>
   {#if more}
     <div class="more-sheet" role="dialog">
       {#each secondary as n}
-        <button type="button" class="nav" class:is-on={on(n.path)} onclick={() => nav(n.path)}>{t(n.key)}</button>
+        <button type="button" class="nav" class:is-on={on(n.path)} onclick={() => nav(n.path)}><Icon name={n.key} /><span>{t(n.key)}</span></button>
       {/each}
     </div>
     <div class="scrim" onclick={() => (more = false)} role="presentation"></div>

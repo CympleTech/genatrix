@@ -6,6 +6,7 @@
   import ItemRow from '../components/ItemRow.svelte';
   import CommitmentRow from '../components/CommitmentRow.svelte';
   import Empty from '../components/Empty.svelte';
+  import Icon from '../components/Icon.svelte';
 
   let { id = null }: { id?: string | null } = $props();
   let cards = $state<PersonCard[] | null>(null);
@@ -78,7 +79,7 @@
 
   {#if id}
     <div class="person">
-      <button type="button" class="back" onclick={() => go('/people')}>← {t('people.back')}</button>
+      <button type="button" class="back" onclick={() => go('/people')}><Icon name="back" size={16} />{t('people.back')}</button>
       {#if !detail}<Empty text={error || t('loading')} error={!!error} />
       {:else}
         <div class="person-detail-head">

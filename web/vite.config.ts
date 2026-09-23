@@ -1,11 +1,12 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import tailwindcss from '@tailwindcss/vite';
 
 // The build lands beside the Rust code that compiles it into the binary
 // (crates/daemon/src/web/mod.rs), under fixed names, so the include_str! calls
 // there never chase a hash. One script, one stylesheet, no chunks.
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [tailwindcss(), svelte()],
   build: {
     outDir: '../crates/daemon/src/web/dist',
     emptyOutDir: true,

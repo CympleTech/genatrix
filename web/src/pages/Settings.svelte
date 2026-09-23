@@ -33,6 +33,7 @@
 </script>
 
 <section class="pane settings">
+  <div class="section">
   <h2 class="group-title">{t('settings.accounts')}</h2>
   {#if !$accounts.length}<p class="note">{t('settings.noaccounts')}</p>{/if}
   <ul class="accounts">
@@ -40,10 +41,14 @@
       <li class="account {a.sync.state}"><span class="address">{a.address}</span><span class="state">{a.text}</span></li>
     {/each}
   </ul>
+  </div>
 
+  <div class="section">
   <h2 class="group-title">{t('settings.model')}</h2>
-  <p class="note">{$status?.model_text ?? t('loading')} · {$status?.cloud_enabled ? t('status.cloud.on') : t('status.cloud.off')}</p>
+  <p class="note mb-0">{$status?.model_text ?? t('loading')} · {$status?.cloud_enabled ? t('status.cloud.on') : t('status.cloud.off')}</p>
+  </div>
 
+  <div class="section">
   <h2 class="group-title">{t('settings.devices')}</h2>
   <p class="note">{t('settings.devices.note')}</p>
   {#if error}<Empty text={error} error />{/if}
@@ -68,7 +73,9 @@
       <p class="note">{t('settings.pair.expires')} {t('settings.pair.bindnote')}</p>
     {/if}
   </div>
+  </div>
 
+  <div class="section">
   <h2 class="group-title">{t('settings.data')}</h2>
   {#if $status}
     <dl class="facts">
@@ -81,4 +88,5 @@
       <dt>{t('settings.rules')}</dt><dd>{$status.rules_version}</dd>
     </dl>
   {/if}
+  </div>
 </section>

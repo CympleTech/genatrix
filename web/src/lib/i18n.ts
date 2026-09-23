@@ -5,6 +5,17 @@
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  chats: 'Chats', 'chats.search': 'Find a conversation', 'chats.empty': 'No conversations yet.',
+  'chats.nomatch': 'No one by that name.',
+  'chat.loadEarlier': 'Earlier messages', 'chat.beginning': 'The beginning of what is on this device.',
+  'chat.draft': 'Draft a reply', 'chat.drafting': 'Drafting on this device…',
+  'chat.nodraftable': 'Nothing from them to reply to here yet.',
+  'chat.draftnote': 'A draft appears below as an approval card. Nothing is sent until you approve it.',
+  'chat.ingroup': 'in {name}', 'chat.inchannel': 'in the channel {name}', 'chat.bymail': 'by mail',
+  'chat.full': 'Whole message', 'chat.less': 'Less', 'chat.details': 'Details', 'chat.hide': 'Hide',
+  'chat.promises': '{n} promises', 'chat.promise': '1 promise', 'chat.nopromises': 'no open promises',
+  'chat.today': 'Today', 'chat.yesterday': 'Yesterday', 'chat.empty': 'No messages with them on this device.',
+  'chat.handles': 'Addresses', 'chat.roles': 'Roles',
   today: 'Today', timeline: 'Timeline', ask: 'Ask', approvals: 'Approvals', people: 'People',
   review: 'Review', records: 'Records', settings: 'Settings', more: 'More',
   loading: 'loading…', error: 'Something went wrong',
@@ -83,6 +94,17 @@ const en: Dict = {
 };
 
 const zh: Dict = {
+  chats: '对话', 'chats.search': '找一个对话', 'chats.empty': '还没有对话。',
+  'chats.nomatch': '没有这个名字的人。',
+  'chat.loadEarlier': '更早的消息', 'chat.beginning': '这台设备上和对方的往来从这里开始。',
+  'chat.draft': '起草回复', 'chat.drafting': '正在本机起草…',
+  'chat.nodraftable': '这里还没有对方发来、可以回复的消息。',
+  'chat.draftnote': '草稿会以审批卡片出现在下面。你不批准，什么都不会发出。',
+  'chat.ingroup': '在「{name}」里', 'chat.inchannel': '在频道「{name}」里', 'chat.bymail': '邮件',
+  'chat.full': '全文', 'chat.less': '收起', 'chat.details': '资料', 'chat.hide': '收起',
+  'chat.promises': '{n} 个承诺', 'chat.promise': '1 个承诺', 'chat.nopromises': '没有未完成的承诺',
+  'chat.today': '今天', 'chat.yesterday': '昨天', 'chat.empty': '这台设备上没有和对方的消息。',
+  'chat.handles': '地址', 'chat.roles': '角色',
   today: '今天', timeline: '时间线', ask: '问', approvals: '审批', people: '联系人',
   review: '复核', records: '记录', settings: '设置', more: '更多',
   loading: '加载中…', error: '出错了',

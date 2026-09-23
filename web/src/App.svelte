@@ -6,7 +6,7 @@
   import Timeline from './pages/Timeline.svelte';
   import Ask from './pages/Ask.svelte';
   import Approvals from './pages/Approvals.svelte';
-  import People from './pages/People.svelte';
+  import Chats from './pages/Chats.svelte';
   import Review from './pages/Review.svelte';
   import Records from './pages/Records.svelte';
   import Settings from './pages/Settings.svelte';
@@ -17,18 +17,25 @@
 
   // The four faces (design 06) and the approval panel are always one tap
   // away; the rest sits behind "more" on a phone and in the rail on a desktop.
+  // Design 06 v0.5: four faces, what the day asks of you, what waits for
+  // your word, who has been talking to you, and a question of your own.
+  // The archive and the audit are one tap further away, not gone.
   const primary = [
     { path: '/', key: 'today' },
-    { path: '/timeline', key: 'timeline' },
-    { path: '/ask', key: 'ask' },
     { path: '/approvals', key: 'approvals' },
+    { path: '/chats', key: 'chats' },
+    { path: '/ask', key: 'ask' },
   ];
   const secondary = [
-    { path: '/people', key: 'people' },
+    { path: '/timeline', key: 'timeline' },
     { path: '/records', key: 'records' },
     { path: '/review', key: 'review' },
     { path: '/settings', key: 'settings' },
   ];
+  // Old links to /people still arrive somewhere sensible.
+  $effect(() => {
+    if ($route.parts[0] === 'people') go('/chats' + ($route.parts[1] ? '/' + $route.parts[1] : ''), true);
+  });
   let more = $state(false);
 
   const section = $derived($route.parts[0] ?? '');
@@ -79,7 +86,7 @@
     {:else if section === 'timeline'}<Timeline />
     {:else if section === 'ask'}<Ask />
     {:else if section === 'approvals'}<Approvals />
-    {:else if section === 'people'}<People id={$route.parts[1] ?? null} />
+    {:else if section === 'chats'}<Chats id={$route.parts[1] ?? null} />
     {:else if section === 'review'}<Review />
     {:else if section === 'records'}<Records />
     {:else if section === 'settings'}<Settings />

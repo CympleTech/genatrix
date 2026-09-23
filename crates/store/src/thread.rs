@@ -123,6 +123,30 @@ impl Store {
             .transpose()
     }
 
+    /// Several threads at once, keyed by id. A conversation shows forty
+    /// messages from a dozen threads; asking per message is forty locks.
+    pub fn threads_by_id(
+        &self,
+        ids: &[ThreadId],
+    ) -> Result<std::collections::BTreeMap<ThreadId, Thread>> {
+        let mut out = std::collections::BTreeMap::new();
+        if ids.is_empty() {
+            return Ok(out);
+        }
+        let list = vec!["?"; ids.len()].join(",");
+        let keys: Vec<String> = ids.iter().map(ToString::to_string).collect();
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!("SELECT * FROM thread WHERE id IN ({list})"))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(keys.iter()), |r| {
+            Ok(row_to_thread(r))
+        })?;
+        for row in rows {
+            let thread = row??;
+            out.insert(thread.id, thread);
+        }
+        Ok(out)
+    }
+
     /// Find a thread by its source container.
     pub fn find_thread(&self, source: &Source) -> Result<Option<Thread>> {
         self.conn()

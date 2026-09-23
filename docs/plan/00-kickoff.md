@@ -97,6 +97,9 @@ first month of use began and the test page was not something to hand a phone.
 | The page rebuilt with Svelte and Vite, phone first, two languages following the system, the eight screens and the pairing screen; built output committed and compiled into the core | done; to be judged in use |
 | The menu bar shell opens the page in a web view window | done |
 | `service install --bind` and `serve --bind` for a private network address | done |
+| Design 06 v0.5: four faces, Today, Approvals, Chats, Ask; the timeline and the records behind "more" | done |
+| Chats: a list of parties with each one's last word, and per party a conversation (theirs left, yours right, mail and chat together, group messages marked, paging back), the facts and the promises above it, and a reply drafted as an approval card in the stream | done; to be judged in use |
+| Agents as parties in Chats (design 06 v0.5) | designed; waits for the first agent |
 | Backup, recovery code, export, delete, diagnostics on the Settings page (design 09) | not started |
 | First-run wizard (design 09) | not started |
 

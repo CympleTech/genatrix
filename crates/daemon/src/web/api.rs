@@ -44,6 +44,7 @@ pub fn routes() -> Router<Arc<System>> {
         .route("/api/action/{id}/decline", post(decline_action))
         .route("/api/people", get(people))
         .route("/api/person/{id}", get(person))
+        .route("/api/person/{id}/chat", get(chat))
         .route("/api/person/{id}/relationship", post(set_relationship))
         .route("/api/commitment/{id}", post(set_commitment))
         .route("/api/ledger", get(ledger))
@@ -200,6 +201,9 @@ struct PersonCard {
     last_at: Option<String>,
     connectors: Vec<String>,
     roles: Vec<String>,
+    /// The start of the newest thing they wrote: the line under the name in
+    /// the list of conversations.
+    last_text: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -228,6 +232,112 @@ struct PersonDetail {
     notes: String,
     recent: Vec<Row>,
     commitments: Vec<CommitmentView>,
+}
+
+#[derive(Deserialize)]
+struct ChatQuery {
+    /// Milliseconds: only messages older than this. Absent for the newest.
+    #[serde(default)]
+    before: Option<i64>,
+    #[serde(default = "default_chat_limit")]
+    limit: u32,
+}
+
+const fn default_chat_limit() -> u32 {
+    40
+}
+
+/// Characters of one message shown in the stream before it is folded; the
+/// whole of it is one tap away, as the item itself.
+const CHAT_TEXT: usize = 1200;
+
+/// One message in a conversation (design 06 v0.5, "对话").
+#[derive(Serialize)]
+struct ChatMessage {
+    id: String,
+    /// Local calendar day, for the separators.
+    day: String,
+    /// Local time of day.
+    time: String,
+    ms: i64,
+    /// The user's own message: drawn on the right.
+    mine: bool,
+    connector: String,
+    /// `mail`, `direct`, `group` or `channel`.
+    place: &'static str,
+    /// For a group or channel, its name: the message was not said to the
+    /// user alone, and the stream says so.
+    place_name: Option<String>,
+    subject: Option<String>,
+    text: String,
+    folded: bool,
+    level: String,
+}
+
+#[derive(Serialize)]
+struct ChatPage {
+    /// Oldest first, as a conversation is read.
+    messages: Vec<ChatMessage>,
+    /// Whether there is more before the first of these.
+    earlier: bool,
+}
+
+/// A conversation with one person, a page at a time, newest page first.
+async fn chat(
+    State(system): Shared,
+    Path(id): Path<String>,
+    Query(query): Query<ChatQuery>,
+) -> Result<Response, ApiError> {
+    let Ok(id) = id.parse::<genatrix_model::PersonId>() else {
+        return Ok(not_found("that is not a person identifier"));
+    };
+    let limit = query.limit.clamp(1, 200);
+    // One more than asked, to know whether there is an earlier page.
+    let mut items = system
+        .store
+        .items_with_person_before(id, query.before, limit + 1)?;
+    let earlier = items.len() > limit as usize;
+    items.truncate(limit as usize);
+    items.reverse();
+    let thread_ids: Vec<_> = items.iter().map(|i| i.thread_id).collect();
+    let threads = system.store.threads_by_id(&thread_ids)?;
+    let messages = items
+        .iter()
+        .map(|item| {
+            let thread = threads.get(&item.thread_id);
+            let place = match thread.map(|t| t.kind) {
+                Some(genatrix_model::ThreadKind::GroupChat) => "group",
+                Some(genatrix_model::ThreadKind::Channel) => "channel",
+                Some(genatrix_model::ThreadKind::DirectChat) => "direct",
+                _ => "mail",
+            };
+            let local = item.occurred_at.with_timezone(&chrono::Local);
+            let text = item.text.trim();
+            let shown: String = text.chars().take(CHAT_TEXT).collect();
+            ChatMessage {
+                id: item.id.to_string(),
+                day: local.format("%Y-%m-%d").to_string(),
+                time: local.format("%H:%M").to_string(),
+                ms: item.occurred_at.timestamp_millis(),
+                mine: item.direction == genatrix_model::Direction::Outbound,
+                connector: item.source.connector.as_str().to_owned(),
+                place,
+                place_name: matches!(place, "group" | "channel")
+                    .then(|| thread.and_then(|t| t.title.clone()))
+                    .flatten(),
+                subject: match &item.payload {
+                    genatrix_model::Payload::Mail { subject, .. } if !subject.is_empty() => {
+                        Some(subject.clone())
+                    }
+                    _ => None,
+                },
+                folded: shown.len() < text.len(),
+                text: shown,
+                level: item.sensitivity.as_str().to_owned(),
+            }
+        })
+        .collect();
+    Ok(Json(ChatPage { messages, earlier }).into_response())
 }
 
 #[derive(Deserialize)]
@@ -261,6 +371,7 @@ fn card(system: &System, o: &genatrix_store::PersonOverview) -> Result<PersonCar
             .get_relationship(o.person.id)?
             .map(|r| r.roles)
             .unwrap_or_default(),
+        None,
     ))
 }
 
@@ -268,6 +379,7 @@ fn card_with(
     o: &genatrix_store::PersonOverview,
     handles: Vec<HandleView>,
     roles: Vec<String>,
+    last_text: Option<String>,
 ) -> PersonCard {
     PersonCard {
         id: o.person.id.to_string(),
@@ -278,6 +390,7 @@ fn card_with(
         last_at: o.last_at.map(|t| t.format("%Y-%m-%d").to_string()),
         connectors: o.connectors.clone(),
         roles,
+        last_text,
     }
 }
 
@@ -340,6 +453,7 @@ async fn people(
     let ids: Vec<_> = overview.iter().map(|o| o.person.id).collect();
     let mut handles = system.store.handles_for(&ids)?;
     let mut roles = system.store.roles_for(&ids)?;
+    let mut last = system.store.last_words(&ids)?;
     let out: Vec<PersonCard> = overview
         .iter()
         .map(|o| {
@@ -352,6 +466,8 @@ async fn people(
                     .map(handle_view)
                     .collect(),
                 roles.remove(&o.person.id).unwrap_or_default(),
+                last.remove(&o.person.id)
+                    .map(|t| t.replace('\n', " ").trim().to_owned()),
             )
         })
         .collect();

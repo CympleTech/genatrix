@@ -64,7 +64,7 @@ export interface Today { digest: Digest | null; commitments: Commitment[]; commi
 export interface Handle { kind: string; value: string; inferred: boolean }
 export interface PersonCard {
   id: string; name: string; handles: Handle[]; from_them: number; to_them: number;
-  last_at: string | null; connectors: string[]; roles: string[];
+  last_at: string | null; connectors: string[]; roles: string[]; last_text: string | null;
 }
 export interface Stats {
   from_them: number; to_them: number; first_at: string | null; last_at: string | null;
@@ -93,3 +93,10 @@ export interface AskReply {
   actions: Action[]; stopped: boolean; answered: string;
 }
 export interface Device { id: string; name: string; created_at: string; last_seen: string | null; revoked_at: string | null; this: boolean }
+
+export interface ChatMessage {
+  id: string; day: string; time: string; ms: number; mine: boolean; connector: string;
+  place: 'mail' | 'direct' | 'group' | 'channel'; place_name: string | null;
+  subject: string | null; text: string; folded: boolean; level: string;
+}
+export interface ChatPage { messages: ChatMessage[]; earlier: boolean }

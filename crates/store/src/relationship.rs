@@ -300,6 +300,17 @@ impl Store {
 
     /// Recent items between the user and a person, newest first.
     pub fn items_with_person(&self, person: PersonId, limit: u32) -> Result<Vec<Item>> {
+        self.items_with_person_before(person, None, limit)
+    }
+
+    /// The same, older than an instant: how a conversation pages back.
+    /// Newest first; the caller turns it round for display.
+    pub fn items_with_person_before(
+        &self,
+        person: PersonId,
+        before_ms: Option<i64>,
+        limit: u32,
+    ) -> Result<Vec<Item>> {
         let me = self
             .self_person()?
             .map(|p| p.id.to_string())
@@ -310,13 +321,49 @@ impl Store {
              WHERE i.tombstoned = 0
                AND NOT EXISTS (SELECT 1 FROM item n WHERE n.supersedes = i.id)
                AND (i.author = ?1 OR (i.author = ?2 AND i.recipients LIKE ?3))
+               AND i.occurred_ms < ?5
              ORDER BY i.occurred_ms DESC LIMIT ?4",
         )?;
         let pid = person.to_string();
-        let mut rows = stmt.query(params![pid, me, format!("%\"{pid}\"%"), limit])?;
+        let mut rows = stmt.query(params![
+            pid,
+            me,
+            format!("%\"{pid}\"%"),
+            limit,
+            before_ms.unwrap_or(i64::MAX)
+        ])?;
         let mut out = Vec::new();
         while let Some(r) = rows.next()? {
             out.push(row_to_item(r)?);
+        }
+        Ok(out)
+    }
+
+    /// The newest thing each of several people wrote, keyed by person: the
+    /// line under a name in a list of conversations. Answered from
+    /// `item_author_live`, one lookup per person inside one statement.
+    pub fn last_words(&self, people: &[PersonId]) -> Result<BTreeMap<PersonId, String>> {
+        let mut out = BTreeMap::new();
+        if people.is_empty() {
+            return Ok(out);
+        }
+        let list = vec!["?"; people.len()].join(",");
+        let ids: Vec<String> = people.iter().map(ToString::to_string).collect();
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT i.author, substr(i.text, 1, 160) FROM item i
+             WHERE i.tombstoned = 0 AND i.author IN ({list})
+               AND i.occurred_ms = (SELECT max(j.occurred_ms) FROM item j
+                                    WHERE j.author = i.author AND j.tombstoned = 0)"
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (id, text) = row?;
+            if let Ok(id) = id.parse::<PersonId>() {
+                out.entry(id).or_insert(text);
+            }
         }
         Ok(out)
     }

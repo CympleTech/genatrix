@@ -229,17 +229,19 @@ within minutes, and takes new mail as it arrives: within seconds on servers
 with IDLE, within a minute elsewhere. Progress and state per account are on
 the page and in the menu.
 
-**Open the interface.** The first screen is Today: the morning digest with
-its sources, and the promises found in your messages for you to confirm. A
-People tab lists everyone you exchange messages with and, per person, what
-passed between you, in numbers and in the recent messages, plus roles and
-notes that only you write. Then a timeline you can search and filter, by words and,
-once the model side is up, by meaning in any language; each item expanding
-to show the model's summary, its full text and every judgement made about it,
-with who made it and when, and a way to confirm or correct the level; a
-review tab that draws the model's judgements for you to check; a records page
-that opens with how many bytes have left the device and lists every model
-call; and a line per account at the top.
+**Open the interface.** Four places, one tap apart. **Today** is the day:
+the morning digest with its sources, what waits for your approval, and the
+promises found in your messages. **Approvals** is every draft waiting for
+your word. **Chats** is everyone you talk to: a list ordered by the latest
+exchange, and for each person their conversation, theirs on the left and
+yours on the right, mail and chat together, with what you have in numbers
+and in promises above it, and a button at the bottom that drafts a reply as
+an approval card, never a message that goes out on its own. **Ask** takes a
+question about your own mail and messages. Behind "more" are the archive
+and the audit: the timeline of every item, searchable by words and by
+meaning, each one expanding to its full text, its summary and every
+judgement made about it; the records, which open with how many bytes have
+left the device; the review of the model's judgements; and Settings.
 
 **From a phone, or any other device.** Genatrix is one daemon; every
 device is a window on it. Bind it to a private network's address, the

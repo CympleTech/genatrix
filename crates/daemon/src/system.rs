@@ -48,6 +48,12 @@ pub struct System {
     /// bytes that left the device. Refreshed at most every half minute
     /// for a page that asks every five seconds.
     pub slow_status: std::sync::Mutex<Option<(std::time::Instant, SlowStatus)>>,
+    /// Who the user talks to and how much, which is arithmetic over every
+    /// item there is. It costs two passes over the corpus and changes only
+    /// when mail arrives, so it is worked out at most once a minute. What
+    /// the user can change from the page, the roles and the notes, is not
+    /// in here and is read afresh every time.
+    pub people: std::sync::Mutex<Option<(std::time::Instant, Vec<genatrix_store::PersonOverview>)>>,
 }
 
 /// The status numbers worth caching.
@@ -158,6 +164,7 @@ impl System {
             gateway_config: gateway,
             model_state: crate::models::idle_state(),
             slow_status: std::sync::Mutex::new(None),
+            people: std::sync::Mutex::new(None),
             actions: crate::actions::Actions::default(),
             pairing: crate::web::Pairing::default(),
         })

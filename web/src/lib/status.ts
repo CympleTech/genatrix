@@ -9,16 +9,21 @@ export const pending = writable<number>(0);
 export const unauthorized = writable<boolean>(false);
 export const statusError = writable<string>('');
 
+// Two cheap calls, in parallel. The count of waiting approvals rides along
+// on the status, because polling Today for it meant reading every open
+// promise in the store every five seconds, behind the one lock everything
+// else queues on.
 async function tick() {
   try {
-    const s = await get<Status>('/api/status');
+    const [s, a] = await Promise.all([
+      get<Status>('/api/status'),
+      get<{ accounts: AccountState[] }>('/api/accounts'),
+    ]);
     status.set(s);
+    accounts.set(a.accounts);
+    pending.set(s.pending_actions);
     unauthorized.set(false);
     statusError.set('');
-    const a = await get<{ accounts: AccountState[] }>('/api/accounts');
-    accounts.set(a.accounts);
-    const t = await get<{ pending_actions: number }>('/api/today');
-    pending.set(t.pending_actions);
   } catch (e: any) {
     if (e && e.status === 401) unauthorized.set(true);
     else statusError.set(e?.message || String(e));

@@ -96,11 +96,20 @@ struct CommitmentView {
 #[derive(Serialize)]
 struct Today {
     digest: Option<DigestView>,
+    /// The most pressing open promises, not all of them: this is the screen
+    /// for the day, and the rest are on each person's page.
     commitments: Vec<CommitmentView>,
+    /// How many there are in all, so the page can say what it left out.
+    commitments_total: u64,
     /// Up to five pending actions (design 06); the rest are on their tab.
     actions: Vec<ActionView>,
     pending_actions: u64,
 }
+
+/// How many open promises Today shows before it stops and says how many
+/// more there are. Reading every one of them was the most expensive thing
+/// the interface did, and it did it every five seconds.
+const TODAY_COMMITMENTS: u32 = 25;
 
 fn source_ref(system: &System, id: ItemId) -> Option<SourceRef> {
     let item = system.store.get_item(id).ok().flatten()?;
@@ -142,7 +151,7 @@ async fn today(State(system): Shared) -> Result<Json<Today>, ApiError> {
     let now = chrono::Utc::now();
     let commitments = system
         .store
-        .pending_commitments()?
+        .pending_commitments_upto(TODAY_COMMITMENTS)?
         .into_iter()
         .map(|c| CommitmentView {
             id: c.id.to_string(),
@@ -175,6 +184,7 @@ async fn today(State(system): Shared) -> Result<Json<Today>, ApiError> {
     Ok(Json(Today {
         digest,
         commitments,
+        commitments_total: system.store.count_pending_commitments()?,
         actions,
         pending_actions: system.store.count_actions("pending")?,
     }))
@@ -238,29 +248,84 @@ fn handles_view(
         .store
         .handles_of(id)?
         .into_iter()
-        .map(|h| HandleView {
-            kind: format!("{:?}", h.kind).to_lowercase(),
-            value: h.value,
-            inferred: h.confidence == genatrix_model::Confidence::Inferred,
-        })
+        .map(handle_view)
         .collect())
 }
 
 fn card(system: &System, o: &genatrix_store::PersonOverview) -> Result<PersonCard, ApiError> {
-    Ok(PersonCard {
-        id: o.person.id.to_string(),
-        name: o.person.display_name.clone(),
-        handles: handles_view(system, o.person.id)?,
-        from_them: o.from_them,
-        to_them: o.to_them,
-        last_at: o.last_at.map(|t| t.format("%Y-%m-%d").to_string()),
-        connectors: o.connectors.clone(),
-        roles: system
+    Ok(card_with(
+        o,
+        handles_view(system, o.person.id)?,
+        system
             .store
             .get_relationship(o.person.id)?
             .map(|r| r.roles)
             .unwrap_or_default(),
+    ))
+}
+
+fn card_with(
+    o: &genatrix_store::PersonOverview,
+    handles: Vec<HandleView>,
+    roles: Vec<String>,
+) -> PersonCard {
+    PersonCard {
+        id: o.person.id.to_string(),
+        name: o.person.display_name.clone(),
+        handles,
+        from_them: o.from_them,
+        to_them: o.to_them,
+        last_at: o.last_at.map(|t| t.format("%Y-%m-%d").to_string()),
+        connectors: o.connectors.clone(),
+        roles,
+    }
+}
+
+fn handle_view(h: genatrix_model::Handle) -> HandleView {
+    HandleView {
+        kind: format!("{:?}", h.kind).to_lowercase(),
+        value: h.value,
+        inferred: h.confidence == genatrix_model::Confidence::Inferred,
+    }
+}
+
+/// The arithmetic behind the People page, worked out at most once a minute.
+///
+/// It is two passes over every item in the store, and the answer changes
+/// only when mail arrives, so recomputing it on every visit to the page
+/// made the page cost as much as the corpus is large. The work runs off
+/// the async runtime, because a scan of hundreds of megabytes of encrypted
+/// pages must not sit on a thread that other requests need.
+async fn people_overview(
+    system: &Arc<System>,
+) -> Result<Vec<genatrix_store::PersonOverview>, ApiError> {
+    const KEEP: std::time::Duration = std::time::Duration::from_secs(60);
+    if let Some((at, cached)) = system
+        .people
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        && at.elapsed() < KEEP
+    {
+        return Ok(cached.clone());
+    }
+    let for_task = Arc::clone(system);
+    let fresh = tokio::task::spawn_blocking(move || {
+        for_task.store.people_overview(500).map(|people| {
+            people
+                .into_iter()
+                .filter(|o| o.from_them + o.to_them > 0)
+                .collect::<Vec<_>>()
+        })
     })
+    .await
+    .map_err(|e| ApiError(anyhow::anyhow!(e)))??;
+    *system
+        .people
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some((std::time::Instant::now(), fresh.clone()));
+    Ok(fresh)
 }
 
 /// Everyone the user has exchanged messages with, most recent first
@@ -269,13 +334,27 @@ async fn people(
     State(system): Shared,
     Query(query): Query<PeopleQuery>,
 ) -> Result<Json<Vec<PersonCard>>, ApiError> {
-    let mut out = Vec::new();
-    for o in system.store.people_overview(query.limit.min(500))? {
-        if o.from_them + o.to_them == 0 {
-            continue;
-        }
-        out.push(card(&system, &o)?);
-    }
+    let mut overview = people_overview(&system).await?;
+    overview.truncate(query.limit.min(500) as usize);
+    // Two questions for the whole page, not two per card.
+    let ids: Vec<_> = overview.iter().map(|o| o.person.id).collect();
+    let mut handles = system.store.handles_for(&ids)?;
+    let mut roles = system.store.roles_for(&ids)?;
+    let out: Vec<PersonCard> = overview
+        .iter()
+        .map(|o| {
+            card_with(
+                o,
+                handles
+                    .remove(&o.person.id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(handle_view)
+                    .collect(),
+                roles.remove(&o.person.id).unwrap_or_default(),
+            )
+        })
+        .collect();
     Ok(Json(out))
 }
 
@@ -882,11 +961,15 @@ struct Status {
     embedded: u64,
     summarized: u64,
     judged: u64,
+    /// Here, and not only on Today, because the page asks for the status
+    /// every few seconds and this is the one number it needs that often.
+    /// Today is expensive; nothing should poll it.
+    pending_actions: u64,
 }
 
 async fn status(State(system): Shared) -> Result<Json<Status>, ApiError> {
     let model = system.model_state.borrow().clone();
-    let slow = slow_status(&system)?;
+    let slow = slow_status(&system).await?;
     Ok(Json(Status {
         model_text: model.describe(),
         model,
@@ -894,6 +977,7 @@ async fn status(State(system): Shared) -> Result<Json<Status>, ApiError> {
         summarized: system.store.count_annotated_items("summary")?,
         judged: system.store.count_annotated_items("sensitivity")?,
         items: system.store.count_items()?,
+        pending_actions: system.store.count_actions("pending")?,
         ledger_entries: system.ledger.len()?,
         cloud_enabled: system.gate.cloud_enabled(),
         rules_version: system.gate.rules().version.clone(),
@@ -905,7 +989,7 @@ async fn status(State(system): Shared) -> Result<Json<Status>, ApiError> {
 
 /// Walking tens of thousands of files and decoding every egress record
 /// takes seconds; the answers change slowly. Kept for half a minute.
-fn slow_status(system: &System) -> Result<crate::system::SlowStatus, ApiError> {
+async fn slow_status(system: &Arc<System>) -> Result<crate::system::SlowStatus, ApiError> {
     const KEEP: std::time::Duration = std::time::Duration::from_secs(30);
     if let Some((at, cached)) = *system
         .slow_status
@@ -915,10 +999,18 @@ fn slow_status(system: &System) -> Result<crate::system::SlowStatus, ApiError> {
     {
         return Ok(cached);
     }
-    let fresh = crate::system::SlowStatus {
-        bytes_on_disk: system.raw_files.size_on_disk()? + system.blob_files.size_on_disk()?,
-        bytes_left_device: bytes_out(system)?,
-    };
+    // Walking tens of thousands of files, and decoding every egress record,
+    // is not something to do on a thread the rest of the interface needs.
+    let for_task = Arc::clone(system);
+    let fresh = tokio::task::spawn_blocking(move || {
+        Ok::<_, ApiError>(crate::system::SlowStatus {
+            bytes_on_disk: for_task.raw_files.size_on_disk()?
+                + for_task.blob_files.size_on_disk()?,
+            bytes_left_device: bytes_out(&for_task)?,
+        })
+    })
+    .await
+    .map_err(|e| ApiError(anyhow::anyhow!(e)))??;
     *system
         .slow_status
         .lock()

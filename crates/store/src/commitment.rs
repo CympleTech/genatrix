@@ -92,14 +92,36 @@ impl Store {
     /// Every commitment still to keep, not rejected, soonest due first and
     /// the undated last.
     pub fn pending_commitments(&self) -> Result<Vec<Commitment>> {
+        self.pending_commitments_upto(0)
+    }
+
+    /// The same, at most `limit` of them; 0 means all. Dated ones first,
+    /// soonest first, then the undated with the most recent first, which is
+    /// the order a person would work down.
+    pub fn pending_commitments_upto(&self, limit: u32) -> Result<Vec<Commitment>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT * FROM commitment
              WHERE status IN ('open', 'overdue') AND standing <> 'rejected'
-             ORDER BY due IS NULL, due, created_at",
+             ORDER BY due IS NULL, due, created_at DESC
+             LIMIT ?1",
         )?;
-        let rows = stmt.query_map([], |r| Ok(row_to_commitment(r)))?;
+        let rows = stmt.query_map(
+            params![if limit == 0 { -1 } else { i64::from(limit) }],
+            |r| Ok(row_to_commitment(r)),
+        )?;
         rows.map(|r| r?).collect()
+    }
+
+    /// How many are open, without reading any of them.
+    pub fn count_pending_commitments(&self) -> Result<u64> {
+        let n: i64 = self.conn().query_row(
+            "SELECT count(*) FROM commitment
+             WHERE status IN ('open', 'overdue') AND standing <> 'rejected'",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(n).unwrap_or(0))
     }
 
     /// Commitments drawn from an item.
@@ -214,11 +236,14 @@ mod tests {
         };
         store.insert_commitment(&c).unwrap();
         assert_eq!(store.pending_commitments().unwrap(), vec![c.clone()]);
+        assert_eq!(store.count_pending_commitments().unwrap(), 1);
+        assert_eq!(store.pending_commitments_upto(1).unwrap().len(), 1);
         assert_eq!(store.commitments_from(item).unwrap().len(), 1);
         store
             .set_commitment(c.id, Standing::Rejected, CommitmentStatus::Cancelled)
             .unwrap();
         assert!(store.pending_commitments().unwrap().is_empty());
+        assert_eq!(store.count_pending_commitments().unwrap(), 0);
         let back = store.get_commitment(c.id).unwrap().unwrap();
         assert_eq!(back.standing, Standing::Rejected);
     }

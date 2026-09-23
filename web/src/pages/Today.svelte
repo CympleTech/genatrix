@@ -69,6 +69,9 @@
     <h2 class="group-title">{t('today.promised')}</h2>
     {#if today.commitments.length}
       <ol class="rows cards">{#each today.commitments as c (c.id)}<CommitmentRow {c} />{/each}</ol>
+      {#if today.commitments_total > today.commitments.length}
+        <p class="note mt-3">{t('today.morepromises', { n: today.commitments_total - today.commitments.length })}</p>
+      {/if}
     {:else}<Empty text={t('today.nopromises')} />{/if}
   {/if}
 </section>

@@ -59,7 +59,16 @@ impl Store {
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA foreign_keys = ON;
-             PRAGMA synchronous = NORMAL;",
+             PRAGMA synchronous = NORMAL;
+             -- Sixty-four megabytes of pages, against a default of two. The
+             -- file is hundreds of megabytes and every page read out of it
+             -- is a page decrypted, so a scan that spills the cache pays for
+             -- the decryption again on the next question. The interface asks
+             -- the same few questions over and over.
+             PRAGMA cache_size = -65536;
+             -- Sorting and grouping happen in memory rather than in a file
+             -- beside the database, which would be plaintext on disk.
+             PRAGMA temp_store = MEMORY;",
         )?;
         migrate::run(&mut conn)?;
         Ok(Self {

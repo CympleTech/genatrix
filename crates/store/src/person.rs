@@ -217,6 +217,36 @@ impl Store {
         rows.map(|r| r?).collect()
     }
 
+    /// Handles for several people at once, keyed by person.
+    ///
+    /// The People page draws a card per person and each card wants its
+    /// handles. Asking one person at a time is one lock and one statement
+    /// compiled per person, which is most of what that page used to cost.
+    pub fn handles_for(
+        &self,
+        people: &[PersonId],
+    ) -> Result<std::collections::BTreeMap<PersonId, Vec<Handle>>> {
+        let mut out: std::collections::BTreeMap<PersonId, Vec<Handle>> =
+            std::collections::BTreeMap::new();
+        if people.is_empty() {
+            return Ok(out);
+        }
+        let list = vec!["?"; people.len()].join(",");
+        let ids: Vec<String> = people.iter().map(ToString::to_string).collect();
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT * FROM handle WHERE person_id IN ({list}) ORDER BY id"
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |r| {
+            Ok(row_to_handle(r))
+        })?;
+        for row in rows {
+            let handle = row??;
+            out.entry(handle.person_id).or_default().push(handle);
+        }
+        Ok(out)
+    }
+
     /// All persons. Used by export.
     pub fn all_persons(&self) -> Result<Vec<Person>> {
         let conn = self.conn();

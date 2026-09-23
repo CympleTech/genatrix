@@ -60,7 +60,7 @@ export interface Action {
   nonce: string | null; drafted: string; versions: number; can_withdraw: boolean;
   result: SourceRef | null;
 }
-export interface Today { digest: Digest | null; commitments: Commitment[]; actions: Action[]; pending_actions: number }
+export interface Today { digest: Digest | null; commitments: Commitment[]; commitments_total: number; actions: Action[]; pending_actions: number }
 export interface Handle { kind: string; value: string; inferred: boolean }
 export interface PersonCard {
   id: string; name: string; handles: Handle[]; from_them: number; to_them: number;
@@ -78,7 +78,7 @@ export interface Status {
   items: number; ledger_entries: number; cloud_enabled: boolean; rules_version: string;
   bytes_left_device: number; bytes_on_disk: number; data_dir: string;
   model: { state: string; [k: string]: unknown }; model_text: string;
-  embedded: number; summarized: number; judged: number;
+  embedded: number; summarized: number; judged: number; pending_actions: number;
 }
 export interface Call {
   at: string; purpose: string; level: string; target: string; location: string;

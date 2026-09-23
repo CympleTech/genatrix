@@ -89,19 +89,20 @@ impl Store {
         let conn = self.conn();
         let mut agg: BTreeMap<String, Agg> = BTreeMap::new();
 
+        // Counts and the newest, from `item_author_live` alone. Ordering on
+        // occurred_ms rather than the RFC 3339 text keeps it in the index.
         let mut by_author = conn.prepare(
-            "SELECT author, count(*), max(occurred_at), group_concat(DISTINCT connector)
+            "SELECT author, count(*), max(occurred_ms)
              FROM item WHERE tombstoned = 0 AND author IS NOT NULL GROUP BY author",
         )?;
         for row in by_author.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, i64>(1)?,
-                r.get::<_, Option<String>>(2)?,
-                r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<i64>>(2)?,
             ))
         })? {
-            let (author, count, last, connectors) = row?;
+            let (author, count, last) = row?;
             let entry = agg.entry(author).or_insert(Agg {
                 from_them: 0,
                 to_them: 0,
@@ -109,16 +110,26 @@ impl Store {
                 connectors: std::collections::BTreeSet::new(),
             });
             entry.from_them = u64::try_from(count).unwrap_or(0);
-            entry.last_at = last.and_then(|t| {
-                DateTime::parse_from_rfc3339(&t)
-                    .ok()
-                    .map(|d| d.with_timezone(&Utc))
-            });
-            if let Some(c) = connectors {
-                entry.connectors.extend(c.split(',').map(str::to_owned));
-            }
+            entry.last_at = last.and_then(DateTime::from_timestamp_millis);
         }
         drop(by_author);
+
+        // Which connectors each person has been seen on, from
+        // `item_author_conn`. As its own pass because asking for it in the
+        // one above costs a temporary b-tree for every person.
+        let mut by_connector = conn.prepare(
+            "SELECT DISTINCT author, connector
+             FROM item WHERE tombstoned = 0 AND author IS NOT NULL",
+        )?;
+        for row in
+            by_connector.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        {
+            let (author, connector) = row?;
+            if let Some(entry) = agg.get_mut(&author) {
+                entry.connectors.insert(connector);
+            }
+        }
+        drop(by_connector);
 
         if let Some(me) = me {
             let mut outbound = conn.prepare(
@@ -168,6 +179,32 @@ impl Store {
         }
         out.sort_by_key(|o| std::cmp::Reverse(o.last_at));
         out.truncate(limit as usize);
+        Ok(out)
+    }
+
+    /// The roles for several people at once, keyed by person. Same reason
+    /// as [`Store::handles_for`]: one question instead of one per card.
+    pub fn roles_for(&self, people: &[PersonId]) -> Result<BTreeMap<PersonId, Vec<String>>> {
+        let mut out: BTreeMap<PersonId, Vec<String>> = BTreeMap::new();
+        if people.is_empty() {
+            return Ok(out);
+        }
+        let list = vec!["?"; people.len()].join(",");
+        let ids: Vec<String> = people.iter().map(ToString::to_string).collect();
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT person_id, roles FROM relationship WHERE person_id IN ({list})"
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (id, roles) = row?;
+            let Ok(id) = id.parse::<PersonId>() else {
+                continue;
+            };
+            out.insert(id, serde_json::from_str(&roles).unwrap_or_default());
+        }
         Ok(out)
     }
 

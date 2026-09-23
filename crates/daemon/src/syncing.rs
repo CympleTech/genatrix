@@ -201,6 +201,15 @@ impl Accounts {
         tx
     }
 
+    /// Stop tracking every account, before the connectors start again from
+    /// the account list as it now is.
+    pub fn clear(&self) {
+        self.states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+    }
+
     /// Where every account is right now.
     #[must_use]
     pub fn snapshot(&self) -> Vec<AccountState> {

@@ -160,7 +160,7 @@ impl Accounts {
 /// Servers for the providers most people use, so the question never has to be
 /// asked. Design 00's measure is someone who does not use a terminal, and
 /// "what is your IMAP server" is a question they cannot answer.
-fn known_servers(address: &str) -> Option<(&'static str, &'static str)> {
+pub(crate) fn known_servers(address: &str) -> Option<(&'static str, &'static str)> {
     let domain = address.split_once('@')?.1;
     Some(match domain {
         "gmail.com" | "googlemail.com" => ("imap.gmail.com", "smtp.gmail.com"),

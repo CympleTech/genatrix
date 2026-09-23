@@ -15,14 +15,17 @@ mod caller;
 mod config;
 mod connectors;
 mod conversation;
+mod download;
 mod ingest;
 mod keychain;
 mod keys;
 mod models;
 mod names;
 mod pipeline;
+mod running;
 mod seed;
 mod service;
+mod setup;
 mod syncing;
 mod system;
 mod web;
@@ -318,7 +321,7 @@ async fn classify(config: &Config) -> anyhow::Result<()> {
 
 /// Environment variable carrying a mailbox password, read at sync time and
 /// never written down. Design 08 replaces this with the keychain.
-const PASSWORD_ENV: &str = "GENATRIX_IMAP_PASSWORD";
+pub(crate) const PASSWORD_ENV: &str = "GENATRIX_IMAP_PASSWORD";
 
 /// Derive every item again from its raw record.
 fn reprocess(config: &Config) -> anyhow::Result<()> {
@@ -373,25 +376,17 @@ fn password_for(address: &str) -> anyhow::Result<Option<String>> {
 /// it. The account's address becomes a handle of the user's own person, so
 /// direction is known from the first message.
 async fn account(config: &Config, address: &str, imap_host: Option<String>) -> anyhow::Result<()> {
-    use std::io::Write as _;
-
-    use genatrix_connector::capability::Host;
-    use genatrix_connector_imap::{Credentials, Imap};
-    use genatrix_model::HandleKind;
-
     let system = System::open(config.clone(), ticket_key(config, false)?)?;
-    let path = config.accounts_path();
-    let mut accounts = accounts::Accounts::load(&path)?;
-    accounts.add_mail(address, imap_host)?;
-    let account = accounts.mail[&address.trim().to_lowercase()].clone();
-
+    // Where it would read from, before asking for anything.
+    let mut preview = accounts::Accounts::default();
+    preview.add_mail(address, imap_host.clone())?;
+    let account = preview.mail[&address.trim().to_lowercase()].clone();
     println!("{}", account.address);
     println!("  reads from  {}:{}", account.imap_host, account.imap_port);
     match &account.smtp_host {
         Some(host) => println!("  sends via   {host}:{}", account.smtp_port),
         None => println!("  sends via   not configured, so this account cannot send"),
     }
-
     let password = if let Ok(p) = std::env::var(PASSWORD_ENV) {
         p
     } else {
@@ -400,41 +395,9 @@ async fn account(config: &Config, address: &str, imap_host: Option<String>) -> a
         println!("turn on two-step verification, then create one under App passwords.");
         rpassword::prompt_password(format!("App password for {}: ", account.address))?
     };
-    let password = password.trim().to_owned();
-    if password.is_empty() {
-        anyhow::bail!("no password given; nothing was changed");
-    }
-
-    print!("  checking    ");
-    std::io::stdout().flush()?;
-    let credentials = Credentials {
-        account: account.address.clone(),
-        password: password.clone(),
-        imap: Host::new(&account.imap_host, account.imap_port),
-    };
-    match Imap::connect(&credentials).await {
-        Ok(imap) => {
-            let _ = imap.logout().await;
-            println!("signed in");
-        }
-        Err(fault) => {
-            println!("failed");
-            anyhow::bail!("{}\nThe password was not stored.", fault.detail);
-        }
-    }
-
-    keychain::Keychain::mail().store(&account.address, &password)?;
-    println!("  password    in the keychain");
-    accounts.save(&path)?;
-
-    // The address is the user's own.
-    let me = system
-        .store
-        .person_for_handle(HandleKind::Email, &account.address, "")?;
-    if system.store.self_person()?.is_none() {
-        system.store.set_self(me)?;
-    }
-
+    println!("  checking    …");
+    setup::add_mail(&system, address, imap_host, &password).await?;
+    println!("  signed in; the password is in the keychain");
     println!();
     println!("`genatrix serve` keeps this mailbox up to date while it runs;");
     println!("`genatrix service install` makes that happen from login onwards.");
@@ -447,7 +410,6 @@ async fn account(config: &Config, address: &str, imap_host: Option<String>) -> a
 /// becomes a handle of the user's person.
 async fn add_telegram(config: &Config, phone: &str) -> anyhow::Result<()> {
     use genatrix_connector_telegram::login::{Prompt, sign_in};
-    use genatrix_model::HandleKind;
 
     struct Terminal;
     impl Prompt for Terminal {
@@ -481,46 +443,7 @@ async fn add_telegram(config: &Config, phone: &str) -> anyhow::Result<()> {
     let signed_in = sign_in(&credentials, phone, &Terminal).await?;
     println!("  signed in as {} ({})", signed_in.name, signed_in.user_id);
 
-    system.store.put_sync_cursor(
-        genatrix_model::Connector::Telegram,
-        phone,
-        "session",
-        &serde_json::to_string(&signed_in.session)?,
-    )?;
-    let path = config.accounts_path();
-    let mut accounts = accounts::Accounts::load(&path)?;
-    accounts.add_telegram(phone, signed_in.user_id, &signed_in.name);
-    accounts.save(&path)?;
-
-    // The address is the user's own (design 01: every account's handle
-    // hangs on the self person). With a self person already there from an
-    // earlier account, the handle joins it rather than making a stranger.
-    if let Some(me) = system.store.self_person()? {
-        let value = signed_in.user_id.to_string();
-        if let Some(existing) = system.store.find_handle(HandleKind::TelegramId, &value)? {
-            if existing.person_id != me.id {
-                system
-                    .store
-                    .move_handle(HandleKind::TelegramId, &value, me.id)?;
-                system.store.reassign_author(existing.person_id, me.id)?;
-            }
-        } else {
-            system.store.insert_handle(&genatrix_model::Handle {
-                id: genatrix_model::HandleId::new(),
-                person_id: me.id,
-                kind: HandleKind::TelegramId,
-                value,
-                confidence: genatrix_model::Confidence::Confirmed,
-            })?;
-        }
-    } else {
-        let me = system.store.person_for_handle(
-            HandleKind::TelegramId,
-            &signed_in.user_id.to_string(),
-            &signed_in.name,
-        )?;
-        system.store.set_self(me)?;
-    }
+    setup::keep_telegram(&system, phone, &signed_in)?;
     println!("  session     in the encrypted store");
     println!();
     println!(
@@ -532,15 +455,16 @@ async fn add_telegram(config: &Config, phone: &str) -> anyhow::Result<()> {
 /// Remove a mailbox from the list and its password from the keychain. Items
 /// already fetched stay, as design 05 says for a stopped account.
 fn forget_account(config: &Config, address: &str) -> anyhow::Result<()> {
-    let path = config.accounts_path();
-    let mut accounts = accounts::Accounts::load(&path)?;
-    let address = address.trim().to_lowercase();
-    let listed = accounts.mail.remove(&address).is_some();
-    accounts.save(&path)?;
-    let had_password = keychain::Keychain::mail().forget(&address)?;
-    match (listed, had_password) {
-        (false, false) => println!("{address} was not known"),
-        _ => println!("{address} removed; what it fetched stays"),
+    let system = System::open(config.clone(), ticket_key(config, false)?)?;
+    let kind = if address.trim().starts_with('+') {
+        setup::Kind::Telegram
+    } else {
+        setup::Kind::Mail
+    };
+    if setup::remove(&system, kind, address)? {
+        println!("{} removed; what it fetched stays", address.trim());
+    } else {
+        println!("{} was not known", address.trim());
     }
     Ok(())
 }
@@ -894,61 +818,6 @@ fn finish_run(
     }
 }
 
-/// Telegram accounts get the application credentials as their secret and
-/// find their session in the store. Each is shown in its state; none stops
-/// the rest.
-fn start_telegram_accounts(
-    system: &std::sync::Arc<System>,
-    accounts: &accounts::Accounts,
-    grant: &genatrix_connector::capability::Grant,
-) -> anyhow::Result<()> {
-    use genatrix_connector::SyncState;
-
-    if accounts.telegram.is_empty() {
-        return Ok(());
-    }
-    let credentials = match genatrix_connector_telegram::Credentials::find() {
-        Ok(c) => c,
-        Err(e) => {
-            for account in accounts.telegram.values() {
-                system
-                    .accounts
-                    .track(&account.phone)
-                    .send_replace(SyncState::Stopped {
-                        detail: format!("no Telegram application credentials: {e}"),
-                    });
-            }
-            return Ok(());
-        }
-    };
-    let secret = serde_json::to_string(&credentials)?;
-    let assigned: Vec<connectors::Assigned> = accounts
-        .telegram
-        .values()
-        .filter_map(|account| {
-            let status = system.accounts.track(&account.phone);
-            grant
-                .account(&account.phone)
-                .map(|capability| connectors::Assigned {
-                    capability: capability.clone(),
-                    secret: secret.clone(),
-                    status,
-                })
-        })
-        .collect();
-    if let Some(binary) = connectors::binary_for("telegram") {
-        return connectors::start_telegram(system.clone(), assigned, binary);
-    }
-    for a in &assigned {
-        a.status.send_replace(SyncState::Stopped {
-            detail:
-                "genatrix-telegram is not beside this binary; `cargo build --release --workspace`"
-                    .into(),
-        });
-    }
-    Ok(())
-}
-
 /// Serve the interface and keep every account up to date while it runs.
 ///
 /// The mail connector runs in its own sandboxed process (design 05) when
@@ -959,100 +828,13 @@ fn start_telegram_accounts(
 /// no password or its server is not allowed, is shown in that state rather
 /// than stopping the rest.
 async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
-    use genatrix_connector::SyncState;
-    use genatrix_connector::capability::Host;
-    use genatrix_connector_imap::{Credentials, Imap, run_account};
-
     let key = ticket_key(config, false)?;
     let system = std::sync::Arc::new(System::open(config.clone(), key.clone())?);
     leave_ticket_key(config, &key)?;
     models::start(system.clone(), &key)?;
     tokio::spawn(pipelines_as_mail_arrives(system.clone()));
 
-    let accounts = accounts::Accounts::load(&config.accounts_path())?;
-    let grant = accounts.grant();
-
-    let mut assigned = Vec::new();
-    for account in accounts.mail.values() {
-        let status = system.accounts.track(&account.address);
-        let secret = match password_for(&account.address) {
-            Ok(Some(password)) => password,
-            Ok(None) => {
-                status.send_replace(SyncState::NeedsLogin {
-                    detail: format!(
-                        "no password stored; run `genatrix account --add {}`",
-                        account.address
-                    ),
-                });
-                continue;
-            }
-            Err(e) => {
-                status.send_replace(SyncState::Retrying {
-                    detail: format!("the keychain could not be read: {e}"),
-                    attempt: 0,
-                    next_in_secs: 0,
-                });
-                tracing::warn!(account = %account.address, error = %e, "keychain");
-                continue;
-            }
-        };
-        let host = Host::new(&account.imap_host, account.imap_port);
-        let capability = match grant.account(&account.address) {
-            Some(c) if c.may_reach(&host) => c.clone(),
-            _ => {
-                status.send_replace(SyncState::Stopped {
-                    detail: format!("this account is not allowed to connect to {host}"),
-                });
-                continue;
-            }
-        };
-        assigned.push(connectors::Assigned {
-            capability,
-            secret,
-            status,
-        });
-    }
-
-    start_telegram_accounts(&system, &accounts, &grant)?;
-
-    if let Some(binary) = connectors::mail_binary() {
-        connectors::start_mail(system.clone(), assigned, binary)?;
-    } else {
-        {
-            tracing::warn!(
-                "genatrix-imap was not found beside this binary; running the mail connector \
-                 inside the core, without a sandbox. `cargo build --workspace` builds it."
-            );
-            for connectors::Assigned {
-                capability,
-                secret,
-                status,
-            } in assigned
-            {
-                let Some(imap) = capability.hosts.iter().find(|h| h.port == 993).cloned() else {
-                    status.send_replace(SyncState::Stopped {
-                        detail: "no mail server to read from".to_owned(),
-                    });
-                    continue;
-                };
-                let credentials = Credentials {
-                    account: capability.account.clone(),
-                    password: secret,
-                    imap,
-                };
-                let sink = syncing::StoreSink::new(system.clone(), &capability.account);
-                tokio::spawn(run_account(
-                    capability,
-                    move || {
-                        let credentials = credentials.clone();
-                        async move { Imap::connect(&credentials).await }
-                    },
-                    sink,
-                    status,
-                ));
-            }
-        }
-    }
+    running::start(&system)?;
 
     web::serve(system, serving).await
 }

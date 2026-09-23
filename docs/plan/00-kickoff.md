@@ -101,6 +101,10 @@ first month of use began and the test page was not something to hand a phone.
 | Chats: a list of parties with each one's last word, and per party a conversation (theirs left, yours right, mail and chat together, group messages marked, paging back), the facts and the promises above it, and a reply drafted as an approval card in the stream | done; to be judged in use |
 | Design 06 v0.6: a group or channel is one party; its members are not listed unless there is a one-to-one exchange; a person's conversation and statistics count only what passed one to one | done |
 | Agents as parties in Chats (design 06 v0.5) | designed; waits for the first agent |
+| Accounts from Settings: add a mailbox (checked first), sign in to Telegram in three steps, disconnect; the connectors restart with the new list; loopback only, design 02 invariant 12 with its test | done; the Telegram sign-in to be exercised with a real account |
+| Models from Settings: pinned catalog (repository, commit, every file's size and SHA-256), disk check, resumable download with progress, each file verified before use, the model side started when it completes | done; the download itself to be exercised on a machine without the models |
+| The gateway configuration written from the catalog on first run instead of by hand | done |
+| A release build carrying Genatrix's Telegram application credentials, compiled in | done; needs the pair set at build time |
 | Backup, recovery code, export, delete, diagnostics on the Settings page (design 09) | not started |
 | First-run wizard (design 09) | not started |
 

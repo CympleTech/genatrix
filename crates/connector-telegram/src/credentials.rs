@@ -35,9 +35,32 @@ struct SecretsFile {
 }
 
 impl Credentials {
-    /// The environment (`GENATRIX_TELEGRAM_API_ID`, `GENATRIX_TELEGRAM_API_HASH`),
-    /// then the developer's secrets file, then nothing.
+    /// Whether any source has them, without saying what they are: the page
+    /// uses it to offer Telegram or to explain why it cannot.
+    #[must_use]
+    pub fn available() -> bool {
+        Self::find().is_ok()
+    }
+
+    /// The pair compiled into this binary, the environment
+    /// (`GENATRIX_TELEGRAM_API_ID`, `GENATRIX_TELEGRAM_API_HASH`), then the
+    /// developer's secrets file, then nothing.
+    ///
+    /// A build meant for other people sets the same two variables when it is
+    /// compiled, and carries the pair with it (design 05, "应用凭据"); nobody
+    /// who installs it is asked for developer credentials.
     pub fn find() -> anyhow::Result<Self> {
+        if let (Some(id), Some(hash)) = (
+            option_env!("GENATRIX_TELEGRAM_API_ID"),
+            option_env!("GENATRIX_TELEGRAM_API_HASH"),
+        ) && let Ok(api_id) = id.trim().parse()
+            && !hash.trim().is_empty()
+        {
+            return Ok(Self {
+                api_id,
+                api_hash: hash.trim().to_owned(),
+            });
+        }
         if let (Ok(id), Ok(hash)) = (
             std::env::var("GENATRIX_TELEGRAM_API_ID"),
             std::env::var("GENATRIX_TELEGRAM_API_HASH"),

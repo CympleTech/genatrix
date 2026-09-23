@@ -51,6 +51,22 @@ impl Store {
         Ok(())
     }
 
+    /// Delete one cursor. Returns whether there was one. Used for the one
+    /// scope that holds a secret, a Telegram session, when its account is
+    /// removed; the history cursors stay, so signing in again resumes.
+    pub fn delete_sync_cursor(
+        &self,
+        connector: Connector,
+        account: &str,
+        scope: &str,
+    ) -> Result<bool> {
+        let n = self.conn().execute(
+            "DELETE FROM sync_cursor WHERE connector = ?1 AND account = ?2 AND scope = ?3",
+            params![connector.as_str(), account, scope],
+        )?;
+        Ok(n > 0)
+    }
+
     /// Read one cursor.
     pub fn get_sync_cursor(
         &self,

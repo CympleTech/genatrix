@@ -592,6 +592,47 @@
   .facts dt { color: var(--muted); }
   .facts dd { @apply m-0; overflow-wrap: anywhere; }
   .pair-form { @apply grid max-w-[360px] gap-3; }
+
+  /* ---- accounts and models ---- */
+  .account-list, .model-list { @apply m-0 mb-3 list-none p-0; }
+  .account-row, .model-row { @apply flex items-center gap-3 py-2.5; border-bottom: 1px solid var(--line); }
+  .account-row:last-child, .model-row:last-child { border-bottom: 0; }
+  .account-icon {
+    @apply inline-flex h-9 w-9 flex-none items-center justify-center rounded-[10px];
+    background: var(--accent-soft); color: var(--accent-ink);
+  }
+  .account-body, .model-body { @apply flex min-w-0 flex-1 flex-col; }
+  .account-name, .model-name { @apply truncate font-medium; }
+  .account-state { @apply truncate text-[13px] text-muted; }
+  .account-state.ok { color: var(--public); }
+  .account-state.bad { color: var(--secret); }
+  .ok-note { color: var(--public); }
+  .choose.is-on { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+  .setup-form {
+    @apply mt-3 grid max-w-[460px] gap-3 rounded-[14px] p-4;
+    background: var(--surface-2); border: 1px solid var(--line);
+  }
+  .setup-form label { @apply grid gap-1 text-[13px] text-muted; }
+  .setup-form input {
+    @apply min-h-[40px] rounded-control border border-line bg-surface px-3 text-[15px] text-ink;
+  }
+  .help { @apply rounded-[12px] px-3.5 py-3 text-[13px]; background: var(--accent-soft); }
+  .help-title { @apply m-0 mb-1 font-medium text-ink; }
+  .help ol { @apply m-0 pl-5; }
+  .help a { color: var(--accent-ink); text-decoration: underline; }
+  .steps { @apply m-0 flex list-none flex-wrap gap-2 p-0 text-[13px]; }
+  .steps li { @apply rounded-full px-3 py-1; background: var(--surface); color: var(--faint); box-shadow: 0 0 0 1px var(--line); }
+  .steps li.on { background: var(--accent-soft); color: var(--accent-ink); box-shadow: 0 0 0 1px var(--accent-line); }
+  .steps li.done { color: var(--public); }
+  .model-state { @apply m-0 mb-2 flex items-center gap-2 text-[14px] text-muted; }
+  .model-state .dot { @apply h-2 w-2 flex-none rounded-full; background: var(--faint); }
+  .model-state.ready .dot { background: var(--public); }
+  .model-state.ready { color: var(--ink); }
+  .model-size { @apply flex-none text-[13px] text-muted; font-variant-numeric: tabular-nums; }
+  .model-status { @apply flex-none text-[13px] text-muted; min-width: 5rem; text-align: right; }
+  .model-status.ok { color: var(--public); }
+  .progress { @apply mb-2 h-2 overflow-hidden rounded-full; background: var(--line); }
+  .progress span { @apply block h-full rounded-full transition-[width]; background: var(--accent); }
   .pair-form label { @apply grid gap-1 text-[13px] text-muted; }
   .pair-form input { @apply text-[18px]; }
 }

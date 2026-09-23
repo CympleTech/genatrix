@@ -44,6 +44,25 @@ pub struct System {
     pub actions: crate::actions::Actions,
     /// The live pairing code, if any (design 06, "形态").
     pub pairing: crate::web::Pairing,
+    /// The key the gateway checks tickets with, kept so the model side can be
+    /// started later in the life of the process, after a download.
+    pub ticket_key: TicketKey,
+    /// The running connector tasks, so an account change can stop them and
+    /// start them again with the new accounts (design 05, "在界面上接入").
+    pub connector_tasks: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Telegram sign-ins in progress from the page, by id, with when they
+    /// began; a sign-in holds a connection open between its steps.
+    pub logins: tokio::sync::Mutex<
+        std::collections::HashMap<
+            String,
+            (
+                std::time::Instant,
+                genatrix_connector_telegram::login::LoginFlow,
+            ),
+        >,
+    >,
+    /// How the model download is going (design 04, "模型下载").
+    pub download: std::sync::Mutex<crate::download::Progress>,
     /// Numbers that are slow to compute and slow to change: bytes on disk,
     /// bytes that left the device. Refreshed at most every half minute
     /// for a page that asks every five seconds.
@@ -99,18 +118,20 @@ impl System {
     /// the way in; until then the two are started separately and the key
     /// comes from the environment on both sides.
     pub fn open(config: Config, ticket_key: TicketKey) -> anyhow::Result<Self> {
-        // The one file nobody writes for you, read before anything is
-        // created: a run that fails here leaves the directory as it found it,
-        // rather than half made.
+        // Which models exist and where each one runs, agreed with the gateway.
+        // Absent, it is written from the built-in catalog (design 04), so a
+        // first run needs nothing written by hand; present, it is the user's
+        // and is left alone.
         let gateway_path = config.gateway_config_path();
         if !gateway_path.exists() {
-            anyhow::bail!(
-                "no gateway configuration at {}.\n\
-                 Write one first; the README has a template. It says which models \
-                 exist and where each one runs, and this process needs to agree \
-                 with the gateway about that.",
-                gateway_path.display()
-            );
+            if let Some(parent) = gateway_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(
+                &gateway_path,
+                crate::download::default_gateway_config(&config),
+            )?;
+            tracing::info!(path = %gateway_path.display(), "wrote the default gateway configuration");
         }
         let gateway = GatewayConfig::load(&gateway_path)?;
 
@@ -146,8 +167,13 @@ impl System {
         let mut config = config;
         config.gateway_socket.clone_from(&gateway.socket);
         let gate = Arc::new(
-            EgressGate::new(rules, gateway.registry.clone(), ledger.clone(), ticket_key)
-                .with_cloud(config.cloud_enabled),
+            EgressGate::new(
+                rules,
+                gateway.registry.clone(),
+                ledger.clone(),
+                ticket_key.clone(),
+            )
+            .with_cloud(config.cloud_enabled),
         );
         let caller = GatewayCaller::new(
             gate.clone(),
@@ -171,6 +197,10 @@ impl System {
             groups: std::sync::Mutex::new(None),
             actions: crate::actions::Actions::default(),
             pairing: crate::web::Pairing::default(),
+            ticket_key,
+            connector_tasks: std::sync::Mutex::new(Vec::new()),
+            logins: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+            download: std::sync::Mutex::new(crate::download::Progress::default()),
         })
     }
 }

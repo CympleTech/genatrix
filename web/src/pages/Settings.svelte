@@ -3,8 +3,10 @@
   import { get, post, type Device } from '../lib/api';
   import { t } from '../lib/i18n';
   import { bytes } from '../lib/format';
-  import { status, accounts } from '../lib/status';
+  import { status } from '../lib/status';
   import Empty from '../components/Empty.svelte';
+  import AccountsPanel from '../components/AccountsPanel.svelte';
+  import ModelsPanel from '../components/ModelsPanel.svelte';
 
   let devices = $state<Device[] | null>(null);
   let error = $state('');
@@ -37,20 +39,8 @@
 </script>
 
 <section class="pane settings">
-  <div class="section">
-  <h2 class="group-title">{t('settings.accounts')}</h2>
-  {#if !$accounts.length}<p class="note">{t('settings.noaccounts')}</p>{/if}
-  <ul class="accounts">
-    {#each $accounts as a}
-      <li class="account {a.sync.state}"><span class="address">{a.address}</span><span class="state">{a.text}</span></li>
-    {/each}
-  </ul>
-  </div>
-
-  <div class="section">
-  <h2 class="group-title">{t('settings.model')}</h2>
-  <p class="note mb-0">{$status?.model_text ?? t('loading')} · {$status?.cloud_enabled ? t('status.cloud.on') : t('status.cloud.off')}</p>
-  </div>
+  <AccountsPanel />
+  <ModelsPanel />
 
   <div class="section">
   <h2 class="group-title">{t('settings.devices')}</h2>

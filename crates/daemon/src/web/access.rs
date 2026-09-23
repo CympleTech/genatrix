@@ -139,6 +139,7 @@ mod tests {
         axum::Router::new()
             .merge(super::super::api::routes())
             .merge(super::super::devices::routes())
+            .merge(super::super::setup::routes())
             .fallback(axum::routing::get(|| async { "page" }))
             .layer(axum::middleware::from_fn_with_state(
                 Arc::clone(system),
@@ -337,5 +338,113 @@ mod tests {
         let devices = json(call(&app, HERE, "GET", "/api/devices", None, None).await).await;
         assert_eq!(devices.as_array().unwrap().len(), 1);
         assert!(devices[0]["revoked_at"].is_string());
+    }
+
+    async fn paired_cookie(app: &axum::Router) -> String {
+        let started = json(call(app, HERE, "POST", "/api/pair/start", None, None).await).await;
+        let code = started["code"].as_str().unwrap().to_owned();
+        let paired = call(
+            app,
+            LAN,
+            "POST",
+            "/api/pair",
+            None,
+            Some(serde_json::json!({"code": code})),
+        )
+        .await;
+        paired
+            .headers()
+            .get(header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned()
+    }
+
+    /// Design 02, invariant 12: credentials are typed on this machine.
+    #[tokio::test]
+    async fn accounts_are_added_and_removed_from_this_machine_only() {
+        let (_dir, system) = crate::system::test_system();
+        let app = app(&system);
+        let phone = paired_cookie(&app).await;
+        let writes = [
+            (
+                "/api/setup/mail",
+                serde_json::json!({"address": "a@example.com", "password": "x"}),
+            ),
+            (
+                "/api/setup/telegram/start",
+                serde_json::json!({"phone": "+64210000000"}),
+            ),
+            (
+                "/api/setup/telegram/code",
+                serde_json::json!({"flow": "x", "code": "1"}),
+            ),
+            (
+                "/api/setup/telegram/password",
+                serde_json::json!({"flow": "x", "password": "x"}),
+            ),
+            (
+                "/api/setup/remove",
+                serde_json::json!({"kind": "mail", "id": "a@example.com"}),
+            ),
+            ("/api/model/download", serde_json::json!({})),
+        ];
+        for (path, body) in &writes {
+            assert_eq!(
+                call(&app, LAN, "POST", path, None, Some(body.clone()))
+                    .await
+                    .status(),
+                StatusCode::UNAUTHORIZED,
+                "a stranger: {path}"
+            );
+            assert_eq!(
+                call(&app, LAN, "POST", path, Some(&phone), Some(body.clone()))
+                    .await
+                    .status(),
+                StatusCode::FORBIDDEN,
+                "a paired device may look but not type a password: {path}"
+            );
+        }
+        // A paired device sees the accounts, and is told it is not the machine.
+        let seen = json(call(&app, LAN, "GET", "/api/setup", Some(&phone), None).await).await;
+        assert_eq!(seen["local"], false);
+        let here = json(call(&app, HERE, "GET", "/api/setup", None, None).await).await;
+        assert_eq!(here["local"], true);
+        // From here the form is answered, and a malformed address is refused
+        // before anything is tried or stored.
+        let bad = call(
+            &app,
+            HERE,
+            "POST",
+            "/api/setup/mail",
+            None,
+            Some(serde_json::json!({"address": "not an address", "password": "x"})),
+        )
+        .await;
+        assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+        let unknown = json(
+            call(
+                &app,
+                HERE,
+                "POST",
+                "/api/setup/mail",
+                None,
+                Some(
+                    serde_json::json!({"address": "me@unknown-provider.example", "password": "x"}),
+                ),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            unknown["needs_server"], true,
+            "an unknown provider asks for its server"
+        );
+        let models = json(call(&app, HERE, "GET", "/api/model", None, None).await).await;
+        assert_eq!(models["models"].as_array().unwrap().len(), 2);
     }
 }

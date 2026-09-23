@@ -16,6 +16,7 @@
 mod access;
 mod api;
 mod devices;
+mod setup;
 
 use std::future::IntoFuture as _;
 use std::net::{IpAddr, SocketAddr};
@@ -54,6 +55,7 @@ pub async fn serve(system: Arc<System>, serving: &Serving) -> anyhow::Result<()>
         .route("/icon.svg", get(icon))
         .merge(api::routes())
         .merge(devices::routes())
+        .merge(setup::routes())
         // Every other path is the page: the app routes on the client side,
         // so a link to /approvals or /pair?code=... opens on the right screen.
         .fallback(get(index))

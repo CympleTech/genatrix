@@ -99,7 +99,7 @@ pub fn start_mail(
     system: Arc<System>,
     assigned: Vec<Assigned>,
     binary: PathBuf,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<tokio::task::JoinHandle<()>>> {
     start_connector(
         system,
         "imap",
@@ -114,7 +114,7 @@ pub fn start_telegram(
     system: Arc<System>,
     assigned: Vec<Assigned>,
     binary: PathBuf,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<tokio::task::JoinHandle<()>>> {
     start_connector(
         system,
         "telegram",
@@ -129,16 +129,19 @@ pub fn start_telegram(
 /// Each kind has its own socket, `run/<kind>.sock`, its own sandbox profile
 /// and its own token. Returns once the socket is listening and the process
 /// has been started; the accepting and the supervising carry on in the
-/// background for the life of the daemon.
+/// background until the returned tasks are aborted. Aborting the
+/// supervising task drops the child process, which is started with
+/// `kill_on_drop`, so the connector goes with it: that is how an account
+/// change restarts a connector with the new accounts.
 fn start_connector(
     system: Arc<System>,
     kind: &str,
     connector: genatrix_model::Connector,
     assigned: Vec<Assigned>,
     binary: PathBuf,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<tokio::task::JoinHandle<()>>> {
     if assigned.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let run_dir = system.config.data_dir.join("run");
     std::fs::create_dir_all(&run_dir)?;
@@ -174,7 +177,7 @@ fn start_connector(
     });
 
     let accepting = Arc::clone(&server);
-    tokio::spawn(async move {
+    let accept = tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
@@ -193,8 +196,8 @@ fn start_connector(
         }
     });
 
-    tokio::spawn(supervise(server, binary, profile_path, socket));
-    Ok(())
+    let supervising = tokio::spawn(supervise(server, binary, profile_path, socket));
+    Ok(vec![accept, supervising])
 }
 
 /// Only this user reads or writes the socket.

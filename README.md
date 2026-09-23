@@ -128,36 +128,26 @@ DEV=~/.genatrix-dev
 mkdir -p $DEV/run
 ```
 
-**Write a gateway configuration.** The core insists on this file before it
-creates anything, because it has to agree with the gateway about which
-models exist and where each one runs, even on a day no model is called.
-Socket paths have to be absolute, and macOS caps them at 104 bytes, so let
-the shell fill in your home directory rather than typing it:
+**The gateway configuration writes itself.** The first run writes
+`$DEV/gateway.toml` from the built-in model catalog: the chat model, the
+small multilingual embedder, both served by one sandboxed inference process,
+sockets under `run/`. It is yours to edit afterwards; Genatrix never
+overwrites a file that is there. Socket paths have to be absolute and macOS
+caps them at 104 bytes, which the default data directory stays well under.
 
-```sh
-cat > $DEV/gateway.toml <<EOF
-socket = "$HOME/.genatrix-dev/run/gateway.sock"
-
-[[models]]
-name = "local"                 # what callers ask for, and what a ticket names
-model = "qwen3-8b-4bit"        # what the inference process is serving
-context_length = 32768
-purposes = ["classify", "extract", "identity_suggestion",
-            "summarize", "draft", "translate", "search_rewrite", "plan"]
-endpoint = { kind = "local_socket", path = "$HOME/.genatrix-dev/run/infer.sock" }
-
-[[models]]
-name = "embed"                       # the embedder: vectors, only here
-model = "multilingual-e5-small"      # the directory under models/
-context_length = 512
-purposes = ["embed"]
-endpoint = { kind = "local_socket", path = "$HOME/.genatrix-dev/run/infer.sock" }
-EOF
-```
-
-Two local models, one process: the chat model answers everything but
-`embed`, and the small multilingual embedder answers that. Both are served
-by the same sandboxed inference process.
+**Or do all of this from the page.** Settings has what the next two steps
+do by hand. *Accounts*: add a mailbox (address and app password, checked
+against the server before it is kept, with Gmail's steps spelled out), sign
+in to Telegram (number, the code Telegram sends, the two-step password if
+there is one), and disconnect either; the connectors pick the change up
+without a restart. *Models*: what is installed, the size of what is not,
+whether the disk can take it, one button to download, progress while it
+runs, resumable, every file checked against a hash pinned in the catalog.
+All of it works only on the computer Genatrix runs on: a paired phone sees
+the accounts and the models but cannot type a password over the network.
+A build meant for other people carries Genatrix's Telegram application
+credentials: set `GENATRIX_TELEGRAM_API_ID` and `GENATRIX_TELEGRAM_API_HASH`
+when you compile it.
 
 **Initialise, and add your mailbox.**
 

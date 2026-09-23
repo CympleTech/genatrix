@@ -73,12 +73,18 @@ struct Started {
     code: String,
     /// Seconds the code is good for.
     expires_in_secs: u64,
+    /// Where another device can open the page, first the likeliest. The page
+    /// that asks for a code is usually open on 127.0.0.1, which on a phone
+    /// means the phone, so the link in the QR code cannot come from it.
+    /// Empty when the core listens on loopback only and no device can pair.
+    reachable_at: Vec<String>,
 }
 
 /// Make a pairing code. Loopback only: pairing starts on the machine.
 async fn start(
     State(system): State<Arc<System>>,
     Extension(caller): Extension<Caller>,
+    Extension(serving): Extension<super::Serving>,
 ) -> Response {
     if caller != Caller::Local {
         return (
@@ -91,6 +97,7 @@ async fn start(
     Json(Started {
         code,
         expires_in_secs: CODE_LIFETIME.as_secs(),
+        reachable_at: super::reachable_at(&serving),
     })
     .into_response()
 }

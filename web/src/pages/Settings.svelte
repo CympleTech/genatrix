@@ -8,7 +8,7 @@
 
   let devices = $state<Device[] | null>(null);
   let error = $state('');
-  let pairing = $state<{ code: string; expires_in_secs: number } | null>(null);
+  let pairing = $state<{ code: string; expires_in_secs: number; reachable_at: string[] } | null>(null);
   let pairError = $state('');
   let qr = $state('');
 
@@ -19,7 +19,11 @@
     pairError = '';
     try {
       pairing = await post('/api/pair/start', {});
-      const url = `${location.origin}/pair?code=${pairing!.code}`;
+      // The core says where a phone can reach it; this page is usually on
+      // 127.0.0.1, which on the phone would mean the phone.
+      const origin = pairing!.reachable_at[0];
+      if (!origin) { qr = ''; return; }
+      const url = `${origin}/pair?code=${pairing!.code}`;
       const q = qrcode(0, 'M');
       q.addData(url); q.make();
       qr = q.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
@@ -29,7 +33,7 @@
     try { await post(`/api/device/${id}/revoke`, {}); await loadDevices(); } catch (e: any) { error = e.message; }
   }
   $effect(() => { loadDevices(); });
-  const pairUrl = $derived(pairing ? `${location.origin}/pair` : '');
+  const pairUrl = $derived(pairing?.reachable_at[0] ? `${pairing.reachable_at[0]}/pair` : '');
 </script>
 
 <section class="pane settings">
@@ -67,7 +71,7 @@
     {#if pairError}<span class="error">{pairError}</span>{/if}
     {#if pairing}
       <p class="note">{t('settings.pair.code')}</p>
-      <p class="pair-url">{pairUrl}</p>
+      {#if pairUrl}<p class="pair-url">{pairUrl}</p>{:else}<p class="note error">{t('settings.pair.unreachable')}</p>{/if}
       <p class="pair-code">{pairing.code}</p>
       <div class="qr">{@html qr}</div>
       <p class="note">{t('settings.pair.expires')} {t('settings.pair.bindnote')}</p>

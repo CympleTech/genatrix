@@ -144,6 +144,10 @@ mod tests {
                 Arc::clone(system),
                 guard,
             ))
+            .layer(axum::Extension(super::super::Serving {
+                bind: std::net::IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                port: 7717,
+            }))
             .with_state(Arc::clone(system))
     }
 

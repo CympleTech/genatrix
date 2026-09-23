@@ -61,6 +61,7 @@ pub async fn serve(system: Arc<System>, serving: &Serving) -> anyhow::Result<()>
             Arc::clone(&system),
             access::guard,
         ))
+        .layer(axum::Extension(serving.clone()))
         .with_state(system);
 
     let addr = SocketAddr::from((serving.bind, serving.port));
@@ -121,6 +122,25 @@ fn announce(serving: &Serving) {
     println!("This is plain HTTP. Bind it to a private network you trust, such as a");
     println!("Tailscale or WireGuard address; the tunnel is the encryption. Everything");
     println!("here is your mail and messages.");
+}
+
+/// Addresses another device can open the page at, as base URLs. Nothing
+/// when only loopback is listened on; the address bound to when it is a
+/// particular one; otherwise the address of the interface that carries the
+/// default route, which on a home network is the one a phone can see.
+pub fn reachable_at(serving: &Serving) -> Vec<String> {
+    if serving.bind.is_loopback() {
+        return Vec::new();
+    }
+    let host = if serving.bind.is_unspecified() {
+        match local_address() {
+            Some(a) => a,
+            None => return Vec::new(),
+        }
+    } else {
+        serving.bind.to_string()
+    };
+    vec![format!("http://{host}:{}", serving.port)]
 }
 
 /// A network address of this machine, so the printed link is one somebody can
@@ -204,6 +224,26 @@ async fn icon() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_phone_is_given_the_address_it_can_reach_and_never_loopback() {
+        let only_here = Serving {
+            bind: "127.0.0.1".parse().unwrap(),
+            port: 7717,
+        };
+        assert!(
+            reachable_at(&only_here).is_empty(),
+            "no device can pair with loopback only"
+        );
+        let lan = Serving {
+            bind: "192.168.3.34".parse().unwrap(),
+            port: 7717,
+        };
+        assert_eq!(
+            reachable_at(&lan),
+            vec!["http://192.168.3.34:7717".to_owned()]
+        );
+    }
 
     #[test]
     fn a_particular_lan_address_keeps_loopback_and_the_others_need_nothing_more() {

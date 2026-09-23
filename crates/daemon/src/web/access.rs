@@ -392,6 +392,8 @@ mod tests {
                 serde_json::json!({"kind": "mail", "id": "a@example.com"}),
             ),
             ("/api/model/download", serde_json::json!({})),
+            ("/api/erase", serde_json::json!({"confirm": "DELETE"})),
+            ("/api/export", serde_json::json!({})),
         ];
         for (path, body) in &writes {
             assert_eq!(
@@ -444,6 +446,18 @@ mod tests {
             unknown["needs_server"], true,
             "an unknown provider asks for its server"
         );
+        // Deleting everything wants the word, even from here.
+        let unconfirmed = call(
+            &app,
+            HERE,
+            "POST",
+            "/api/erase",
+            None,
+            Some(serde_json::json!({"confirm": "yes"})),
+        )
+        .await;
+        assert_eq!(unconfirmed.status(), StatusCode::BAD_REQUEST);
+        assert!(system.config.data_dir.exists());
         let models = json(call(&app, HERE, "GET", "/api/model", None, None).await).await;
         assert_eq!(models["models"].as_array().unwrap().len(), 2);
     }

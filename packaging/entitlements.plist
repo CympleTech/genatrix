@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The hardened runtime with nothing relaxed: no JIT, no unsigned memory,
+     no library loading from elsewhere. Genatrix needs none of them. -->
+<plist version="1.0">
+<dict/>
+</plist>

@@ -54,13 +54,13 @@ pub fn profile(confinement: &Confinement<'_>) -> anyhow::Result<String> {
     let data_dir = confinement.data_dir.canonicalize()?;
     let binary = confinement.binary.canonicalize()?;
     let (run_dir, data_dir, binary) = (
-        run_dir.to_string_lossy(),
-        data_dir.to_string_lossy(),
-        binary.to_string_lossy(),
+        quoted(&run_dir.to_string_lossy()),
+        quoted(&data_dir.to_string_lossy()),
+        quoted(&binary.to_string_lossy()),
     );
     let keychains = std::env::var_os("HOME")
         .map(|home| Path::new(&home).join("Library/Keychains"))
-        .map(|p| p.to_string_lossy().into_owned());
+        .map(|p| quoted(&p.to_string_lossy()));
 
     let mut out = String::from(
         "(version 1)\n\
@@ -79,25 +79,34 @@ pub fn profile(confinement: &Confinement<'_>) -> anyhow::Result<String> {
     );
     let _ = writeln!(
         out,
-        "(allow network-outbound (remote unix-socket (subpath \"{run_dir}\")))"
+        "(allow network-outbound (remote unix-socket (subpath {run_dir})))"
     );
-    let _ = writeln!(
-        out,
-        "(deny file-read* file-write* (subpath \"{data_dir}\"))"
-    );
-    let _ = writeln!(
-        out,
-        "(allow file-read* file-write* (subpath \"{run_dir}\"))"
-    );
+    let _ = writeln!(out, "(deny file-read* file-write* (subpath {data_dir}))");
+    let _ = writeln!(out, "(allow file-read* file-write* (subpath {run_dir}))");
     if let Some(keychains) = keychains {
-        let _ = writeln!(
-            out,
-            "(deny file-read* file-write* (subpath \"{keychains}\"))"
-        );
+        let _ = writeln!(out, "(deny file-read* file-write* (subpath {keychains}))");
     }
     let _ = writeln!(out, "(deny process-exec*)");
-    let _ = writeln!(out, "(allow process-exec (literal \"{binary}\"))");
+    let _ = writeln!(out, "(allow process-exec (literal {binary}))");
     Ok(out)
+}
+
+/// A path as a sandbox profile string literal: backslashes and quotes
+/// escaped, so a directory name with either cannot end the string and add a
+/// rule of its own. The profile language reads C-style escapes.
+fn quoted(path: &str) -> String {
+    let mut out = String::with_capacity(path.len() + 2);
+    out.push('"');
+    for c in path.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 #[cfg(test)]

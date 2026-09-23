@@ -593,6 +593,37 @@
   .facts dd { @apply m-0; overflow-wrap: anywhere; }
   .pair-form { @apply grid max-w-[360px] gap-3; }
 
+  /* ---- welcome ---- */
+  .welcome { @apply mx-auto flex max-w-[620px] flex-col gap-4; }
+  .welcome-top { @apply flex items-center justify-between; }
+  .welcome-steps { @apply m-0 flex list-none gap-1.5 p-0; }
+  .welcome-steps li { @apply h-1.5 w-8 rounded-full; background: var(--line); }
+  .welcome-steps li.done { background: var(--accent-line); }
+  .welcome-steps li.on { background: var(--accent); }
+  .welcome-card { @apply flex flex-col items-start gap-3 rounded-card bg-surface px-6 py-7; box-shadow: var(--shadow-lift); }
+  .welcome-mark {
+    @apply inline-flex h-14 w-14 items-center justify-center rounded-[16px];
+    background: linear-gradient(140deg, var(--hero-from), var(--hero-to)); color: var(--on-hero);
+  }
+  .welcome-lede { @apply m-0 text-[15px] leading-[1.65]; }
+  .consent { @apply m-0 flex list-none flex-col gap-2.5 p-0; }
+  .consent li { @apply rounded-[12px] px-4 py-3 text-[14px]; background: var(--surface-2); border: 1px solid var(--line); }
+  .consent b { @apply font-semibold; color: var(--accent-ink); }
+  .checks { @apply m-0 flex w-full list-none flex-col gap-1 p-0; }
+  .checks li { @apply flex items-center gap-3 py-2; border-bottom: 1px solid var(--line); }
+  .checks li:last-child { border-bottom: 0; }
+  .check-mark { @apply inline-flex h-7 w-7 flex-none items-center justify-center rounded-full text-[13px] font-semibold; }
+  .checks li.ok .check-mark { background: color-mix(in srgb, var(--public) 16%, transparent); color: var(--public); }
+  .checks li.bad .check-mark { background: color-mix(in srgb, var(--secret) 16%, transparent); color: var(--secret); }
+  .checks li.warn .check-mark { background: var(--accent-soft); color: var(--accent-ink); }
+  .check-body { @apply flex flex-col; }
+  .check-name { @apply font-medium; }
+
+  /* ---- export and delete ---- */
+  .choose.danger { color: var(--secret); border-color: color-mix(in srgb, var(--secret) 45%, var(--line)); }
+  .choose.danger:hover:not(:disabled) { background: var(--secret); color: #fff; border-color: var(--secret); }
+  .erased { @apply rounded-[14px] px-4 py-3; background: var(--surface-2); }
+
   /* ---- accounts and models ---- */
   .account-list, .model-list { @apply m-0 mb-3 list-none p-0; }
   .account-row, .model-row { @apply flex items-center gap-3 py-2.5; border-bottom: 1px solid var(--line); }

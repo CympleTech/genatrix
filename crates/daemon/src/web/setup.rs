@@ -314,7 +314,7 @@ async fn remove(
     if let Some(no) = local_only(&caller) {
         return no;
     }
-    match setup::remove(&system, body.kind, &body.id) {
+    match setup::remove(&system, body.kind, &body.id).await {
         Ok(removed) => {
             if removed {
                 tracing::info!(account = %body.id, "an account was removed from the page");
@@ -394,6 +394,84 @@ async fn download(
     }
 }
 
+/// Design 09, "要求": what this machine has against what Genatrix needs.
+async fn check(State(system): State<Arc<System>>) -> Json<Vec<crate::erase::Check>> {
+    Json(crate::erase::requirements(&system))
+}
+
+#[derive(Deserialize)]
+struct EraseBody {
+    #[serde(default)]
+    confirm: String,
+}
+
+/// Delete everything (design 09, "卸载"). Only from this machine, only with
+/// the confirmation word, and the process ends once the answer is sent.
+async fn erase(
+    State(system): State<Arc<System>>,
+    Extension(caller): Extension<Caller>,
+    Json(body): Json<EraseBody>,
+) -> Response {
+    if let Some(no) = local_only(&caller) {
+        return no;
+    }
+    let word = body.confirm.trim();
+    if word != "删除" && !word.eq_ignore_ascii_case("DELETE") {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "type the confirmation word to delete everything",
+        );
+    }
+    match crate::erase::erase(&system).await {
+        Ok(done) => {
+            for line in &done {
+                tracing::warn!(%line, "erase");
+            }
+            tokio::spawn(async {
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+                std::process::exit(crate::erase::ERASED);
+            });
+            Json(serde_json::json!({ "done": done })).into_response()
+        }
+        Err(e) => refuse(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("the deletion stopped: {e}"),
+        ),
+    }
+}
+
+/// Export everything to the Downloads folder in the open format.
+async fn export(
+    State(system): State<Arc<System>>,
+    Extension(caller): Extension<Caller>,
+) -> Response {
+    if let Some(no) = local_only(&caller) {
+        return no;
+    }
+    let Some(home) = std::env::var_os("HOME") else {
+        return refuse(StatusCode::INTERNAL_SERVER_ERROR, "HOME is not set");
+    };
+    let to = std::path::PathBuf::from(home)
+        .join("Downloads")
+        .join(format!(
+            "Genatrix export {}",
+            chrono::Local::now().format("%Y-%m-%d %H%M")
+        ));
+    let for_task = Arc::clone(&system);
+    let path = to.clone();
+    match tokio::task::spawn_blocking(move || crate::export_all(&for_task, &path)).await {
+        Ok(Ok(written)) => Json(serde_json::json!({
+            "path": to.display().to_string(),
+            "items": written.summary.items,
+            "files": written.files,
+            "bytes": written.bytes,
+        }))
+        .into_response(),
+        Ok(Err(e)) => refuse(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => refuse(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
 /// The routes.
 pub fn routes() -> axum::Router<Arc<System>> {
     use axum::routing::{get, post};
@@ -406,4 +484,7 @@ pub fn routes() -> axum::Router<Arc<System>> {
         .route("/api/setup/remove", post(remove))
         .route("/api/model", get(models))
         .route("/api/model/download", post(download))
+        .route("/api/system/check", get(check))
+        .route("/api/erase", post(erase))
+        .route("/api/export", post(export))
 }

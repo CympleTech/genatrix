@@ -112,7 +112,7 @@ pub enum Kind {
 /// Remove an account. Returns whether there was anything to remove. What it
 /// fetched stays: that is the user's data, and removing an account is not
 /// deleting a history.
-pub fn remove(system: &System, kind: Kind, id: &str) -> anyhow::Result<bool> {
+pub async fn remove(system: &System, kind: Kind, id: &str) -> anyhow::Result<bool> {
     let path = system.config.accounts_path();
     let mut accounts = Accounts::load(&path)?;
     let id = id.trim();
@@ -125,6 +125,7 @@ pub fn remove(system: &System, kind: Kind, id: &str) -> anyhow::Result<bool> {
         }
         Kind::Telegram => {
             let listed = accounts.telegram.remove(id).is_some();
+            sign_out_telegram(system, id).await;
             // The session is the secret; without it the connector cannot
             // sign in, and a new sign-in starts from nothing.
             let had = system
@@ -135,4 +136,27 @@ pub fn remove(system: &System, kind: Kind, id: &str) -> anyhow::Result<bool> {
     };
     accounts.save(&path)?;
     Ok(removed)
+}
+
+/// End a Telegram account's session on Telegram's side, best effort and
+/// within ten seconds, so the device leaves the account's session list.
+pub async fn sign_out_telegram(system: &System, phone: &str) {
+    let Ok(Some(stored)) = system
+        .store
+        .get_sync_cursor(Connector::Telegram, phone, "session")
+    else {
+        return;
+    };
+    let (Ok(snapshot), Ok(credentials)) = (
+        serde_json::from_str(&stored.cursor),
+        genatrix_connector_telegram::Credentials::find(),
+    ) else {
+        return;
+    };
+    let ending = genatrix_connector_telegram::login::sign_out(&credentials, snapshot);
+    match tokio::time::timeout(std::time::Duration::from_secs(10), ending).await {
+        Ok(Ok(())) => tracing::info!(%phone, "the Telegram session was ended"),
+        Ok(Err(e)) => tracing::warn!(%phone, error = %e, "the Telegram session could not be ended"),
+        Err(_) => tracing::warn!(%phone, "ending the Telegram session timed out"),
+    }
 }

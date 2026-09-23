@@ -15,11 +15,18 @@
 // one page, two shells; the phone's shell is its home screen). The browser
 // is one menu item away for anyone who wants it.
 //
+// Inside Genatrix.app it is also the installer (design 09, "第一次打开就是
+// 装好"): opened from the Finder, it registers the launch agent inside the
+// bundle with the system, and from then on the system starts it at login
+// and brings it back after a crash. When the core ends with the "erased"
+// code, the shell unregisters that agent and quits for good.
+//
 // It is a shell and nothing more. It holds no data, no keys and no
 // passwords; everything it shows it read from the core's local API.
 
 import AppKit
 import Foundation
+import ServiceManagement
 import WebKit
 
 // MARK: - Arguments
@@ -29,6 +36,9 @@ struct Options {
     var dataDir: String?
     var port: Int = 7717
     var bind: String?
+    /// Started with `--genatrix` or `--data-dir`: the developer's launch
+    /// agent, not the app. The app's own installation logic stays out of it.
+    var developer = false
 
     static func parse() -> Options {
         let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
@@ -36,8 +46,8 @@ struct Options {
         var args = CommandLine.arguments.dropFirst().makeIterator()
         while let arg = args.next() {
             switch arg {
-            case "--genatrix": if let v = args.next() { options.genatrix = URL(fileURLWithPath: v) }
-            case "--data-dir": options.dataDir = args.next()
+            case "--genatrix": if let v = args.next() { options.genatrix = URL(fileURLWithPath: v) }; options.developer = true
+            case "--data-dir": options.dataDir = args.next(); options.developer = true
             case "--port": if let v = args.next(), let p = Int(v) { options.port = p }
             case "--bind": options.bind = args.next()
             default: break
@@ -92,6 +102,65 @@ enum Look {
     }
 }
 
+// MARK: - The app's installation
+
+/// The launch agent inside Genatrix.app (design 09). Registered on the first
+/// open from the Finder; the system then starts the shell at login.
+enum Installation {
+    static let label = "xyz.dpt.genatrix.app"
+    static let plist = "xyz.dpt.genatrix.app.plist"
+    /// The core's exit code for "everything was deleted" (erase.rs, ERASED).
+    static let erasedExit: Int32 = 64
+    /// Asks a running shell to bring its window forward.
+    static let openNotice = Notification.Name("xyz.dpt.genatrix.open")
+    /// Set by a Finder launch that hands over to the agent, so the agent opens
+    /// the window when it comes up.
+    static let openOnStart = "openWindowOnNextStart"
+
+    static var inBundle: Bool { Bundle.main.bundlePath.hasSuffix(".app") }
+
+    static var startedBySystem: Bool {
+        ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == label
+    }
+
+    static var agent: SMAppService { SMAppService.agent(plistName: plist) }
+
+    /// The log, opened for appending, created if it is not there yet.
+    static func openLog() -> FileHandle? {
+        let url = logFile
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: url) else { return nil }
+        handle.seekToEndOfFile()
+        return handle
+    }
+
+    /// Where the core's log goes when the app runs it: launchd cannot expand
+    /// a home directory in the bundle's plist, so the shell opens the file.
+    static var logFile: URL {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/Genatrix", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("genatrix.log")
+    }
+}
+
+/// Whether a core already answers on the port.
+func coreAnswers(port: Int) -> Bool {
+    guard let url = URL(string: "http://127.0.0.1:\(port)/api/accounts") else { return false }
+    var request = URLRequest(url: url)
+    request.timeoutInterval = 1.5
+    let done = DispatchSemaphore(value: 0)
+    var ok = false
+    URLSession.shared.dataTask(with: request) { data, response, _ in
+        ok = (response as? HTTPURLResponse)?.statusCode == 200 && data != nil
+        done.signal()
+    }.resume()
+    _ = done.wait(timeout: .now() + 2)
+    return ok
+}
+
 // MARK: - The core process
 
 /// Runs `genatrix serve` and starts it again when it stops, until told to quit.
@@ -111,11 +180,26 @@ final class Core {
         args += ["serve", "--port", String(options.port)]
         if let bind = options.bind { args += ["--bind", bind] }
         p.arguments = args
-        // The core's own log goes wherever ours goes: launchd's log file.
-        p.standardOutput = FileHandle.standardOutput
-        p.standardError = FileHandle.standardError
+        // The core's own log goes wherever ours goes: launchd's log file for
+        // the developer's agent, ~/Library/Logs/Genatrix for the app.
+        if Installation.inBundle && !options.developer, let log = Installation.openLog() {
+            p.standardOutput = log
+            p.standardError = log
+        } else {
+            p.standardOutput = FileHandle.standardOutput
+            p.standardError = FileHandle.standardError
+        }
         p.terminationHandler = { [weak self] proc in
             guard let self = self, !self.quitting else { return }
+            if proc.terminationStatus == Installation.erasedExit {
+                // Everything was deleted: nothing may bring the core back.
+                self.quitting = true
+                DispatchQueue.main.async {
+                    if Installation.inBundle { try? Installation.agent.unregister() }
+                    NSApp.terminate(nil)
+                }
+                return
+            }
             FileHandle.standardError.write("genatrix-menubar: the core stopped (\(proc.terminationStatus)); starting it again\n".data(using: .utf8)!)
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.start() }
         }
@@ -212,13 +296,27 @@ final class Shell: NSObject, NSApplicationDelegate {
         self.core = Core(options: options)
     }
 
+    /// What the menu says about the installation, when there is something.
+    private var installNote: String?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if Installation.inBundle && !options.developer && !install() { return }
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.toolTip = "Genatrix"
         show(.syncing)
         rebuildMenu()
+        // A Finder launch that handed over, or a second open of the app: bring
+        // the window forward.
+        DistributedNotificationCenter.default().addObserver(
+            forName: Installation.openNotice, object: nil, queue: .main
+        ) { [weak self] _ in self?.openInterface() }
         core.start()
+        if UserDefaults.standard.bool(forKey: Installation.openOnStart) || !Installation.startedBySystem {
+            UserDefaults.standard.set(false, forKey: Installation.openOnStart)
+            // The core needs a moment; the window reloads until it answers.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.openInterface() }
+        }
         poll()
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.poll() }
         // Sleep suspends the connectors; a wake is worth asking about at once.
@@ -229,6 +327,56 @@ final class Shell: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         core.quit()
+    }
+
+    /// Design 09, "第一次打开就是装好". Returns whether this process should go
+    /// on to run the core itself.
+    ///
+    /// Started by the system: this is the installed agent; run, unless another
+    /// Genatrix already holds the port (a Finder launch that ran on while the
+    /// user had not yet allowed the login item), in which case leave quietly
+    /// and start at the next login.
+    ///
+    /// Opened from the Finder: if Genatrix is already running, ask it to show
+    /// its window and leave. Otherwise register the agent; once the system has
+    /// it, the system starts it, so leave the running to it and ask it to open
+    /// the window. If the system wants the user's approval first, or will not
+    /// register it, run here meanwhile, and say so in the menu.
+    private func install() -> Bool {
+        if Installation.startedBySystem {
+            if coreAnswers(port: options.port) {
+                NSApp.terminate(nil)
+                return false
+            }
+            return true
+        }
+        if coreAnswers(port: options.port) {
+            DistributedNotificationCenter.default().postNotificationName(
+                Installation.openNotice, object: nil, userInfo: nil, deliverImmediately: true)
+            NSApp.terminate(nil)
+            return false
+        }
+        let agent = Installation.agent
+        if agent.status != .enabled {
+            do {
+                try agent.register()
+            } catch {
+                FileHandle.standardError.write("genatrix-menubar: could not register the login item: \(error)\n".data(using: .utf8)!)
+            }
+        }
+        switch agent.status {
+        case .enabled:
+            UserDefaults.standard.set(true, forKey: Installation.openOnStart)
+            NSApp.terminate(nil)
+            return false
+        case .requiresApproval:
+            installNote = "Allow Genatrix in Login Items to keep it running after you log out"
+            SMAppService.openSystemSettingsLoginItems()
+            return true
+        default:
+            installNote = "Genatrix could not add itself to Login Items; it runs until you log out"
+            return true
+        }
     }
 
     private func show(_ look: Look) {
@@ -259,6 +407,11 @@ final class Shell: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let headline = reachable ? "Genatrix · \(Look.of(accounts).word)" : "Genatrix · starting"
         menu.addItem(disabled(headline))
+        if let note = installNote {
+            let line = NSMenuItem(title: note, action: #selector(openLoginItems), keyEquivalent: "")
+            line.target = self
+            menu.addItem(line)
+        }
         menu.addItem(.separator())
         if accounts.isEmpty {
             menu.addItem(disabled(reachable ? "No accounts yet" : "Waiting for the core"))
@@ -291,10 +444,14 @@ final class Shell: NSObject, NSApplicationDelegate {
         return item
     }
 
-    @objc private func openInterface() {
+    @objc func openInterface() {
         if let url = URL(string: "http://127.0.0.1:\(options.port)/") {
             page.open(url)
         }
+    }
+
+    @objc private func openLoginItems() {
+        SMAppService.openSystemSettingsLoginItems()
     }
 
     @objc private func openInBrowser() {

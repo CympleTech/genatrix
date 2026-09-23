@@ -43,6 +43,17 @@ pub fn obtain(config: &Config) -> anyhow::Result<MasterKey> {
     }
 }
 
+/// Remove the master key from the keychain, for erasing (design 09, "卸载").
+/// A development directory keeps its key as a file inside itself, which goes
+/// with the directory. Returns whether a keychain entry was removed.
+pub fn forget_master_key(config: &Config) -> anyhow::Result<bool> {
+    if uses_keychain(config) {
+        Keychain::named(SERVICE).forget(ACCOUNT)
+    } else {
+        Ok(false)
+    }
+}
+
 /// Only the default data directory keeps its key in the keychain.
 fn uses_keychain(config: &Config) -> bool {
     config.data_dir == Config::default_data_dir()

@@ -157,7 +157,7 @@ pub fn start(system: Arc<System>, key: &TicketKey) -> anyhow::Result<()> {
     };
     if !local.dir.join("config.json").is_file() {
         off(format!(
-            "model weights are not at {}; see the README for the download",
+            "the models are not downloaded yet ({}); download them in Settings",
             local.dir.display()
         ));
         return Ok(());

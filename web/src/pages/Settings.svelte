@@ -35,6 +35,28 @@
     try { await post(`/api/device/${id}/revoke`, {}); await loadDevices(); } catch (e: any) { error = e.message; }
   }
   $effect(() => { loadDevices(); });
+
+  let exporting = $state(false);
+  let exported = $state('');
+  let erasing = $state(false);
+  let erased = $state(false);
+  let busyErase = $state(false);
+  let eraseError = $state('');
+  let word = $state('');
+  const wordOk = $derived(word.trim() === '删除' || word.trim().toUpperCase() === 'DELETE');
+
+  async function exportAll() {
+    exporting = true; exported = '';
+    try { exported = (await post<{ path: string }>('/api/export', {})).path; }
+    catch (e: any) { error = e.message; }
+    exporting = false;
+  }
+  async function eraseAll() {
+    busyErase = true; eraseError = '';
+    try { await post('/api/erase', { confirm: word }); erased = true; }
+    catch (e: any) { eraseError = e.message; }
+    busyErase = false;
+  }
   const pairUrl = $derived(pairing?.reachable_at[0] ? `${pairing.reachable_at[0]}/pair` : '');
 </script>
 
@@ -82,5 +104,35 @@
       <dt>{t('settings.rules')}</dt><dd>{$status.rules_version}</dd>
     </dl>
   {/if}
+  </div>
+
+  <!-- Design 09, "导出" and "卸载"; design 10: the friend is told before
+       anything starts that all of it can be deleted at any time. -->
+  <div class="section danger-zone">
+    <h2 class="group-title">{t('erase.title')}</h2>
+    <p class="note">{t('erase.exportNote')}</p>
+    <div class="chooser">
+      <button type="button" class="choose" disabled={exporting} onclick={exportAll}>{exporting ? t('erase.exporting') : t('erase.export')}</button>
+      {#if exported}<span class="note ok-note">{t('erase.exported', { path: exported })}</span>{/if}
+    </div>
+    <p class="note">{t('erase.note')}</p>
+    {#if !erasing}
+      <button type="button" class="choose danger" onclick={() => (erasing = true)}>{t('erase.start')}</button>
+    {:else if erased}
+      <div class="erased">
+        <p class="headline small">{t('erase.done.title')}</p>
+        <p class="note">{t('erase.done.body')}</p>
+      </div>
+    {:else}
+      <div class="setup-form">
+        <p class="note">{t('erase.confirmNote')}</p>
+        <label>{t('erase.word')}<input bind:value={word} autocomplete="off" /></label>
+        {#if eraseError}<p class="note error">{eraseError}</p>{/if}
+        <div class="chooser">
+          <button type="button" class="choose danger" disabled={!wordOk || busyErase} onclick={eraseAll}>{busyErase ? t('erase.deleting') : t('erase.confirm')}</button>
+          <button type="button" class="choose lowers" onclick={() => { erasing = false; word = ''; }}>{t('accounts.cancel')}</button>
+        </div>
+      </div>
+    {/if}
   </div>
 </section>

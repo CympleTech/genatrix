@@ -4,3 +4,4 @@
 /vendor/**/target
 /vendor/crabllm/mlx/.build
 apps/menubar/.build/
+/dist

@@ -92,6 +92,45 @@ Around 20 GB free: model weights, and a first build that compiles SQLCipher,
 OpenSSL and the MLX Swift package. That first build takes several minutes;
 later ones are quick.
 
+## Giving it to someone
+
+One command builds the app and a disk image:
+
+```sh
+packaging/package-macos.sh
+# dist/Genatrix.app and dist/Genatrix-<version>-<build>.dmg
+```
+
+Set these first for a build meant for other people:
+
+```sh
+export GENATRIX_TELEGRAM_API_ID=...        # Genatrix's own pair, compiled in
+export GENATRIX_TELEGRAM_API_HASH=...
+export GENATRIX_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+export GENATRIX_NOTARY_PROFILE=genatrix    # xcrun notarytool store-credentials genatrix ...
+```
+
+Without the Telegram pair, Settings says Telegram is unavailable. Without an
+identity the app is signed ad hoc: it runs, but on another Mac the first open
+is refused once and has to be allowed in System Settings > Privacy &
+Security (or right-click, Open). With an identity and a notary profile the
+disk image is signed, notarized and stapled, and opens like any other app.
+
+What the person does: open the disk image, drag Genatrix into Applications,
+open it. It registers itself as a login item (macOS may ask them to allow
+it under Login Items), puts an icon in the menu bar and opens its window on
+the first-run wizard: the three things they are agreeing to, a check of the
+Mac, the models (about 5.1 GB, downloaded once and checked file by file),
+and the first account. Their data lives in `~/Library/Application
+Support/Genatrix`, with the master key in their login keychain; the log is
+at `~/Library/Logs/Genatrix/genatrix.log`. Settings exports everything to
+their Downloads folder and deletes everything in one step: the data, the
+keychain entries, the Telegram sessions and the login item, after which the
+app can go to the Bin.
+
+The app and the developer's service below use the same port, 7717; run one
+or the other on a machine, not both.
+
 ## Running it
 
 This is the developer's path: a checkout, a terminal, and the pieces started

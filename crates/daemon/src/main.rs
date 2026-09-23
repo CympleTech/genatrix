@@ -16,6 +16,7 @@ mod config;
 mod connectors;
 mod conversation;
 mod download;
+mod erase;
 mod ingest;
 mod keychain;
 mod keys;
@@ -178,7 +179,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Account {
             forget: Some(address),
             ..
-        } => forget_account(&config, &address),
+        } => forget_account(&config, &address).await,
         Command::Account {
             add_telegram: Some(phone),
             ..
@@ -454,14 +455,14 @@ async fn add_telegram(config: &Config, phone: &str) -> anyhow::Result<()> {
 
 /// Remove a mailbox from the list and its password from the keychain. Items
 /// already fetched stay, as design 05 says for a stopped account.
-fn forget_account(config: &Config, address: &str) -> anyhow::Result<()> {
+async fn forget_account(config: &Config, address: &str) -> anyhow::Result<()> {
     let system = System::open(config.clone(), ticket_key(config, false)?)?;
     let kind = if address.trim().starts_with('+') {
         setup::Kind::Telegram
     } else {
         setup::Kind::Mail
     };
-    if setup::remove(&system, kind, address)? {
+    if setup::remove(&system, kind, address).await? {
         println!("{} removed; what it fetched stays", address.trim());
     } else {
         println!("{} was not known", address.trim());
@@ -878,33 +879,50 @@ fn timeline(config: &Config, limit: u32) -> anyhow::Result<()> {
 /// implementation can read it. Plain text, which the output says out loud.
 fn export(config: &Config, to: &std::path::Path) -> anyhow::Result<()> {
     let system = System::open(config.clone(), ticket_key(config, false)?)?;
+    let written = export_all(&system, to)?;
+    println!("wrote {}", to.display());
+    println!(
+        "  {} items, {} threads, {} people, {} annotations",
+        written.summary.items,
+        written.summary.threads,
+        written.summary.persons,
+        written.summary.annotations
+    );
+    println!("  {} files, {} bytes", written.files, written.bytes);
+    println!();
+    println!("This is your data in the clear, with no encryption. Put it somewhere safe.");
+    Ok(())
+}
+
+/// What an export wrote.
+pub(crate) struct Exported {
+    pub summary: genatrix_store::ExportSummary,
+    pub files: usize,
+    pub bytes: usize,
+}
+
+/// Write everything out in the open format (design 01), decrypted: an export
+/// that needed Genatrix to read it would not be an export.
+pub(crate) fn export_all(system: &System, to: &std::path::Path) -> anyhow::Result<Exported> {
     system.store.checkpoint()?;
     let summary = system.store.export_to(to)?;
-
-    // The bytes come out decrypted: an export that needed Genatrix to read it
-    // would not be an export.
     let mut files = 0usize;
     let mut bytes = 0usize;
     for (name, store) in [("raw", &system.raw_files), ("blobs", &system.blob_files)] {
         let dir = to.join(name);
         std::fs::create_dir_all(&dir)?;
-        for hash in hashes_in(config, name) {
+        for hash in hashes_in(&system.config, name) {
             let contents = store.get(&hash)?;
             bytes += contents.len();
             files += 1;
             std::fs::write(dir.join(hash.to_string()), contents)?;
         }
     }
-
-    println!("wrote {}", to.display());
-    println!(
-        "  {} items, {} threads, {} people, {} annotations",
-        summary.items, summary.threads, summary.persons, summary.annotations
-    );
-    println!("  {files} files, {bytes} bytes");
-    println!();
-    println!("This is your data in the clear, with no encryption. Put it somewhere safe.");
-    Ok(())
+    Ok(Exported {
+        summary,
+        files,
+        bytes,
+    })
 }
 
 /// Which files a store holds. The store is content-addressed, so the names on

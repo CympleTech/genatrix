@@ -11,9 +11,23 @@
   import Records from './pages/Records.svelte';
   import Settings from './pages/Settings.svelte';
   import Pair from './pages/Pair.svelte';
+  import Welcome from './pages/Welcome.svelte';
+  import { get as fetchJson } from './lib/api';
   import Icon from './components/Icon.svelte';
 
   startPolling();
+
+  // Design 09: with no account yet, on the machine itself, the page opens on
+  // the wizard rather than on an empty Today. Skipping it is remembered.
+  (async () => {
+    try {
+      if (localStorage.getItem('genatrix.welcome.skipped')) return;
+    } catch { /* no storage: ask every time, which is harmless */ }
+    try {
+      const setup = await fetchJson<{ local: boolean; accounts: unknown[] }>('/api/setup');
+      if (setup.local && setup.accounts.length === 0 && ($route.parts[0] ?? '') === '') go('/welcome', true);
+    } catch { /* the core is still starting; the next visit will ask */ }
+  })();
 
   // The four faces (design 06) and the approval panel are always one tap
   // away; the rest sits behind "more" on a phone and in the rail on a desktop.
@@ -41,7 +55,7 @@
   const section = $derived($route.parts[0] ?? '');
   const title = $derived.by(() => {
     const all = [...primary, ...secondary].find((n) => (n.path === '/' ? section === '' : section === n.path.slice(1)));
-    return all ? t(all.key) : section === 'pair' ? t('pair.title') : 'Genatrix';
+    return all ? t(all.key) : section === 'pair' ? t('pair.title') : section === 'welcome' ? t('welcome.title') : 'Genatrix';
   });
   function on(path: string): boolean {
     return path === '/' ? section === '' : section === path.slice(1);
@@ -97,6 +111,7 @@
     {:else if section === 'records'}<Records />
     {:else if section === 'settings'}<Settings />
     {:else if section === 'pair'}<Pair />
+    {:else if section === 'welcome'}<Welcome />
     {:else}<Today />{/if}
   </main>
 

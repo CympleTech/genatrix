@@ -105,7 +105,12 @@ first month of use began and the test page was not something to hand a phone.
 | Models from Settings: pinned catalog (repository, commit, every file's size and SHA-256), disk check, resumable download with progress, each file verified before use, the model side started when it completes | done; the download itself to be exercised on a machine without the models |
 | The gateway configuration written from the catalog on first run instead of by hand | done |
 | A release build carrying Genatrix's Telegram application credentials, compiled in | done; needs the pair set at build time |
-| Backup, recovery code, export, delete, diagnostics on the Settings page (design 09) | not started |
+| Genatrix.app and a disk image from one script: six binaries, the MLX Metal library in Resources with a link beside the executable, the in-bundle launch agent, the icon, ad-hoc or Developer ID signing, notarization and stapling when credentials are given | done; strict signature verification passes; the bundled inference ran in its sandbox and generated text; Developer ID signing and notarization need the author's certificate |
+| The app installs itself on first open: registers its launch agent with SMAppService, hands over to it, opens the window; approval asked for when macOS wants it; a second open brings the window forward | done; to be exercised on a Mac without the developer's service |
+| First-run wizard: the three consents, the requirements check, models, first account, who you are | done |
+| Export to Downloads, and delete everything: connectors, Telegram sessions ended, keychain entries, data directory, login item, then the shell quits for good | done; delete tested on a temporary directory |
+| Sandbox profiles escape the paths they contain | done, with a test |
+| Backup and recovery code, moving to a new Mac, diagnostics (design 09) | not started |
 | First-run wizard (design 09) | not started |
 
 ## Spike status

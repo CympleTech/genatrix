@@ -171,3 +171,19 @@ pub async fn sign_in(
         }
     }
 }
+
+/// End a kept session on Telegram's side, so the device leaves the
+/// account's list of sessions when the account is removed from Genatrix.
+/// Best effort: a session already revoked, or no network, is not an error
+/// worth keeping the removal waiting on, and the caller bounds the time.
+pub async fn sign_out(credentials: &Credentials, snapshot: Snapshot) -> anyhow::Result<()> {
+    let session = Arc::new(JsonSession::from_snapshot(Some(snapshot)));
+    let pool = SenderPool::new(Arc::clone(&session), credentials.api_id);
+    let client = Client::new(pool.handle.clone());
+    let runner = tokio::spawn(pool.runner.run());
+    let outcome = client.sign_out().await;
+    runner.abort();
+    outcome
+        .map(|_| ())
+        .map_err(|e| anyhow::anyhow!("Telegram did not end the session: {e}"))
+}

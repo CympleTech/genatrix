@@ -1,23 +1,27 @@
 /* Genatrix. Design 06: the job is to be trusted, not to be pretty; and a
    page that is a pleasure to be in is trusted more readily. Phone first.
-   Palette: a warm cream (#F0E7DB) is the ground the whole page sits on,
-   and a soft violet (#8877C7) is everything that acts or marks. White is
-   for the cards that hold content, so a card lifts off the page instead of
-   relying on a shadow nobody can see. Every button is one of three: filled
-   (the one thing to do), outlined (a choice), or quiet (a link-sized
-   action); same height, same radius, same weight.
 
-   Two families, and the split is the whole idea. Paper is warm: the
-   ground, the cards, the insets and the rules between them are one ramp
-   at the cream's own hue, so a card is the same material as the page and
-   only lighter, never a cold white rectangle laid on top of it. Ink is
-   cool: the text, the greys under it and the accent all sit in the
-   violet. Warm paper, cool ink, which is what printed matter has always
-   been.
+   The palette is Chinese ink painting, five colours: 墨黑 #2B2B2B (ink),
+   淡墨黑 #B8B8B8 (diluted ink), 宣纸白 #F7F0E8 (rice paper), 砚石灰 #6E756E
+   (inkstone) and 梅红 #C83C3C (plum red). Four of them carry almost no
+   colour and make one even ramp of value, 29 / 55 / 78 / 96; the fifth is
+   the only colour on the page.
 
-   And one type scale, 11 / 13 / 15 / 18 / 24 / 34, with nothing in
-   between: sizes four percent apart are not a hierarchy, they are noise. Nothing here is
-   fetched from anywhere: system fonts, inline icons. */
+   Two rules follow from the painting. Plum red is the seal, not the brush:
+   it marks what to look at (the name, where you are, what is waiting, the
+   step you are on, what is secret, what deletes) and it is never the colour
+   of an ordinary action, because red already means danger here and a red
+   "Approve and send" would read as one. The main action is ink. And paper
+   is paper: the ground is the rice paper itself, a card is the same paper a
+   little lighter, never a cold white laid on top.
+
+   Text is never lighter than 4.5:1. Inkstone and plum red fall just short
+   on rice paper (4.19 and 4.46), so text uses each one step deeper on the
+   same hue, and the colours themselves stay for marks and fills. Diluted
+   ink is 1.76:1 and is only ever a line.
+
+   One type scale, 11 / 13 / 15 / 18 / 24 / 34, with nothing in between.
+   Nothing here is fetched from anywhere: system fonts, inline icons. */
 
 @import "tailwindcss";
 
@@ -25,23 +29,12 @@
   --font-sans: ui-sans-serif, -apple-system, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 
-  --color-violet-50: #f6f4fb;
-  --color-violet-100: #ece8f7;
-  --color-violet-200: #d9d2ef;
-  --color-violet-300: #c0b4e3;
-  --color-violet-400: #a596d6;
-  --color-violet-500: #8877c7;
-  --color-violet-600: #715fb0;
-  --color-violet-700: #5d4d93;
-  --color-violet-800: #4b3f76;
-  --color-violet-900: #3d3460;
-
-  --color-cream-50: #fbf8f3;
-  --color-cream-100: #f0e7db;
-  --color-cream-200: #e3d6c3;
-  --color-cream-300: #d2bfa3;
-  --color-cream-500: #a98f6e;
-  --color-cream-700: #75603f;
+  /* The five, by name, for anything that wants the exact colour. */
+  --color-mo: #2b2b2b;
+  --color-danmo: #b8b8b8;
+  --color-xuan: #f7f0e8;
+  --color-yan: #6e756e;
+  --color-meihong: #c83c3c;
 
   --radius-card: 16px;
   --radius-control: 10px;
@@ -50,73 +43,79 @@
 /* Semantic tokens that follow light and dark; `inline` makes the utilities
    read the variable at paint time. */
 :root {
-  --bg: #f0e7db;
-  --bg-tint: radial-gradient(1200px 560px at 12% -12%, rgba(136, 119, 199, 0.22), transparent 62%),
-             radial-gradient(900px 480px at 102% 4%, rgba(255, 255, 255, 0.55), transparent 58%);
-  --surface: #fcf8f3;
-  --surface-2: #f6f0e8;
-  --ink: #2c2836;
-  --muted: #6b6478;
-  --faint: #726b7d;
-  --line: #e3dbd1;
-  --line-strong: #cec4b6;
-  --line-warm: #ddd2c2;
-  --accent: #8877c7;
-  --accent-ink: #5d4d93;
-  --accent-soft: #ece8f8;
-  --accent-line: #cfc5ea;
-  /* Filled surfaces: one step deeper than the brand, so white on them
-     clears 4.5:1. The brand itself stays the brand, on dots and edges. */
-  --accent-fill: #7867ba;
-  --accent-fill-deep: #5d4d93;
-  --on-accent: #ffffff;
-  --badge: #b35c48;
-  /* The hero is a field, not a button: deep enough that text dimmed to
-     0.8 for hierarchy still clears 4.5:1 against it. */
-  --hero-from: #655298;
-  --hero-to: #463a70;
-  --on-hero: #ffffff;
-  --sand: #f0e7db;
-  --sand-soft: #f7f1e8;
-  --public: #559a78;
-  --personal: #5b82c0;
-  --secret: #c26a56;
-  --shadow: 0 1px 1px rgba(60, 48, 34, 0.04), 0 6px 16px -10px rgba(60, 48, 34, 0.28);
-  --shadow-lift: 0 2px 4px rgba(60, 48, 34, 0.05), 0 18px 40px -22px rgba(60, 48, 34, 0.4);
+  /* Paper: 宣纸白 and the same paper lighter and a little deeper. */
+  --bg: #f7f0e8;
+  --bg-tint: radial-gradient(1100px 520px at 10% -12%, rgba(110, 117, 110, 0.10), transparent 62%),
+             radial-gradient(900px 480px at 104% 2%, rgba(255, 255, 255, 0.55), transparent 58%);
+  --surface: #fcf9f5;
+  --surface-2: #f9f4ef;
+  /* Ink: 墨黑, and 砚石灰 one step deeper for secondary text. */
+  --ink: #2b2b2b;
+  --muted: #555c55;
+  --faint: #636a63;
+  /* Lines: a wash of diluted ink; 淡墨黑 itself for the strong one. */
+  --line: #e1dbd5;
+  --line-strong: #b8b8b8;
+  --line-warm: #ddd4c9;
+  /* The seal: 梅红, and one step deeper for red text. */
+  --accent: #c83c3c;
+  --accent-ink: #af2f30;
+  --accent-soft: #fae6e4;
+  --accent-line: #efbcb7;
+  /* The main action is ink, with paper on it. */
+  --accent-fill: #2b2b2b;
+  --accent-fill-deep: #161616;
+  --on-accent: #f7f0e8;
+  --badge: #c83c3c;
+  /* The one field of colour, Today's: an ink wash toward inkstone. */
+  --hero-from: #2b2b2b;
+  --hero-to: #383c38;
+  --on-hero: #f7f0e8;
+  --sand: #f7f0e8;
+  --sand-soft: #f9f4ef;
+  /* Levels: inkstone for what is public, ink for what is personal, the
+     seal for what is secret. */
+  --public: #576957;
+  --personal: #484848;
+  --secret: #af2f30;
+  --shadow: 0 1px 1px rgba(43, 43, 43, 0.05), 0 8px 20px -12px rgba(43, 43, 43, 0.30);
+  --shadow-lift: 0 2px 4px rgba(43, 43, 43, 0.06), 0 20px 44px -24px rgba(43, 43, 43, 0.45);
   --bar-h: 60px;
   --safe-b: env(safe-area-inset-bottom, 0px);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #17141f;
-    --bg-tint: radial-gradient(1200px 560px at 12% -12%, rgba(136, 119, 199, 0.20), transparent 62%),
-               radial-gradient(900px 480px at 102% 4%, rgba(240, 231, 219, 0.05), transparent 58%);
-    --surface: #221d2e;
-    --surface-2: #2a2437;
-    --line-warm: #352e46;
-    --ink: #ece7e0;
-    --muted: #a49db0;
-    --faint: #8d8699;
-    --line: #342d45;
-    --line-strong: #473e5c;
-    --accent: #a596d6;
-    --accent-ink: #c0b4e3;
-    --accent-soft: #2e2745;
-    --accent-line: #473c68;
-    --accent-fill: #a596d6;
-    --accent-fill-deep: #8877c7;
-    --on-accent: #1a1524;
-    --badge: #b8654f;
-    --hero-from: #b3a5de;
-    --hero-to: #8877c7;
-    --on-hero: #1a1524;
-    --sand: #d2bfa3;
-    --sand-soft: #2b2620;
-    --public: #79b795;
-    --personal: #86a4d6;
-    --secret: #d98d79;
-    --shadow: 0 1px 1px rgba(0, 0, 0, 0.3), 0 6px 16px -10px rgba(0, 0, 0, 0.6);
-    --shadow-lift: 0 2px 4px rgba(0, 0, 0, 0.35), 0 18px 40px -22px rgba(0, 0, 0, 0.75);
+    /* At night the ink is the ground and the paper is the writing. */
+    --bg: #151312;
+    --bg-tint: radial-gradient(1100px 520px at 10% -12%, rgba(110, 117, 110, 0.14), transparent 62%),
+               radial-gradient(900px 480px at 104% 2%, rgba(247, 240, 232, 0.04), transparent 58%);
+    --surface: #201e1c;
+    --surface-2: #282623;
+    --ink: #ebe5de;
+    --muted: #b8b8b8;
+    --faint: #939b93;
+    --line: #343230;
+    --line-strong: #4e4d4b;
+    --line-warm: #343230;
+    --accent: #df6862;
+    --accent-ink: #df6862;
+    --accent-soft: #3a211f;
+    --accent-line: #683834;
+    /* The main action is paper, with ink on it. */
+    --accent-fill: #ebe5de;
+    --accent-fill-deep: #f7f0e8;
+    --on-accent: #2b2b2b;
+    --badge: #c83c3c;
+    --hero-from: #32302d;
+    --hero-to: #222522;
+    --on-hero: #ebe5de;
+    --sand: #d2c7b8;
+    --sand-soft: #282623;
+    --public: #97ab98;
+    --personal: #c4c4c4;
+    --secret: #df6862;
+    --shadow: 0 1px 1px rgba(0, 0, 0, 0.35), 0 8px 20px -12px rgba(0, 0, 0, 0.7);
+    --shadow-lift: 0 2px 4px rgba(0, 0, 0, 0.4), 0 20px 44px -24px rgba(0, 0, 0, 0.85);
   }
 }
 @theme inline {
@@ -156,7 +155,7 @@
   button, input, select, textarea { font: inherit; color: inherit; }
   button { cursor: pointer; }
   input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {
-    outline: 2px solid var(--accent); outline-offset: 2px;
+    outline: 2px solid var(--ink); outline-offset: 2px;
   }
   ::selection { background: var(--accent-soft); }
 }
@@ -193,7 +192,7 @@
     @apply relative flex flex-col items-center justify-center gap-0.5 border-0 bg-transparent text-[11px] font-medium text-muted transition-colors;
     -webkit-tap-highlight-color: transparent;
   }
-  .nav.is-on { @apply text-accent-ink; }
+  .nav.is-on { @apply text-ink; }
   .bar .nav.is-on::before {
     content: ""; @apply absolute rounded-full;
     inset: 4px 12px auto; height: 3px; background: var(--accent);
@@ -205,7 +204,7 @@
     box-shadow: var(--shadow), 0 20px 50px -20px rgba(0,0,0,0.35);
   }
   .more-sheet .nav { @apply flex-row justify-start gap-3 rounded-[12px] px-3.5 py-3 text-[15px]; }
-  .more-sheet .nav.is-on { @apply bg-accent-soft; }
+  .more-sheet .nav.is-on { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
   .scrim { @apply fixed inset-0 z-40; background: rgba(20, 25, 24, 0.18); }
 
   @media (min-width: 900px) {
@@ -218,10 +217,10 @@
       top: 57px; height: calc(100dvh - 57px);
     }
     .rail .nav { @apply flex-row justify-start gap-3 rounded-[12px] px-3.5 py-2.5 text-[15px]; }
-    .rail .nav.is-on { @apply text-accent-ink; background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
+    .rail .nav.is-on { @apply text-ink; background: var(--surface); box-shadow: var(--shadow), inset 3px 0 0 var(--accent); }
     .rail .nav .badge { @apply static ml-auto; }
     .rail .nav.secondary { @apply text-faint; }
-    .rail .nav.secondary.is-on { @apply text-accent-ink; }
+    .rail .nav.secondary.is-on { @apply text-ink; }
     .rail-gap { @apply h-5; }
     .bar, .more-sheet, .scrim { @apply hidden; }
     main { @apply px-10 pt-8 pb-20; }
@@ -285,10 +284,10 @@
 
   .summary {
     @apply mb-3 rounded-[12px] px-3 py-2.5 text-[13px] text-muted;
-    background: var(--accent-soft);
-    border-left: 3px solid var(--accent);
+    background: var(--surface-2);
+    border-left: 3px solid var(--line-strong);
   }
-  .summary .ai { @apply mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em]; color: var(--accent-ink); }
+  .summary .ai { @apply mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em]; color: var(--faint); }
   .summary p { @apply m-0 whitespace-pre-wrap; }
 
   /* A level is a dot and a word (design 06). */
@@ -306,8 +305,8 @@
   .choose {
     @apply inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-control border border-line bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors;
   }
-  .choose:hover { border-color: var(--accent); color: var(--accent-ink); }
-  .choose:active { background: var(--accent-soft); }
+  .choose:hover { border-color: var(--ink); color: var(--ink); }
+  .choose:active { background: var(--surface-2); }
   .choose:disabled { @apply cursor-default opacity-50; }
   .choose.lowers { color: var(--muted); }
   .choose.lowers:hover { color: var(--secret); border-color: var(--secret); }
@@ -319,7 +318,7 @@
   .back, .fold {
     @apply inline-flex min-h-[30px] items-center gap-1 rounded-full border border-transparent bg-transparent px-2.5 py-0.5 text-[13px] font-medium text-muted transition-colors;
   }
-  .back:hover, .fold:hover { color: var(--accent-ink); background: var(--accent-soft); }
+  .back:hover, .fold:hover { color: var(--ink); background: var(--surface-2); }
   .reason, .role-input, .ask input, .filters input, .filters select, .pair-form input {
     @apply min-h-[38px] rounded-control border border-line bg-surface px-3 py-2;
   }
@@ -329,7 +328,7 @@
     background: var(--surface-2);
   }
   textarea.draft[readonly] { color: var(--muted); }
-  .card-label { @apply mb-1 mt-3 text-[11px] font-semibold uppercase tracking-[0.08em]; color: var(--accent-ink); }
+  .card-label { @apply mb-1 mt-3 text-[11px] font-semibold uppercase tracking-[0.08em]; color: var(--faint); }
   .rationale { @apply m-0; }
 
   /* ---- sources ---- */
@@ -338,7 +337,7 @@
   .source {
     @apply rounded-full border border-line bg-surface px-2.5 py-0.5 text-left text-[13px] text-muted transition-colors;
   }
-  .source:hover { color: var(--accent-ink); border-color: var(--accent); }
+  .source:hover { color: var(--ink); border-color: var(--ink); }
   .source-wrap .detail { flex-basis: 100%; }
 
   /* ---- today ---- */
@@ -363,6 +362,13 @@
     box-shadow: var(--shadow-lift);
   }
   @media (min-width: 900px) { .hero { @apply px-8 py-7; } }
+  /* A single seal in the corner of the wash, as a painting is signed. */
+  .hero { position: relative; }
+  .hero::after {
+    content: ""; position: absolute; top: 24px; right: 24px;
+    width: 12px; height: 12px; border-radius: 2px; background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
   .hero-eyebrow { @apply m-0 text-[11px] font-semibold uppercase tracking-[0.1em]; opacity: 0.8; }
   .hero-line { @apply mt-1.5 mb-0 text-[24px] font-semibold leading-[1.25] tracking-[-0.02em]; }
   .hero-foot { @apply mt-2 mb-0 text-[13px]; opacity: 0.8; }
@@ -395,7 +401,7 @@
   /* ---- ask ---- */
   .turns { @apply m-0 mb-4 flex list-none flex-col gap-4 p-0; }
   .turn { @apply rounded-[16px] px-4 py-3; }
-  .turn.question { @apply self-end max-w-[85%] text-ink; background: var(--accent-soft); border: 1px solid var(--accent-line); border-bottom-right-radius: 6px; }
+  .turn.question { @apply self-end max-w-[85%] text-ink; background: var(--surface-2); border: 1px solid var(--line); border-bottom-right-radius: 6px; }
   .turn.answer { @apply bg-surface; box-shadow: var(--shadow); border-bottom-left-radius: 6px; }
   .answer-text { @apply mb-1.5 mt-0 whitespace-pre-wrap; }
   .answer-text.stopped { color: var(--muted); }
@@ -420,11 +426,11 @@
   }
   .avatar.multi {
     @apply rounded-[12px];
-    background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 22%, var(--surface)), color-mix(in srgb, var(--accent) 38%, var(--surface)));
-    color: var(--accent-ink);
+    background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line-strong);
+    color: var(--ink);
   }
   .avatar.small { @apply h-7 w-7 text-[11px]; }
-  .role { @apply rounded-full border-0 px-2 py-0.5 text-[11px] font-medium; background: var(--accent-soft); color: var(--accent-ink); }
+  .role { @apply rounded-full border-0 px-2 py-0.5 text-[11px] font-medium; background: var(--surface-2); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
   .role.removable { cursor: pointer; }
   .role.removable:hover { text-decoration: line-through; color: var(--secret); }
   .role-input { @apply min-h-[28px] min-w-[100px] border-0 bg-transparent text-[13px]; }
@@ -432,8 +438,8 @@
   .handles { @apply flex flex-wrap gap-2.5 text-[13px] text-muted; overflow-wrap: anywhere; }
   .handle.inferred { text-decoration: underline dotted; }
   .months { @apply flex h-[30px] items-end gap-[3px]; }
-  .month { @apply inline-block w-[10px] rounded-t-[3px]; background: color-mix(in srgb, var(--accent) 35%, var(--surface)); }
-  .month.now { background: var(--accent); }
+  .month { @apply inline-block w-[10px] rounded-t-[3px]; background: color-mix(in srgb, var(--ink) 22%, var(--surface)); }
+  .month.now { background: var(--ink); }
 
   /* ---- chats: the list ---- */
   .chats-pane { @apply grid max-w-none grid-cols-1 gap-6; }
@@ -516,7 +522,7 @@
   .msg { @apply mt-3 flex flex-col items-start; }
   .msg.tight { @apply mt-1; }
   .msg.mine { @apply items-end; }
-  .msg-author { @apply mb-1 px-3 text-[12px] font-medium; color: var(--accent-ink); }
+  .msg-author { @apply mb-1 px-3 text-[12px] font-semibold; color: var(--muted); }
   .msg:not(.mine):has(.msg-author) { @apply mt-4; }
   .bubble {
     @apply max-w-[82%] rounded-[18px] px-3.5 py-2.5 bg-surface;
@@ -527,7 +533,7 @@
     background: var(--accent-fill); color: var(--on-accent);
     border-bottom-left-radius: 18px; border-bottom-right-radius: 6px;
   }
-  .bubble.mail { border-top: 3px solid var(--accent-line); }
+  .bubble.mail { border-top: 3px solid var(--line-strong); }
   .msg.mine .bubble.mail { border-top-color: color-mix(in srgb, var(--on-accent) 35%, transparent); }
   .bubble-subject { @apply mb-1 mt-0 text-[13px] font-semibold; }
   .bubble-text { @apply m-0 whitespace-pre-wrap text-[15px] leading-[1.5]; overflow-wrap: anywhere; }
@@ -537,7 +543,7 @@
   .msg.mine .msg-time { color: color-mix(in srgb, var(--on-accent) 78%, transparent); }
   .bubble-more {
     @apply rounded-full border-0 bg-transparent px-1.5 text-[11px] font-medium;
-    color: var(--accent-ink);
+    color: var(--muted);
   }
   .msg.mine .bubble-more { color: var(--on-accent); }
   .bubble-item { @apply mt-2 flex flex-wrap items-center gap-2 pt-2 text-[11px]; border-top: 1px solid var(--line); }
@@ -553,7 +559,7 @@
   .speaker { @apply grid items-center gap-3 text-[13px]; grid-template-columns: auto minmax(0, 9rem) 1fr auto; }
   .speaker-name { @apply truncate; }
   .speaker-bar { @apply h-1.5 overflow-hidden rounded-full; background: var(--line); }
-  .speaker-bar span { @apply block h-full rounded-full; background: var(--accent); }
+  .speaker-bar span { @apply block h-full rounded-full; background: var(--ink); }
 
   .composer {
     @apply flex flex-wrap items-center gap-3 px-4 py-3;
@@ -585,7 +591,7 @@
   .device-name { @apply flex-1 font-medium; }
   .pairing { @apply mt-2; }
   .pair-url { @apply m-0 font-mono text-[13px] text-muted; overflow-wrap: anywhere; }
-  .pair-code { @apply my-2 inline-block rounded-[14px] px-4 py-2 font-mono text-[34px] font-semibold leading-[1.2] tracking-[0.14em] text-accent-ink; background: var(--accent-soft); }
+  .pair-code { @apply my-2 inline-block rounded-[14px] px-4 py-2 font-mono text-[34px] font-semibold leading-[1.2] tracking-[0.14em] text-ink; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
   .qr { @apply my-2 w-[200px] max-w-full rounded-[12px] bg-white p-2; box-shadow: var(--shadow); }
   .qr svg { @apply block h-auto w-full; }
   .facts { @apply m-0 grid gap-x-4 gap-y-1 text-[15px]; grid-template-columns: max-content 1fr; }
@@ -598,7 +604,7 @@
   .welcome-top { @apply flex items-center justify-between; }
   .welcome-steps { @apply m-0 flex list-none gap-1.5 p-0; }
   .welcome-steps li { @apply h-1.5 w-8 rounded-full; background: var(--line); }
-  .welcome-steps li.done { background: var(--accent-line); }
+  .welcome-steps li.done { background: var(--line-strong); }
   .welcome-steps li.on { background: var(--accent); }
   .welcome-card { @apply flex flex-col items-start gap-3 rounded-card bg-surface px-6 py-7; box-shadow: var(--shadow-lift); }
   .welcome-mark {
@@ -608,14 +614,14 @@
   .welcome-lede { @apply m-0 text-[15px] leading-[1.65]; }
   .consent { @apply m-0 flex list-none flex-col gap-2.5 p-0; }
   .consent li { @apply rounded-[12px] px-4 py-3 text-[14px]; background: var(--surface-2); border: 1px solid var(--line); }
-  .consent b { @apply font-semibold; color: var(--accent-ink); }
+  .consent b { @apply font-semibold; color: var(--ink); }
   .checks { @apply m-0 flex w-full list-none flex-col gap-1 p-0; }
   .checks li { @apply flex items-center gap-3 py-2; border-bottom: 1px solid var(--line); }
   .checks li:last-child { border-bottom: 0; }
   .check-mark { @apply inline-flex h-7 w-7 flex-none items-center justify-center rounded-full text-[13px] font-semibold; }
   .checks li.ok .check-mark { background: color-mix(in srgb, var(--public) 16%, transparent); color: var(--public); }
   .checks li.bad .check-mark { background: color-mix(in srgb, var(--secret) 16%, transparent); color: var(--secret); }
-  .checks li.warn .check-mark { background: var(--accent-soft); color: var(--accent-ink); }
+  .checks li.warn .check-mark { background: var(--surface-2); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); }
   .check-body { @apply flex flex-col; }
   .check-name { @apply font-medium; }
 
@@ -630,7 +636,7 @@
   .account-row:last-child, .model-row:last-child { border-bottom: 0; }
   .account-icon {
     @apply inline-flex h-9 w-9 flex-none items-center justify-center rounded-[10px];
-    background: var(--accent-soft); color: var(--accent-ink);
+    background: var(--surface-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line);
   }
   .account-body, .model-body { @apply flex min-w-0 flex-1 flex-col; }
   .account-name, .model-name { @apply truncate font-medium; }
@@ -638,7 +644,7 @@
   .account-state.ok { color: var(--public); }
   .account-state.bad { color: var(--secret); }
   .ok-note { color: var(--public); }
-  .choose.is-on { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+  .choose.is-on { border-color: var(--ink); color: var(--ink); background: var(--surface-2); }
   .setup-form {
     @apply mt-3 grid max-w-[460px] gap-3 rounded-[14px] p-4;
     background: var(--surface-2); border: 1px solid var(--line);
@@ -647,10 +653,10 @@
   .setup-form input {
     @apply min-h-[40px] rounded-control border border-line bg-surface px-3 text-[15px] text-ink;
   }
-  .help { @apply rounded-[12px] px-3.5 py-3 text-[13px]; background: var(--accent-soft); }
+  .help { @apply rounded-[12px] px-3.5 py-3 text-[13px]; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
   .help-title { @apply m-0 mb-1 font-medium text-ink; }
   .help ol { @apply m-0 pl-5; }
-  .help a { color: var(--accent-ink); text-decoration: underline; }
+  .help a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
   .steps { @apply m-0 flex list-none flex-wrap gap-2 p-0 text-[13px]; }
   .steps li { @apply rounded-full px-3 py-1; background: var(--surface); color: var(--faint); box-shadow: 0 0 0 1px var(--line); }
   .steps li.on { background: var(--accent-soft); color: var(--accent-ink); box-shadow: 0 0 0 1px var(--accent-line); }
@@ -663,7 +669,7 @@
   .model-status { @apply flex-none text-[13px] text-muted; min-width: 5rem; text-align: right; }
   .model-status.ok { color: var(--public); }
   .progress { @apply mb-2 h-2 overflow-hidden rounded-full; background: var(--line); }
-  .progress span { @apply block h-full rounded-full transition-[width]; background: var(--accent); }
+  .progress span { @apply block h-full rounded-full transition-[width]; background: var(--ink); }
   .pair-form label { @apply grid gap-1 text-[13px] text-muted; }
   .pair-form input { @apply text-[18px]; }
 }

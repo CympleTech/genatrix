@@ -26,7 +26,7 @@
 
     <h2 class="group-title">{t('records.left')}</h2>
     {#if !view.calls.length}<Empty text={t('records.nocalls')} />{/if}
-    <ol class="rows compact">
+    <ol class="rows panel compact">
       {#each view.calls as call}
         <li class="row">
           <div class="meta">
@@ -44,7 +44,7 @@
 
     <h2 class="group-title">{t('records.actions')}</h2>
     {#if !view.actions.length}<Empty text={t('records.noactions')} />{/if}
-    <ol class="rows compact">
+    <ol class="rows panel compact">
       {#each view.actions as ev}
         <li class="row">
           <div class="meta">
@@ -59,7 +59,7 @@
     </ol>
 
     <h2 class="group-title">{t('records.runs')}</h2>
-    <ol class="rows compact">
+    <ol class="rows panel compact">
       {#each view.runs as r (r.id)}
         <li class="row">
           <button type="button" class="row-head" onclick={() => (openRun = openRun === r.id ? null : r.id)}>

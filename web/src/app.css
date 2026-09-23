@@ -1,9 +1,11 @@
 /* Genatrix. Design 06: the job is to be trusted, not to be pretty; and a
    page that is a pleasure to be in is trusted more readily. Phone first.
-   Palette: a soft violet (#8877C7) for what acts, a warm cream (#F0E7DB)
-   for what holds, and neutrals with a little warmth in them. Every button
-   is one of three: filled (the one thing to do), outlined (a choice), or
-   quiet (a link-sized action); same height, same radius, same weight. Nothing here is
+   Palette: a warm cream (#F0E7DB) is the ground the whole page sits on,
+   and a soft violet (#8877C7) is everything that acts or marks. White is
+   for the cards that hold content, so a card lifts off the page instead of
+   relying on a shadow nobody can see. Every button is one of three: filled
+   (the one thing to do), outlined (a choice), or quiet (a link-sized
+   action); same height, same radius, same weight. Nothing here is
    fetched from anywhere: system fonts, inline icons. */
 
 @import "tailwindcss";
@@ -37,49 +39,63 @@
 /* Semantic tokens that follow light and dark; `inline` makes the utilities
    read the variable at paint time. */
 :root {
-  --bg: #f7f4ee;
-  --bg-tint: radial-gradient(900px 420px at 15% -10%, rgba(136, 119, 199, 0.12), transparent 60%),
-             radial-gradient(700px 360px at 100% 0%, rgba(240, 231, 219, 0.9), transparent 60%);
-  --surface: #fffdfa;
-  --surface-2: #f9f5ef;
-  --ink: #2a2733;
-  --muted: #6d687a;
-  --faint: #9d98a8;
-  --line: #e6dfd4;
-  --line-strong: #d3c9ba;
+  --bg: #f0e7db;
+  --bg-tint: radial-gradient(1200px 560px at 12% -12%, rgba(136, 119, 199, 0.22), transparent 62%),
+             radial-gradient(900px 480px at 102% 4%, rgba(255, 255, 255, 0.55), transparent 58%);
+  --surface: #ffffff;
+  --surface-2: #faf7f2;
+  --ink: #2c2836;
+  --muted: #6b6478;
+  --faint: #9a93a6;
+  --line: #e8dfd2;
+  --line-strong: #d3c6b3;
   --accent: #8877c7;
   --accent-ink: #5d4d93;
-  --accent-soft: #ece8f7;
+  --accent-soft: #ece8f8;
+  --accent-line: #cfc5ea;
+  /* Filled surfaces: one step deeper than the brand, so white on them
+     clears 4.5:1. The brand itself stays the brand, on dots and edges. */
+  --accent-fill: #7867ba;
+  --accent-fill-deep: #5d4d93;
+  --on-accent: #ffffff;
+  --badge: #b35c48;
   --sand: #f0e7db;
   --sand-soft: #f7f1e8;
-  --public: #6aa88a;
-  --personal: #6f8fc7;
-  --secret: #c97b6a;
-  --shadow: 0 1px 2px rgba(42, 39, 51, 0.04), 0 10px 30px -18px rgba(42, 39, 51, 0.25);
+  --public: #559a78;
+  --personal: #5b82c0;
+  --secret: #c26a56;
+  --shadow: 0 1px 1px rgba(60, 48, 34, 0.04), 0 6px 16px -10px rgba(60, 48, 34, 0.28);
+  --shadow-lift: 0 2px 4px rgba(60, 48, 34, 0.05), 0 18px 40px -22px rgba(60, 48, 34, 0.4);
   --bar-h: 60px;
   --safe-b: env(safe-area-inset-bottom, 0px);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #17151d;
-    --bg-tint: radial-gradient(900px 420px at 15% -10%, rgba(136, 119, 199, 0.18), transparent 60%),
-               radial-gradient(700px 360px at 100% 0%, rgba(240, 231, 219, 0.06), transparent 60%);
-    --surface: #1f1c27;
-    --surface-2: #26222f;
-    --ink: #ebe6e0;
-    --muted: #a39dae;
-    --faint: #736d7f;
-    --line: #322d3d;
-    --line-strong: #443d52;
+    --bg: #17141f;
+    --bg-tint: radial-gradient(1200px 560px at 12% -12%, rgba(136, 119, 199, 0.20), transparent 62%),
+               radial-gradient(900px 480px at 102% 4%, rgba(240, 231, 219, 0.05), transparent 58%);
+    --surface: #221d2e;
+    --surface-2: #2a2437;
+    --ink: #ece7e0;
+    --muted: #a49db0;
+    --faint: #756e83;
+    --line: #342d45;
+    --line-strong: #473e5c;
     --accent: #a596d6;
     --accent-ink: #c0b4e3;
-    --accent-soft: #2c2740;
+    --accent-soft: #2e2745;
+    --accent-line: #473c68;
+    --accent-fill: #a596d6;
+    --accent-fill-deep: #8877c7;
+    --on-accent: #1a1524;
+    --badge: #b8654f;
     --sand: #d2bfa3;
-    --sand-soft: #2a2620;
-    --public: #86bd9f;
-    --personal: #8faad9;
-    --secret: #dc9484;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px -18px rgba(0, 0, 0, 0.6);
+    --sand-soft: #2b2620;
+    --public: #79b795;
+    --personal: #86a4d6;
+    --secret: #d98d79;
+    --shadow: 0 1px 1px rgba(0, 0, 0, 0.3), 0 6px 16px -10px rgba(0, 0, 0, 0.6);
+    --shadow-lift: 0 2px 4px rgba(0, 0, 0, 0.35), 0 18px 40px -22px rgba(0, 0, 0, 0.75);
   }
 }
 @theme inline {
@@ -94,6 +110,9 @@
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
   --color-accent-soft: var(--accent-soft);
+  --color-accent-line: var(--accent-line);
+  --color-accent-fill: var(--accent-fill);
+  --color-on-accent: var(--on-accent);
   --color-sand: var(--sand);
   --color-sand-soft: var(--sand-soft);
   --color-public: var(--public);
@@ -124,10 +143,10 @@
   .shell { @apply grid min-h-dvh grid-cols-1 grid-rows-[auto_1fr]; }
   .top {
     @apply sticky top-0 z-30 flex flex-col gap-0.5 px-4 pt-3 pb-2;
-    background: color-mix(in srgb, var(--bg) 82%, transparent);
-    backdrop-filter: saturate(1.4) blur(14px);
-    -webkit-backdrop-filter: saturate(1.4) blur(14px);
-    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(1.6) blur(16px);
+    -webkit-backdrop-filter: saturate(1.6) blur(16px);
+    border-bottom: 1px solid color-mix(in srgb, var(--line-strong) 60%, transparent);
   }
   .top h1 { @apply m-0 flex items-baseline gap-2.5 text-[16px] font-semibold tracking-[-0.01em]; }
   .brand { @apply font-semibold text-accent-ink; }
@@ -142,15 +161,19 @@
     @apply fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-line;
     height: calc(var(--bar-h) + var(--safe-b));
     padding-bottom: var(--safe-b);
-    background: color-mix(in srgb, var(--surface) 88%, transparent);
-    backdrop-filter: saturate(1.4) blur(16px);
-    -webkit-backdrop-filter: saturate(1.4) blur(16px);
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: saturate(1.6) blur(18px);
+    -webkit-backdrop-filter: saturate(1.6) blur(18px);
   }
   .nav {
     @apply relative flex flex-col items-center justify-center gap-0.5 border-0 bg-transparent text-[11px] font-medium text-muted transition-colors;
     -webkit-tap-highlight-color: transparent;
   }
   .nav.is-on { @apply text-accent-ink; }
+  .bar .nav.is-on::before {
+    content: ""; @apply absolute rounded-full;
+    inset: 4px 12px auto; height: 3px; background: var(--accent);
+  }
   .nav .badge { @apply absolute top-1.5 right-[calc(50%-22px)]; }
   .more-sheet {
     @apply fixed inset-x-3 z-50 grid gap-0.5 rounded-card border border-line bg-surface p-1.5;
@@ -170,7 +193,7 @@
       top: 57px; height: calc(100dvh - 57px);
     }
     .rail .nav { @apply flex-row justify-start gap-3 rounded-[12px] px-3.5 py-2.5 text-[14px]; }
-    .rail .nav.is-on { @apply bg-accent-soft text-accent-ink; }
+    .rail .nav.is-on { @apply text-accent-ink; background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
     .rail .nav .badge { @apply static ml-auto; }
     .rail .nav.secondary { @apply text-faint; }
     .rail .nav.secondary.is-on { @apply text-accent-ink; }
@@ -181,7 +204,7 @@
 
   .badge {
     @apply inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[11px] font-semibold leading-[18px] text-white;
-    background: var(--secret);
+    background: var(--badge);
   }
 
   /* ---- text ---- */
@@ -193,7 +216,7 @@
   .muted { color: var(--muted); }
   .error { color: var(--secret); }
   .empty { @apply m-0 py-6 text-muted; }
-  .group-title { @apply mt-6 mb-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-faint; }
+  .group-title { @apply mt-6 mb-2 text-[12px] font-semibold uppercase tracking-[0.08em]; color: var(--accent-ink); opacity: 0.85; }
 
   /* ---- cards and rows ---- */
   .card {
@@ -202,9 +225,18 @@
   }
   .rows { @apply m-0 list-none p-0; }
   .rows.cards { @apply flex flex-col gap-3; }
+  /* A list is one white panel with dividers inside it, not bare rules on
+     the page: the page is the cream ground, and content sits on paper. */
+  .rows.panel {
+    @apply overflow-hidden rounded-card border border-line bg-surface;
+    box-shadow: var(--shadow);
+  }
+  .rows.panel > .row { @apply px-4; }
+  .rows.panel > .row:last-child { border-bottom: 0; }
   .row { @apply border-b border-line py-3; }
-  .rows.compact .row { @apply py-2; }
+  .rows.compact .row { @apply py-2.5; }
   .rows.cards > .row { @apply rounded-card border border-line bg-surface px-4 py-3.5; box-shadow: var(--shadow); }
+  .rows.cards > .row:hover { box-shadow: var(--shadow-lift); }
   .meta { @apply flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-[12.5px] text-muted; }
   .who { @apply font-medium text-ink; }
   .thread { color: var(--faint); }
@@ -217,7 +249,8 @@
   .excerpt { @apply my-1.5 whitespace-pre-wrap text-[13px]; overflow-wrap: anywhere; }
 
   .detail {
-    @apply mt-2.5 rounded-[14px] border border-line px-4 py-3.5;
+    @apply mt-2.5 rounded-[14px] border px-4 py-3.5;
+    border-color: color-mix(in srgb, var(--line) 70%, transparent);
     background: var(--surface-2);
     overflow-wrap: anywhere;
   }
@@ -231,10 +264,10 @@
 
   .summary {
     @apply mb-3 rounded-[12px] px-3 py-2.5 text-[13px] text-muted;
-    background: var(--sand-soft);
-    border-left: 3px solid var(--sand);
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
   }
-  .summary .ai { @apply mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em]; color: var(--color-cream-500); }
+  .summary .ai { @apply mb-1 block text-[11px] font-semibold uppercase tracking-[0.06em]; color: var(--accent-ink); }
   .summary p { @apply m-0 whitespace-pre-wrap; }
 
   /* A level is a dot and a word (design 06). */
@@ -258,8 +291,8 @@
   .choose.lowers { color: var(--muted); }
   .choose.lowers:hover { color: var(--secret); border-color: var(--secret); }
   /* Filled: the one thing to do here. */
-  .choose.primary { @apply border-transparent text-white; background: var(--accent); }
-  .choose.primary:hover { background: var(--accent-ink); color: #fff; }
+  .choose.primary { @apply border-transparent; background: var(--accent-fill); color: var(--on-accent); }
+  .choose.primary:hover { background: var(--accent-fill-deep); color: var(--on-accent); }
   .choose.level-public, .choose.level-personal, .choose.level-secret { background: var(--surface); }
   /* Quiet: link-sized, same shape. */
   .back, .fold {
@@ -275,7 +308,7 @@
     background: var(--surface-2);
   }
   textarea.draft[readonly] { color: var(--muted); }
-  .card-label { @apply mb-1 mt-3 text-[11px] font-semibold uppercase tracking-[0.08em]; color: var(--color-cream-700); }
+  .card-label { @apply mb-1 mt-3 text-[11px] font-semibold uppercase tracking-[0.08em]; color: var(--accent-ink); }
   .rationale { @apply m-0; }
 
   /* ---- sources ---- */
@@ -313,7 +346,7 @@
   /* ---- ask ---- */
   .turns { @apply m-0 mb-3 flex list-none flex-col gap-3 p-0; }
   .turn { @apply rounded-[16px] px-3.5 py-2.5; }
-  .turn.question { @apply self-end max-w-[85%] text-ink; background: var(--sand-soft); border: 1px solid color-mix(in srgb, var(--sand) 60%, transparent); border-bottom-right-radius: 6px; }
+  .turn.question { @apply self-end max-w-[85%] text-ink; background: var(--accent-soft); border: 1px solid var(--accent-line); border-bottom-right-radius: 6px; }
   .turn.answer { @apply border border-line bg-surface; box-shadow: var(--shadow); border-bottom-left-radius: 6px; }
   .answer-text { @apply mb-1.5 mt-0 whitespace-pre-wrap; }
   .answer-text.stopped { color: var(--muted); }
@@ -347,8 +380,8 @@
   .person-card.is-on { border-color: var(--accent); background: var(--accent-soft); }
   .avatar {
     @apply inline-flex h-10 w-10 flex-none items-center justify-center rounded-full text-[13px] font-semibold;
-    background: linear-gradient(135deg, var(--accent-soft), var(--sand-soft));
-    color: var(--accent-ink);
+    background: linear-gradient(140deg, var(--accent-fill), var(--accent-fill-deep));
+    color: var(--on-accent);
   }
   .avatar.big { @apply h-16 w-16 text-[20px]; }
   .person-body { @apply min-w-0 flex-1; }
@@ -370,14 +403,14 @@
   .handles { @apply flex flex-wrap gap-2.5 text-[13px] text-muted; overflow-wrap: anywhere; }
   .handle.inferred { text-decoration: underline dotted; }
   .tiles { @apply my-4 mb-2.5 grid gap-2; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
-  .tile { @apply flex flex-col rounded-[12px] px-3 py-2.5; background: var(--surface-2); border: 1px solid var(--line); }
-  .tile-value { @apply text-[20px] font-semibold tracking-[-0.01em]; }
+  .tile { @apply flex flex-col rounded-[12px] px-3 py-2.5; background: var(--surface-2); border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+  .tile-value { @apply text-[20px] font-semibold tracking-[-0.01em] text-accent-ink; }
   .tile-label { @apply text-[12px] text-muted; }
   .tile-note { @apply text-[11px]; color: var(--faint); }
   .chart { @apply my-1.5 flex items-end gap-3; }
   .chart-label { @apply text-[12px] text-muted; }
   .months { @apply flex h-[30px] items-end gap-[3px]; }
-  .month { @apply inline-block w-[10px] rounded-t-[3px]; background: color-mix(in srgb, var(--accent) 40%, var(--surface)); }
+  .month { @apply inline-block w-[10px] rounded-t-[3px]; background: color-mix(in srgb, var(--accent) 35%, var(--surface)); }
   .month.now { background: var(--accent); }
 
   /* ---- records ---- */
@@ -402,7 +435,7 @@
   .device-name { @apply flex-1 font-medium; }
   .pairing { @apply mt-2; }
   .pair-url { @apply m-0 font-mono text-[13px] text-muted; overflow-wrap: anywhere; }
-  .pair-code { @apply my-1.5 font-mono text-[34px] font-semibold leading-[1.2] tracking-[0.14em] text-accent-ink; }
+  .pair-code { @apply my-2 inline-block rounded-[14px] px-4 py-2 font-mono text-[34px] font-semibold leading-[1.2] tracking-[0.14em] text-accent-ink; background: var(--accent-soft); }
   .qr { @apply my-2 w-[200px] max-w-full rounded-[12px] bg-white p-2; box-shadow: var(--shadow); }
   .qr svg { @apply block h-auto w-full; }
   .facts { @apply m-0 grid gap-x-4 gap-y-1 text-[14px]; grid-template-columns: max-content 1fr; }

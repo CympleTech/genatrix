@@ -39,7 +39,7 @@
   {:else if !view}<Empty text={t('loading')} />
   {:else if !items.length}<Empty text={view.tally.judged === 0 ? t('review.empty') : t('review.alldone')} />
   {:else}
-    <ol class="rows">
+    <ol class="rows panel">
       {#each items as entry (entry.row.id)}
         <li class="row is-open">
           <div class="meta">

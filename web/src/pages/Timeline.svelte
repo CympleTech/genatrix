@@ -47,6 +47,6 @@
   {:else if !rows}<Empty text={t('loading')} />
   {:else if !rows.length}<Empty text={q.trim() ? t('timeline.nomatch') : t('timeline.empty')} />
   {:else}
-    <ol class="rows">{#each rows as row (row.id)}<ItemRow {row} />{/each}</ol>
+    <ol class="rows panel">{#each rows as row (row.id)}<ItemRow {row} />{/each}</ol>
   {/if}
 </section>

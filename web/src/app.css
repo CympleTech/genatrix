@@ -5,7 +5,13 @@
    for the cards that hold content, so a card lifts off the page instead of
    relying on a shadow nobody can see. Every button is one of three: filled
    (the one thing to do), outlined (a choice), or quiet (a link-sized
-   action); same height, same radius, same weight. Nothing here is
+   action); same height, same radius, same weight.
+
+   Two rules the whole sheet obeys. The neutrals all sit in the violet's
+   hue, at almost no chroma, so the cream is the one warm thing in the
+   room and reads as intended rather than as a second grey. And there is
+   one type scale, 11 / 13 / 15 / 18 / 24 / 34, with nothing in between:
+   sizes four percent apart are not a hierarchy, they are noise. Nothing here is
    fetched from anywhere: system fonts, inline icons. */
 
 @import "tailwindcss";
@@ -43,12 +49,14 @@
   --bg-tint: radial-gradient(1200px 560px at 12% -12%, rgba(136, 119, 199, 0.22), transparent 62%),
              radial-gradient(900px 480px at 102% 4%, rgba(255, 255, 255, 0.55), transparent 58%);
   --surface: #ffffff;
-  --surface-2: #faf7f2;
+  --surface-2: #f8f6fb;
   --ink: #2c2836;
   --muted: #6b6478;
   --faint: #9a93a6;
-  --line: #e8dfd2;
-  --line-strong: #d3c6b3;
+  --line: #e9e5f0;
+  --line-strong: #d3ccdf;
+  /* The one place a line sits on the cream rather than on paper. */
+  --line-warm: #ddd2c2;
   --accent: #8877c7;
   --accent-ink: #5d4d93;
   --accent-soft: #ece8f8;
@@ -76,6 +84,7 @@
                radial-gradient(900px 480px at 102% 4%, rgba(240, 231, 219, 0.05), transparent 58%);
     --surface: #221d2e;
     --surface-2: #2a2437;
+    --line-warm: #342d45;
     --ink: #ece7e0;
     --muted: #a49db0;
     --faint: #756e83;
@@ -107,6 +116,7 @@
   --color-faint: var(--faint);
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
+  --color-line-warm: var(--line-warm);
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
   --color-accent-soft: var(--accent-soft);
@@ -124,6 +134,7 @@
   html, body { @apply m-0 bg-bg text-ink; }
   body {
     @apply font-sans text-[15px] leading-[1.6] antialiased;
+    font-variant-numeric: tabular-nums;
     background-image: var(--bg-tint);
     background-repeat: no-repeat;
     background-attachment: fixed;
@@ -146,19 +157,20 @@
     background: color-mix(in srgb, var(--bg) 88%, transparent);
     backdrop-filter: saturate(1.6) blur(16px);
     -webkit-backdrop-filter: saturate(1.6) blur(16px);
-    border-bottom: 1px solid color-mix(in srgb, var(--line-strong) 60%, transparent);
+    border-bottom: 1px solid var(--line-warm);
   }
-  .top h1 { @apply m-0 flex items-baseline gap-2.5 text-[16px] font-semibold tracking-[-0.01em]; }
+  .top h1 { @apply m-0 flex items-baseline gap-2.5 text-[18px] font-semibold tracking-[-0.02em]; }
   .brand { @apply font-semibold text-accent-ink; }
   .page-title { @apply font-medium text-muted; }
-  .status { @apply m-0 truncate text-[12px] text-faint; }
+  .status { @apply m-0 truncate text-[13px] text-faint; }
 
   main { @apply min-w-0 px-4 pt-3 pb-[calc(var(--bar-h)+var(--safe-b)+28px)]; }
   .pane { @apply max-w-[860px]; }
 
   .rail { @apply hidden; }
   .bar {
-    @apply fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-line;
+    @apply fixed inset-x-0 bottom-0 z-40 grid grid-cols-5;
+    border-top: 1px solid var(--line-warm);
     height: calc(var(--bar-h) + var(--safe-b));
     padding-bottom: var(--safe-b);
     background: color-mix(in srgb, var(--surface) 92%, transparent);
@@ -189,10 +201,11 @@
     .top { @apply col-span-full flex-row items-baseline gap-5 px-7 py-3.5; }
     .status { @apply ml-auto text-[13px]; }
     .rail {
-      @apply sticky flex flex-col gap-0.5 border-r border-line px-3 py-4;
+      @apply sticky flex flex-col gap-0.5 px-3 py-4;
+      border-right: 1px solid var(--line-warm);
       top: 57px; height: calc(100dvh - 57px);
     }
-    .rail .nav { @apply flex-row justify-start gap-3 rounded-[12px] px-3.5 py-2.5 text-[14px]; }
+    .rail .nav { @apply flex-row justify-start gap-3 rounded-[12px] px-3.5 py-2.5 text-[15px]; }
     .rail .nav.is-on { @apply text-accent-ink; background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
     .rail .nav .badge { @apply static ml-auto; }
     .rail .nav.secondary { @apply text-faint; }
@@ -208,7 +221,7 @@
   }
 
   /* ---- text ---- */
-  .headline { @apply mb-1.5 mt-0 text-[20px] font-semibold tracking-[-0.01em]; }
+  .headline { @apply mb-2 mt-0 text-[24px] font-semibold leading-[1.25] tracking-[-0.02em]; }
   .headline.small { @apply text-[15px] font-medium text-muted; }
   .headline.muted { @apply text-[15px] font-medium text-muted; }
   .note { @apply mb-3.5 mt-0 text-[13px] leading-[1.55] text-muted; }
@@ -216,28 +229,24 @@
   .muted { color: var(--muted); }
   .error { color: var(--secret); }
   .empty { @apply m-0 py-6 text-muted; }
-  .group-title { @apply mt-6 mb-2 text-[12px] font-semibold uppercase tracking-[0.08em]; color: var(--accent-ink); opacity: 0.85; }
+  .group-title { @apply mt-7 mb-2.5 text-[15px] font-semibold tracking-[-0.01em] text-ink; }
 
   /* ---- cards and rows ---- */
-  .card {
-    @apply rounded-card border border-line bg-surface;
-    box-shadow: var(--shadow);
-  }
+  /* On the cream ground a white card is already a card; a border on top of
+     that is a second way of saying the same thing. */
+  .card { @apply rounded-card bg-surface; box-shadow: var(--shadow); }
   .rows { @apply m-0 list-none p-0; }
   .rows.cards { @apply flex flex-col gap-3; }
   /* A list is one white panel with dividers inside it, not bare rules on
      the page: the page is the cream ground, and content sits on paper. */
-  .rows.panel {
-    @apply overflow-hidden rounded-card border border-line bg-surface;
-    box-shadow: var(--shadow);
-  }
+  .rows.panel { @apply overflow-hidden rounded-card bg-surface; box-shadow: var(--shadow); }
   .rows.panel > .row { @apply px-4; }
   .rows.panel > .row:last-child { border-bottom: 0; }
   .row { @apply border-b border-line py-3; }
   .rows.compact .row { @apply py-2.5; }
-  .rows.cards > .row { @apply rounded-card border border-line bg-surface px-4 py-3.5; box-shadow: var(--shadow); }
+  .rows.cards > .row { @apply rounded-card bg-surface px-4 py-3.5; box-shadow: var(--shadow); }
   .rows.cards > .row:hover { box-shadow: var(--shadow-lift); }
-  .meta { @apply flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-[12.5px] text-muted; }
+  .meta { @apply flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-[13px] text-muted; }
   .who { @apply font-medium text-ink; }
   .thread { color: var(--faint); }
   .preview { @apply mt-1 cursor-pointer; overflow-wrap: anywhere; }
@@ -271,7 +280,7 @@
   .summary p { @apply m-0 whitespace-pre-wrap; }
 
   /* A level is a dot and a word (design 06). */
-  .level { @apply inline-flex items-center gap-1.5 rounded-full px-2 py-px text-[11.5px] font-medium tracking-[0.02em]; cursor: help; }
+  .level { @apply inline-flex items-center gap-1.5 rounded-full px-2 py-px text-[11px] font-medium tracking-[0.02em]; cursor: help; }
   .level::before { content: ""; @apply h-[7px] w-[7px] rounded-full; background: currentColor; }
   .level-public { color: var(--public); background: color-mix(in srgb, var(--public) 12%, transparent); }
   .level-personal { color: var(--personal); background: color-mix(in srgb, var(--personal) 12%, transparent); }
@@ -283,7 +292,7 @@
   .choose, .back, .fold, .source, .role.removable, .row-head, button.preview { -webkit-tap-highlight-color: transparent; }
   /* Outlined: a choice among several. */
   .choose {
-    @apply inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-control border border-line bg-surface px-3.5 py-1.5 text-[13.5px] font-medium text-ink transition-colors;
+    @apply inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-control border border-line bg-surface px-3.5 py-1.5 text-[13px] font-medium text-ink transition-colors;
   }
   .choose:hover { border-color: var(--accent); color: var(--accent-ink); }
   .choose:active { background: var(--accent-soft); }
@@ -296,7 +305,7 @@
   .choose.level-public, .choose.level-personal, .choose.level-secret { background: var(--surface); }
   /* Quiet: link-sized, same shape. */
   .back, .fold {
-    @apply inline-flex min-h-[30px] items-center gap-1 rounded-full border border-transparent bg-transparent px-2.5 py-0.5 text-[12.5px] font-medium text-muted transition-colors;
+    @apply inline-flex min-h-[30px] items-center gap-1 rounded-full border border-transparent bg-transparent px-2.5 py-0.5 text-[13px] font-medium text-muted transition-colors;
   }
   .back:hover, .fold:hover { color: var(--accent-ink); background: var(--accent-soft); }
   .reason, .role-input, .ask input, .filters input, .filters select, .pair-form input {
@@ -304,7 +313,7 @@
   }
   .reason { @apply min-w-[180px] flex-1; }
   textarea.draft, textarea.notes {
-    @apply w-full min-h-[104px] resize-y rounded-[12px] border border-line px-3.5 py-2.5 text-[14px] leading-[1.6];
+    @apply w-full min-h-[104px] resize-y rounded-[12px] border border-line px-3.5 py-2.5 text-[15px] leading-[1.6];
     background: var(--surface-2);
   }
   textarea.draft[readonly] { color: var(--muted); }
@@ -315,7 +324,7 @@
   .sources { @apply mt-1.5 flex flex-wrap gap-x-2.5 gap-y-1.5; }
   .source-wrap { display: contents; }
   .source {
-    @apply rounded-full border border-line bg-surface px-2.5 py-0.5 text-left text-[12px] text-muted transition-colors;
+    @apply rounded-full border border-line bg-surface px-2.5 py-0.5 text-left text-[13px] text-muted transition-colors;
   }
   .source:hover { color: var(--accent-ink); border-color: var(--accent); }
   .source-wrap .detail { flex-basis: 100%; }
@@ -329,7 +338,7 @@
   .point.empty-point { @apply text-[13px] text-muted; }
   .digest-card .group-title { @apply mt-0 mb-0 px-4 py-2.5 rounded-t-card; background: var(--sand-soft); color: var(--color-cream-700); }
   .digest-card { @apply mb-3 overflow-hidden; }
-  .commitment .standing { @apply text-[12px] text-muted; }
+  .commitment .standing { @apply text-[13px] text-muted; }
   .commitment.overdue .preview { color: var(--secret); }
 
   /* ---- timeline ---- */
@@ -339,7 +348,7 @@
 
   /* ---- actions ---- */
   .action { position: relative; }
-  .rows.cards > .action.pending { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .rows.cards > .action.pending { box-shadow: var(--shadow-lift), inset 0 0 0 1px var(--accent-line); }
   .action.executed .who::after { content: " · ✓"; color: var(--public); }
   .action.failed .who::after, .action.unknown .who::after { content: " · !"; color: var(--secret); }
 
@@ -347,7 +356,7 @@
   .turns { @apply m-0 mb-3 flex list-none flex-col gap-3 p-0; }
   .turn { @apply rounded-[16px] px-3.5 py-2.5; }
   .turn.question { @apply self-end max-w-[85%] text-ink; background: var(--accent-soft); border: 1px solid var(--accent-line); border-bottom-right-radius: 6px; }
-  .turn.answer { @apply border border-line bg-surface; box-shadow: var(--shadow); border-bottom-left-radius: 6px; }
+  .turn.answer { @apply bg-surface; box-shadow: var(--shadow); border-bottom-left-radius: 6px; }
   .answer-text { @apply mb-1.5 mt-0 whitespace-pre-wrap; }
   .answer-text.stopped { color: var(--muted); }
   .ask {
@@ -360,7 +369,7 @@
   @media (min-width: 900px) { .ask { bottom: 0; } }
   .ask input { @apply flex-1 rounded-full px-4 text-[15px]; }
   .ask .choose { @apply rounded-full px-4; }
-  .record .step { @apply my-0.5 whitespace-pre-wrap text-[12px] text-muted; }
+  .record .step { @apply my-0.5 whitespace-pre-wrap text-[13px] text-muted; }
   .record .step time { @apply mr-1.5; color: var(--faint); }
 
   /* ---- people ---- */
@@ -374,55 +383,56 @@
     .back { @apply hidden; }
   }
   .person-card {
-    @apply flex w-full cursor-pointer items-center gap-3 rounded-card border border-line bg-surface px-3.5 py-3 text-left transition-colors;
+    @apply flex w-full cursor-pointer items-center gap-3 rounded-card bg-surface px-3.5 py-3 text-left transition-shadow;
+    box-shadow: var(--shadow);
   }
-  .person-card:hover { border-color: var(--line-strong); }
-  .person-card.is-on { border-color: var(--accent); background: var(--accent-soft); }
+  .person-card:hover { box-shadow: var(--shadow-lift); }
+  .person-card.is-on { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
   .avatar {
     @apply inline-flex h-10 w-10 flex-none items-center justify-center rounded-full text-[13px] font-semibold;
     background: linear-gradient(140deg, var(--accent-fill), var(--accent-fill-deep));
     color: var(--on-accent);
   }
-  .avatar.big { @apply h-16 w-16 text-[20px]; }
+  .avatar.big { @apply h-16 w-16 text-[24px]; }
   .person-body { @apply min-w-0 flex-1; }
   .person-head { @apply flex flex-wrap items-baseline gap-1.5; }
   .person-name { @apply font-semibold; }
-  .person-line { @apply flex flex-wrap gap-2.5 text-[12px] text-muted; }
+  .person-line { @apply flex flex-wrap gap-2.5 text-[13px] text-muted; }
   .count.in { color: var(--personal); }
   .count.out { color: var(--public); }
   .role { @apply rounded-full border-0 px-2 py-px text-[11px] font-medium; background: var(--sand-soft); color: var(--color-cream-700); }
   .role.removable { cursor: pointer; }
   .role.removable:hover { text-decoration: line-through; color: var(--secret); }
-  .role-input { @apply min-h-[28px] min-w-[100px] border-0 bg-transparent text-[12px]; }
-  .person { @apply min-w-0 rounded-card border border-line bg-surface p-4; box-shadow: var(--shadow); }
+  .role-input { @apply min-h-[28px] min-w-[100px] border-0 bg-transparent text-[13px]; }
+  .person { @apply min-w-0 rounded-card bg-surface p-4; box-shadow: var(--shadow); }
   @media (min-width: 900px) { .person { @apply px-7 py-5; } }
   .person-detail-head { @apply flex items-start gap-3.5; }
   .person-title-box { @apply min-w-0; }
-  .person-title { @apply mb-1 mt-0 text-[22px] font-semibold tracking-[-0.01em]; }
+  .person-title { @apply mb-1 mt-0 text-[24px] font-semibold leading-[1.25] tracking-[-0.02em]; }
   .roles { @apply mb-1.5 flex flex-wrap items-center gap-1.5; }
   .handles { @apply flex flex-wrap gap-2.5 text-[13px] text-muted; overflow-wrap: anywhere; }
   .handle.inferred { text-decoration: underline dotted; }
   .tiles { @apply my-4 mb-2.5 grid gap-2; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
   .tile { @apply flex flex-col rounded-[12px] px-3 py-2.5; background: var(--surface-2); border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
-  .tile-value { @apply text-[20px] font-semibold tracking-[-0.01em] text-accent-ink; }
-  .tile-label { @apply text-[12px] text-muted; }
+  .tile-value { @apply text-[24px] font-semibold leading-[1.2] tracking-[-0.02em] text-accent-ink; }
+  .tile-label { @apply text-[13px] text-muted; }
   .tile-note { @apply text-[11px]; color: var(--faint); }
   .chart { @apply my-1.5 flex items-end gap-3; }
-  .chart-label { @apply text-[12px] text-muted; }
+  .chart-label { @apply text-[13px] text-muted; }
   .months { @apply flex h-[30px] items-end gap-[3px]; }
   .month { @apply inline-block w-[10px] rounded-t-[3px]; background: color-mix(in srgb, var(--accent) 35%, var(--surface)); }
   .month.now { background: var(--accent); }
 
   /* ---- records ---- */
   .payload {
-    @apply mt-2 max-h-[260px] overflow-auto rounded-[12px] border border-line px-3 py-2.5 font-mono text-[12px] leading-[1.5] whitespace-pre-wrap break-words;
+    @apply mt-2 max-h-[260px] overflow-auto rounded-[12px] border border-line px-3 py-2.5 font-mono text-[13px] leading-[1.5] whitespace-pre-wrap break-words;
     background: var(--surface-2);
   }
 
   /* ---- settings ---- */
-  .settings .section { @apply mb-4 rounded-card border border-line bg-surface px-4 py-3.5; box-shadow: var(--shadow); }
-  .settings .section .group-title { @apply mt-0; }
-  .accounts { @apply m-0 list-none p-0 text-[14px]; }
+  .settings .section { @apply mb-4 rounded-card bg-surface px-4 py-3.5; box-shadow: var(--shadow); }
+  .settings .section .group-title { @apply mt-0 mb-2; }
+  .accounts { @apply m-0 list-none p-0 text-[15px]; }
   .account { @apply flex flex-wrap gap-3 border-b border-line py-1.5; }
   .account:last-child { border-bottom: 0; }
   .account .address { @apply font-semibold; }
@@ -438,7 +448,7 @@
   .pair-code { @apply my-2 inline-block rounded-[14px] px-4 py-2 font-mono text-[34px] font-semibold leading-[1.2] tracking-[0.14em] text-accent-ink; background: var(--accent-soft); }
   .qr { @apply my-2 w-[200px] max-w-full rounded-[12px] bg-white p-2; box-shadow: var(--shadow); }
   .qr svg { @apply block h-auto w-full; }
-  .facts { @apply m-0 grid gap-x-4 gap-y-1 text-[14px]; grid-template-columns: max-content 1fr; }
+  .facts { @apply m-0 grid gap-x-4 gap-y-1 text-[15px]; grid-template-columns: max-content 1fr; }
   .facts dt { color: var(--muted); }
   .facts dd { @apply m-0; overflow-wrap: anywhere; }
   .pair-form { @apply grid max-w-[360px] gap-3; }

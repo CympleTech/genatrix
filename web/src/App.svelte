@@ -87,8 +87,12 @@
     {:else if section === 'ask'}<Ask />
     {:else if section === 'approvals'}<Approvals />
     {:else if section === 'chats'}
-      {#if $route.parts[1] === 'g'}<Chats kind="group" id={$route.parts[2] ?? null} />
-      {:else}<Chats kind="person" id={$route.parts[1] ?? null} />{/if}
+      <!-- One instance for every chats route: a person and a group are
+           arguments to the same page, so opening one never rebuilds the list. -->
+      <Chats
+        kind={$route.parts[1] === 'g' ? 'group' : 'person'}
+        id={($route.parts[1] === 'g' ? $route.parts[2] : $route.parts[1]) ?? null}
+      />
     {:else if section === 'review'}<Review />
     {:else if section === 'records'}<Records />
     {:else if section === 'settings'}<Settings />

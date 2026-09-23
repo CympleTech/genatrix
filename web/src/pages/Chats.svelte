@@ -1,5 +1,14 @@
+<script lang="ts" module>
+  import type { Party } from '../lib/api';
+  // The list outlives the page: coming back to Chats shows the list you left,
+  // where you left it, and refreshes it quietly behind that.
+  let cached: Party[] | null = null;
+  let scrolled = 0;
+</script>
+
 <script lang="ts">
-  import { get, type Party } from '../lib/api';
+  import { tick } from 'svelte';
+  import { get } from '../lib/api';
   import { t } from '../lib/i18n';
   import { initials } from '../lib/format';
   import { go } from '../lib/router';
@@ -12,14 +21,24 @@
   // party; its members are not listed one by one). An agent will be one more
   // kind of party in the same list.
   let { kind = 'person', id = null }: { kind?: 'person' | 'group'; id?: string | null } = $props();
-  let parties = $state<Party[] | null>(null);
+  let parties = $state<Party[] | null>(cached);
   let error = $state('');
   let filter = $state('');
+  let list = $state<HTMLElement | null>(null);
 
+  // Once per visit to the page, not per conversation opened: the effect reads
+  // nothing reactive, and the page is one instance for every chats route.
   $effect(() => {
     get<Party[]>('/api/chats')
-      .then((p) => { parties = p; })
-      .catch((e) => { error = e.message; parties = []; });
+      .then((p) => { parties = p; cached = p; })
+      .catch((e) => { if (!parties) { error = e.message; parties = []; } });
+  });
+  // Put the list back where it was: on arrival, and on a phone each time a
+  // conversation closes, because a hidden element forgets its scroll.
+  $effect(() => {
+    const showing = id;
+    const el = list;
+    if (el) tick().then(() => { if (showing === id) el.scrollTop = scrolled; });
   });
   const shown = $derived.by(() => {
     const q = filter.trim().toLowerCase();
@@ -31,7 +50,7 @@
 </script>
 
 <section class="pane chats-pane" class:has-detail={!!id}>
-  <div class="chat-list">
+  <div class="chat-list" bind:this={list} onscroll={() => { if (list) scrolled = list.scrollTop; }}>
     <label class="chat-search">
       <Icon name="search" size={16} />
       <input type="search" bind:value={filter} placeholder={t('chats.search')} autocomplete="off" />

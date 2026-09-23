@@ -17,6 +17,7 @@ mod access;
 mod api;
 mod devices;
 
+use std::future::IntoFuture as _;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
@@ -65,12 +66,35 @@ pub async fn serve(system: Arc<System>, serving: &Serving) -> anyhow::Result<()>
     let addr = SocketAddr::from((serving.bind, serving.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     announce(serving);
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
+    let service = app.into_make_service_with_connect_info::<SocketAddr>();
+    // Bound to one particular address that is not loopback, the core would
+    // be unreachable from this machine: the menu bar shell asks 127.0.0.1,
+    // and a pairing code can only be made from loopback, so no device could
+    // ever be paired. Loopback is listened on as well in that case. The
+    // wildcard address already covers it.
+    if needs_loopback_too(serving.bind) {
+        let local = tokio::net::TcpListener::bind(SocketAddr::from((
+            std::net::Ipv4Addr::LOCALHOST,
+            serving.port,
+        )))
+        .await?;
+        println!(
+            "Also at http://127.0.0.1:{}, for the menu bar and for pairing.",
+            serving.port
+        );
+        tokio::try_join!(
+            axum::serve(listener, service.clone()).into_future(),
+            axum::serve(local, service).into_future(),
+        )?;
+    } else {
+        axum::serve(listener, service).await?;
+    }
     Ok(())
+}
+
+/// Whether a bind address leaves this machine without a loopback listener.
+fn needs_loopback_too(bind: IpAddr) -> bool {
+    !bind.is_loopback() && !bind.is_unspecified()
 }
 
 /// Say where it is, who can reach it, and what that means.
@@ -175,4 +199,24 @@ async fn manifest() -> impl IntoResponse {
 
 async fn icon() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "image/svg+xml")], ICON_SVG)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_particular_lan_address_keeps_loopback_and_the_others_need_nothing_more() {
+        let lan: IpAddr = "192.168.3.34".parse().unwrap();
+        assert!(
+            needs_loopback_too(lan),
+            "the shell and pairing need 127.0.0.1"
+        );
+        assert!(!needs_loopback_too("127.0.0.1".parse().unwrap()));
+        assert!(
+            !needs_loopback_too("0.0.0.0".parse().unwrap()),
+            "the wildcard covers it"
+        );
+        assert!(!needs_loopback_too("::".parse().unwrap()));
+    }
 }

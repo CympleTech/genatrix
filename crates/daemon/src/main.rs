@@ -568,7 +568,17 @@ fn service(config: &Config, action: &ServiceAction) -> anyhow::Result<()> {
                     println!("runs       the core alone; build apps/menubar for the menu bar icon");
                 }
             }
-            println!("serving    http://127.0.0.1:{port}");
+            if bind.is_loopback() {
+                println!("serving    http://127.0.0.1:{port}, this machine only");
+            } else {
+                let shown = if bind.is_unspecified() {
+                    "every address of this machine".to_owned()
+                } else {
+                    format!("{bind} and 127.0.0.1")
+                };
+                println!("serving    port {port} on {shown}");
+                println!("           other devices need pairing: Settings, on this machine");
+            }
             println!(
                 "log        {}",
                 config.data_dir.join("logs/genatrix.log").display()

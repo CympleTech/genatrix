@@ -257,7 +257,10 @@ Tailscale or WireGuard address of this machine, and pair the phone:
 # or, installed:  genatrix --data-dir $DEV service install --bind 100.101.102.103
 ```
 
-Then, on this machine, open Settings and press "Pair a device": a six-digit
+On a home network you trust, `--bind 0.0.0.0` works as well and does not
+break when the router hands out a new address. Bound to one particular
+address, Genatrix also listens on 127.0.0.1, because the menu bar and pairing
+go through loopback. Then, on this machine, open Settings and press "Pair a device": a six-digit
 code and a QR code appear, good for five minutes and for one device. Open
 the address on the phone (scan the code, or type it in), enter the code,
 and the phone is paired: it carries its own credential from then on, and

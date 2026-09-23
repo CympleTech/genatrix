@@ -7,11 +7,16 @@
    (the one thing to do), outlined (a choice), or quiet (a link-sized
    action); same height, same radius, same weight.
 
-   Two rules the whole sheet obeys. The neutrals all sit in the violet's
-   hue, at almost no chroma, so the cream is the one warm thing in the
-   room and reads as intended rather than as a second grey. And there is
-   one type scale, 11 / 13 / 15 / 18 / 24 / 34, with nothing in between:
-   sizes four percent apart are not a hierarchy, they are noise. Nothing here is
+   Two families, and the split is the whole idea. Paper is warm: the
+   ground, the cards, the insets and the rules between them are one ramp
+   at the cream's own hue, so a card is the same material as the page and
+   only lighter, never a cold white rectangle laid on top of it. Ink is
+   cool: the text, the greys under it and the accent all sit in the
+   violet. Warm paper, cool ink, which is what printed matter has always
+   been.
+
+   And one type scale, 11 / 13 / 15 / 18 / 24 / 34, with nothing in
+   between: sizes four percent apart are not a hierarchy, they are noise. Nothing here is
    fetched from anywhere: system fonts, inline icons. */
 
 @import "tailwindcss";
@@ -48,14 +53,13 @@
   --bg: #f0e7db;
   --bg-tint: radial-gradient(1200px 560px at 12% -12%, rgba(136, 119, 199, 0.22), transparent 62%),
              radial-gradient(900px 480px at 102% 4%, rgba(255, 255, 255, 0.55), transparent 58%);
-  --surface: #ffffff;
-  --surface-2: #f8f6fb;
+  --surface: #fcf8f3;
+  --surface-2: #f6f0e8;
   --ink: #2c2836;
   --muted: #6b6478;
-  --faint: #9a93a6;
-  --line: #e9e5f0;
-  --line-strong: #d3ccdf;
-  /* The one place a line sits on the cream rather than on paper. */
+  --faint: #726b7d;
+  --line: #e3dbd1;
+  --line-strong: #cec4b6;
   --line-warm: #ddd2c2;
   --accent: #8877c7;
   --accent-ink: #5d4d93;
@@ -67,6 +71,11 @@
   --accent-fill-deep: #5d4d93;
   --on-accent: #ffffff;
   --badge: #b35c48;
+  /* The hero is a field, not a button: deep enough that text dimmed to
+     0.8 for hierarchy still clears 4.5:1 against it. */
+  --hero-from: #655298;
+  --hero-to: #463a70;
+  --on-hero: #ffffff;
   --sand: #f0e7db;
   --sand-soft: #f7f1e8;
   --public: #559a78;
@@ -84,10 +93,10 @@
                radial-gradient(900px 480px at 102% 4%, rgba(240, 231, 219, 0.05), transparent 58%);
     --surface: #221d2e;
     --surface-2: #2a2437;
-    --line-warm: #342d45;
+    --line-warm: #352e46;
     --ink: #ece7e0;
     --muted: #a49db0;
-    --faint: #756e83;
+    --faint: #8d8699;
     --line: #342d45;
     --line-strong: #473e5c;
     --accent: #a596d6;
@@ -98,6 +107,9 @@
     --accent-fill-deep: #8877c7;
     --on-accent: #1a1524;
     --badge: #b8654f;
+    --hero-from: #b3a5de;
+    --hero-to: #8877c7;
+    --on-hero: #1a1524;
     --sand: #d2bfa3;
     --sand-soft: #2b2620;
     --public: #79b795;
@@ -164,7 +176,7 @@
   .page-title { @apply font-medium text-muted; }
   .status { @apply m-0 truncate text-[13px] text-faint; }
 
-  main { @apply min-w-0 px-4 pt-3 pb-[calc(var(--bar-h)+var(--safe-b)+28px)]; }
+  main { @apply min-w-0 px-5 pt-4 pb-[calc(var(--bar-h)+var(--safe-b)+32px)]; }
   .pane { @apply max-w-[860px]; }
 
   .rail { @apply hidden; }
@@ -212,7 +224,7 @@
     .rail .nav.secondary.is-on { @apply text-accent-ink; }
     .rail-gap { @apply h-5; }
     .bar, .more-sheet, .scrim { @apply hidden; }
-    main { @apply px-8 pt-6 pb-16; }
+    main { @apply px-10 pt-8 pb-20; }
   }
 
   .badge {
@@ -224,27 +236,27 @@
   .headline { @apply mb-2 mt-0 text-[24px] font-semibold leading-[1.25] tracking-[-0.02em]; }
   .headline.small { @apply text-[15px] font-medium text-muted; }
   .headline.muted { @apply text-[15px] font-medium text-muted; }
-  .note { @apply mb-3.5 mt-0 text-[13px] leading-[1.55] text-muted; }
+  .note { @apply mb-4 mt-0 text-[13px] leading-[1.6] text-muted; }
   .faint { color: var(--faint); }
   .muted { color: var(--muted); }
   .error { color: var(--secret); }
-  .empty { @apply m-0 py-6 text-muted; }
-  .group-title { @apply mt-7 mb-2.5 text-[15px] font-semibold tracking-[-0.01em] text-ink; }
+  .empty { @apply m-0 py-8 text-muted; }
+  .group-title { @apply mt-9 mb-3 text-[15px] font-semibold tracking-[-0.01em] text-ink; }
 
   /* ---- cards and rows ---- */
   /* On the cream ground a white card is already a card; a border on top of
      that is a second way of saying the same thing. */
   .card { @apply rounded-card bg-surface; box-shadow: var(--shadow); }
   .rows { @apply m-0 list-none p-0; }
-  .rows.cards { @apply flex flex-col gap-3; }
+  .rows.cards { @apply flex flex-col gap-4; }
   /* A list is one white panel with dividers inside it, not bare rules on
      the page: the page is the cream ground, and content sits on paper. */
   .rows.panel { @apply overflow-hidden rounded-card bg-surface; box-shadow: var(--shadow); }
-  .rows.panel > .row { @apply px-4; }
+  .rows.panel > .row { @apply px-5; }
   .rows.panel > .row:last-child { border-bottom: 0; }
-  .row { @apply border-b border-line py-3; }
-  .rows.compact .row { @apply py-2.5; }
-  .rows.cards > .row { @apply rounded-card bg-surface px-4 py-3.5; box-shadow: var(--shadow); }
+  .row { @apply border-b border-line py-4; }
+  .rows.compact .row { @apply py-3; }
+  .rows.cards > .row { @apply rounded-card bg-surface px-5 py-4; box-shadow: var(--shadow); }
   .rows.cards > .row:hover { box-shadow: var(--shadow-lift); }
   .meta { @apply flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-[13px] text-muted; }
   .who { @apply font-medium text-ink; }
@@ -258,7 +270,7 @@
   .excerpt { @apply my-1.5 whitespace-pre-wrap text-[13px]; overflow-wrap: anywhere; }
 
   .detail {
-    @apply mt-2.5 rounded-[14px] border px-4 py-3.5;
+    @apply mt-3 rounded-[14px] border px-5 py-4;
     border-color: color-mix(in srgb, var(--line) 70%, transparent);
     background: var(--surface-2);
     overflow-wrap: anywhere;
@@ -331,7 +343,7 @@
 
   /* ---- today ---- */
   .points { @apply m-0 list-none p-0; }
-  .point { @apply border-b border-line px-4 py-3; }
+  .point { @apply border-b border-line px-5 py-3.5; }
   .point:last-child { border-bottom: 0; }
   .point .text { @apply block; }
   .point.unfounded .text { color: var(--muted); }
@@ -353,8 +365,8 @@
   .action.failed .who::after, .action.unknown .who::after { content: " · !"; color: var(--secret); }
 
   /* ---- ask ---- */
-  .turns { @apply m-0 mb-3 flex list-none flex-col gap-3 p-0; }
-  .turn { @apply rounded-[16px] px-3.5 py-2.5; }
+  .turns { @apply m-0 mb-4 flex list-none flex-col gap-4 p-0; }
+  .turn { @apply rounded-[16px] px-4 py-3; }
   .turn.question { @apply self-end max-w-[85%] text-ink; background: var(--accent-soft); border: 1px solid var(--accent-line); border-bottom-right-radius: 6px; }
   .turn.answer { @apply bg-surface; box-shadow: var(--shadow); border-bottom-left-radius: 6px; }
   .answer-text { @apply mb-1.5 mt-0 whitespace-pre-wrap; }
@@ -373,8 +385,8 @@
   .record .step time { @apply mr-1.5; color: var(--faint); }
 
   /* ---- people ---- */
-  .people-pane { @apply grid max-w-none grid-cols-1 gap-5; }
-  .people { @apply m-0 flex list-none flex-col gap-2 p-0; }
+  .people-pane { @apply grid max-w-none grid-cols-1 gap-6; }
+  .people { @apply m-0 flex list-none flex-col gap-2.5 p-0; }
   .people-pane.has-detail .people { @apply hidden; }
   .back { @apply mb-2.5; }
   @media (min-width: 900px) {
@@ -383,7 +395,7 @@
     .back { @apply hidden; }
   }
   .person-card {
-    @apply flex w-full cursor-pointer items-center gap-3 rounded-card bg-surface px-3.5 py-3 text-left transition-shadow;
+    @apply flex w-full cursor-pointer items-center gap-3.5 rounded-card bg-surface px-4 py-3.5 text-left transition-shadow;
     box-shadow: var(--shadow);
   }
   .person-card:hover { box-shadow: var(--shadow-lift); }
@@ -404,16 +416,16 @@
   .role.removable { cursor: pointer; }
   .role.removable:hover { text-decoration: line-through; color: var(--secret); }
   .role-input { @apply min-h-[28px] min-w-[100px] border-0 bg-transparent text-[13px]; }
-  .person { @apply min-w-0 rounded-card bg-surface p-4; box-shadow: var(--shadow); }
-  @media (min-width: 900px) { .person { @apply px-7 py-5; } }
+  .person { @apply min-w-0 rounded-card bg-surface p-5; box-shadow: var(--shadow); }
+  @media (min-width: 900px) { .person { @apply px-8 py-7; } }
   .person-detail-head { @apply flex items-start gap-3.5; }
   .person-title-box { @apply min-w-0; }
   .person-title { @apply mb-1 mt-0 text-[24px] font-semibold leading-[1.25] tracking-[-0.02em]; }
   .roles { @apply mb-1.5 flex flex-wrap items-center gap-1.5; }
   .handles { @apply flex flex-wrap gap-2.5 text-[13px] text-muted; overflow-wrap: anywhere; }
   .handle.inferred { text-decoration: underline dotted; }
-  .tiles { @apply my-4 mb-2.5 grid gap-2; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
-  .tile { @apply flex flex-col rounded-[12px] px-3 py-2.5; background: var(--surface-2); border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+  .tiles { @apply my-5 mb-3 grid gap-2.5; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  .tile { @apply flex flex-col rounded-[12px] px-3.5 py-3; background: var(--surface-2); border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
   .tile-value { @apply text-[24px] font-semibold leading-[1.2] tracking-[-0.02em] text-accent-ink; }
   .tile-label { @apply text-[13px] text-muted; }
   .tile-note { @apply text-[11px]; color: var(--faint); }
@@ -430,7 +442,7 @@
   }
 
   /* ---- settings ---- */
-  .settings .section { @apply mb-4 rounded-card bg-surface px-4 py-3.5; box-shadow: var(--shadow); }
+  .settings .section { @apply mb-4 rounded-card bg-surface px-5 py-5; box-shadow: var(--shadow); }
   .settings .section .group-title { @apply mt-0 mb-2; }
   .accounts { @apply m-0 list-none p-0 text-[15px]; }
   .account { @apply flex flex-wrap gap-3 border-b border-line py-1.5; }

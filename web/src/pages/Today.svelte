@@ -8,6 +8,9 @@
 
   let today = $state<Today | null>(null);
   let error = $state('');
+  const needsReply = $derived(
+    today?.digest?.groups.find((g) => g.group === 'needs_reply')?.points.length ?? 0,
+  );
 
   async function load() {
     try { today = await get<Today>('/api/today'); error = ''; } catch (e: any) { error = e.message; }
@@ -19,10 +22,27 @@
   {#if error}<Empty text={error} error />
   {:else if !today}<Empty text={t('loading')} />
   {:else}
-    {#if !today.digest}
-      <p class="headline muted">{t('today.nodigest')}</p>
-    {:else}
-      <p class="headline">{t('today.digest', { day: today.digest.day, at: today.digest.generated_at, n: today.digest.considered })}</p>
+    <div class="hero">
+      {#if !today.digest}
+        <p class="hero-line">{t('today.nodigest')}</p>
+        <p class="hero-foot">{t('today.nodigest.foot')}</p>
+      {:else}
+        <p class="hero-eyebrow">{t('today.hero.day', { day: today.digest.day })}</p>
+        <p class="hero-line">
+          {needsReply === 0 ? t('today.hero.needsreply.zero') : needsReply === 1 ? t('today.hero.needsreply.one') : t('today.hero.needsreply', { n: needsReply })}
+        </p>
+        <div class="hero-chips">
+          {#each today.digest.groups.filter((g) => g.group !== 'needs_reply' && g.points.length) as g}
+            <span class="hero-chip"><b>{g.points.length}</b> {t(`group.${g.group}`)}</span>
+          {/each}
+          {#if today.pending_actions}
+            <span class="hero-chip"><b>{today.pending_actions}</b> {t('today.hero.waiting')}</span>
+          {/if}
+        </div>
+        <p class="hero-foot">{t('today.hero.made', { at: today.digest.generated_at, n: today.digest.considered })}</p>
+      {/if}
+    </div>
+    {#if today.digest}
       {#each today.digest.groups.filter((g) => g.group !== 'promised') as g}
         <div class="card digest-card">
         <h2 class="group-title">{t(`group.${g.group}`)} ({g.points.length})</h2>

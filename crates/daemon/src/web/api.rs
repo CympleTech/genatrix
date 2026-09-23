@@ -242,6 +242,10 @@ struct ChatQuery {
     /// Milliseconds: only messages older than this. Absent for the newest.
     #[serde(default)]
     before: Option<i64>,
+    /// Milliseconds: only messages newer than this, which is how an open
+    /// conversation picks up what arrived since it was drawn.
+    #[serde(default)]
+    after: Option<i64>,
     #[serde(default = "default_chat_limit")]
     limit: u32,
 }
@@ -360,9 +364,10 @@ async fn chat(
     };
     let limit = query.limit.clamp(1, 200);
     // One more than asked, to know whether there is an earlier page.
-    let mut items = system
-        .store
-        .items_with_person_before(id, query.before, limit + 1)?;
+    let mut items =
+        system
+            .store
+            .items_with_person_before(id, query.after, query.before, limit + 1)?;
     let earlier = items.len() > limit as usize;
     items.truncate(limit as usize);
     items.reverse();
@@ -642,9 +647,10 @@ async fn group_chat(
         return Ok(not_found("that is not a thread identifier"));
     };
     let limit = query.limit.clamp(1, 200);
-    let mut items = system
-        .store
-        .items_in_thread_before(id, query.before, limit + 1)?;
+    let mut items =
+        system
+            .store
+            .items_in_thread_before(id, query.after, query.before, limit + 1)?;
     let earlier = items.len() > limit as usize;
     items.truncate(limit as usize);
     items.reverse();

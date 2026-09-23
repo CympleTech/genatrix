@@ -544,6 +544,11 @@
   .msg.mine .bubble-item { border-top-color: color-mix(in srgb, var(--on-accent) 30%, transparent); }
   .msg.mine .bubble .summary { color: var(--ink); }
   .stream-drafts { @apply mt-5; }
+  /* An approved action on its way: a quiet pulse, so the card is plainly
+     still waiting on the connector and not stuck. */
+  .note.sending { @apply m-0; animation: sending 1.6s ease-in-out infinite; }
+  @keyframes sending { 50% { opacity: 0.45; } }
+  @media (prefers-reduced-motion: reduce) { .note.sending { animation: none; } }
   .speakers { @apply m-0 flex list-none flex-col gap-2 p-0; }
   .speaker { @apply grid items-center gap-3 text-[13px]; grid-template-columns: auto minmax(0, 9rem) 1fr auto; }
   .speaker-name { @apply truncate; }

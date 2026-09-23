@@ -7,7 +7,7 @@
   import { t } from '../lib/i18n';
   import { connectorName, hours, initials } from '../lib/format';
   import { go } from '../lib/router';
-  import { refreshPending } from '../lib/status';
+  import { refreshPending, status } from '../lib/status';
   import ActionCard from './ActionCard.svelte';
   import CommitmentRow from './CommitmentRow.svelte';
   import LevelMark from './LevelMark.svelte';
@@ -98,6 +98,38 @@
       if (stream) stream.scrollTop += stream.scrollHeight - before;
     } catch (e: any) { error = e.message; }
     loadingEarlier = false;
+  }
+
+  // New messages, as they arrive: the status the page already asks for
+  // every few seconds carries the number of items, and when it moves, ask
+  // for what is newer than the last message here. Nothing is asked when
+  // nothing has changed.
+  let seenItems: number | null = null;
+  $effect(() => {
+    const items = $status?.items ?? null;
+    if (items === null) return;
+    if (seenItems !== null && items !== seenItems && !loading) newer();
+    seenItems = items;
+  });
+  async function newer() {
+    const last = messages[messages.length - 1];
+    if (!last) return;
+    try {
+      const p = await get<ChatPage>(`${base}/chat?limit=200&after=${last.ms}`);
+      const known = new Set(messages.map((m) => m.id));
+      const fresh = p.messages.filter((m) => !known.has(m.id));
+      if (!fresh.length) return;
+      const atBottom = stream ? stream.scrollHeight - stream.scrollTop - stream.clientHeight < 120 : true;
+      messages = [...messages, ...fresh];
+      // A sent reply is now in the stream as your own message; the card
+      // that produced it has done its work.
+      drafts = drafts.filter((d) => !(d.status === 'executed' && d.result && fresh.some((m) => m.id === d.result!.id)));
+      if (atBottom || fresh.some((m) => m.mine)) await toBottom();
+    } catch { /* the next change will try again */ }
+  }
+  async function settled(a: Action) {
+    drafts = drafts.map((d) => (d.id === a.id ? a : d));
+    if (a.status === 'executed') await newer();
   }
 
   async function toggle(m: ChatMessage) {
@@ -274,7 +306,7 @@
         </div>
       {/each}
       {#if drafts.length}
-        <ol class="rows cards stream-drafts">{#each drafts as a (a.id)}<ActionCard action={a} />{/each}</ol>
+        <ol class="rows cards stream-drafts">{#each drafts as a (a.id)}<ActionCard action={a} onsettled={settled} />{/each}</ol>
       {/if}
     {/if}
   </div>

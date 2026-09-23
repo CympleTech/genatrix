@@ -309,14 +309,16 @@ impl Store {
 
     /// Recent items between the user and a person, newest first.
     pub fn items_with_person(&self, person: PersonId, limit: u32) -> Result<Vec<Item>> {
-        self.items_with_person_before(person, None, limit)
+        self.items_with_person_before(person, None, None, limit)
     }
 
-    /// The same, older than an instant: how a conversation pages back.
-    /// Newest first; the caller turns it round for display.
+    /// The same, inside a window of time: older than `before_ms` is how a
+    /// conversation pages back, newer than `after_ms` is how an open one
+    /// picks up what just arrived. Newest first; the caller turns it round.
     pub fn items_with_person_before(
         &self,
         person: PersonId,
+        after_ms: Option<i64>,
         before_ms: Option<i64>,
         limit: u32,
     ) -> Result<Vec<Item>> {
@@ -330,7 +332,7 @@ impl Store {
              WHERE i.tombstoned = 0 AND i.{ONE_TO_ONE}
                AND NOT EXISTS (SELECT 1 FROM item n WHERE n.supersedes = i.id)
                AND (i.author = ?1 OR (i.author = ?2 AND i.recipients LIKE ?3))
-               AND i.occurred_ms < ?5
+               AND i.occurred_ms < ?5 AND i.occurred_ms > ?6
              ORDER BY i.occurred_ms DESC LIMIT ?4"
         ))?;
         let pid = person.to_string();
@@ -339,7 +341,8 @@ impl Store {
             me,
             format!("%\"{pid}\"%"),
             limit,
-            before_ms.unwrap_or(i64::MAX)
+            before_ms.unwrap_or(i64::MAX),
+            after_ms.unwrap_or(i64::MIN)
         ])?;
         let mut out = Vec::new();
         while let Some(r) = rows.next()? {

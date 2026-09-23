@@ -634,10 +634,27 @@ Friday?\r\n";
         assert_eq!(words[&groups[0].thread.id].text, "see you");
         let page = system
             .store
-            .items_in_thread_before(groups[0].thread.id, None, 2)
+            .items_in_thread_before(groups[0].thread.id, None, None, 2)
             .unwrap();
         assert_eq!(page.len(), 2);
         assert_eq!(page[0].text, "see you", "newest first");
+        // What arrived after a message, and only that: how an open
+        // conversation picks up a reply.
+        let after = page[1].occurred_at.timestamp_millis();
+        let newer = system
+            .store
+            .items_in_thread_before(groups[0].thread.id, Some(after), None, 10)
+            .unwrap();
+        assert_eq!(newer.len(), 1);
+        assert_eq!(newer[0].text, "see you");
+        let ann_after = system
+            .store
+            .items_with_person_before(ann_row.person.id, Some(i64::MAX - 1), None, 10)
+            .unwrap();
+        assert!(
+            ann_after.is_empty(),
+            "nothing is newer than the end of time"
+        );
         let top = system.store.speakers(groups[0].thread.id, 5).unwrap();
         assert_eq!(top[0].1, 2, "Bob spoke most");
         assert_eq!(system.store.voices(groups[0].thread.id).unwrap(), 2);

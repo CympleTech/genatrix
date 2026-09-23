@@ -1,11 +1,16 @@
 <script lang="ts">
-  import { post, type Action } from '../lib/api';
+  import { get, post, type Action } from '../lib/api';
   import { kindWord, statusLine } from '../lib/format';
   import { t } from '../lib/i18n';
   import SourceChip from './SourceChip.svelte';
   import { refreshPending } from '../lib/status';
 
-  let { action, ondone }: { action: Action; ondone?: () => void } = $props();
+  let { action, ondone, onsettled }: {
+    action: Action;
+    ondone?: () => void;
+    /** Called once when an approved action has an outcome: sent, not sent, or unknown. */
+    onsettled?: (a: Action) => void;
+  } = $props();
   // The version and nonce this card holds: what approving must present back.
   // The card owns its copy from here on; a fresh list makes fresh cards.
   // svelte-ignore state_referenced_locally
@@ -32,9 +37,35 @@
       const done = await post<Action>(`/api/action/${action.id}/approve`, {
         version: current.version, payload_hash: current.payload_hash, nonce: current.nonce,
       });
-      current = done; settled = t('action.approved'); refreshPending(); ondone?.();
+      current = done; refreshPending(); ondone?.();
+      follow();
     } catch (e: any) { error = e.message; busy = false; }
   }
+
+  // After approval the connector takes the action within seconds, sends it
+  // and reports. Ask how it went until it has gone one of the three ways
+  // design 03 allows, so the card says "sent" without a reload. Quickly at
+  // first, then slowly, and not past the ten minutes after which the core
+  // itself stops waiting and calls the outcome unknown.
+  let alive = true;
+  $effect(() => () => { alive = false; });
+  async function follow() {
+    const started = Date.now();
+    while (alive && Date.now() - started < 11 * 60_000) {
+      await new Promise((r) => setTimeout(r, Date.now() - started < 60_000 ? 2500 : 15_000));
+      if (!alive) return;
+      try {
+        const now = await get<Action>(`/api/action/${action.id}`);
+        current = now;
+        if (now.status !== 'approved') { refreshPending(); onsettled?.(now); return; }
+      } catch { /* the next try will do */ }
+    }
+  }
+  // A card that arrives already approved, on the Approvals page or Today,
+  // follows it too.
+  // svelte-ignore state_referenced_locally
+  if (action.status === 'approved') follow();
+
   async function decline() {
     if (!askingReason) { askingReason = true; return; }
     busy = true; error = '';
@@ -87,9 +118,12 @@
       {/if}
       {#if error}<span class="error">{error}</span>{/if}
     </div>
-  {:else if current.status === 'approved' && current.can_withdraw}
+  {:else if current.status === 'approved'}
     <div class="chooser">
-      <button type="button" class="choose lowers" disabled={busy} onclick={withdraw}>{t('action.withdraw')}</button>
+      <span class="note sending">{t('action.approved')}</span>
+      {#if current.can_withdraw}
+        <button type="button" class="choose lowers" disabled={busy} onclick={withdraw}>{t('action.withdraw')}</button>
+      {/if}
       {#if error}<span class="error">{error}</span>{/if}
     </div>
   {/if}

@@ -119,24 +119,28 @@ impl Store {
         Ok(out)
     }
 
-    /// A container's conversation, older than an instant, newest first.
+    /// A container's conversation inside a window of time, newest first;
+    /// the same window as [`Store::items_with_person_before`].
     pub fn items_in_thread_before(
         &self,
         thread: ThreadId,
+        after_ms: Option<i64>,
         before_ms: Option<i64>,
         limit: u32,
     ) -> Result<Vec<Item>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT i.* FROM item i
-             WHERE i.thread_id = ?1 AND i.tombstoned = 0 AND i.occurred_ms < ?2
+             WHERE i.thread_id = ?1 AND i.tombstoned = 0
+               AND i.occurred_ms < ?2 AND i.occurred_ms > ?4
                AND NOT EXISTS (SELECT 1 FROM item n WHERE n.supersedes = i.id)
              ORDER BY i.occurred_ms DESC LIMIT ?3",
         )?;
         let mut rows = stmt.query(params![
             thread.to_string(),
             before_ms.unwrap_or(i64::MAX),
-            limit
+            limit,
+            after_ms.unwrap_or(i64::MIN)
         ])?;
         let mut out = Vec::new();
         while let Some(r) = rows.next()? {

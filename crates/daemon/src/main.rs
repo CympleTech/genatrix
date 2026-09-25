@@ -24,6 +24,7 @@ mod keys;
 mod models;
 mod names;
 mod pipeline;
+mod purge;
 mod running;
 mod seed;
 mod service;
@@ -116,6 +117,18 @@ enum Command {
         #[arg(long)]
         to: PathBuf,
     },
+    /// Remove everything one connector brought in, so it is fetched again
+    /// under today's rules. Shows the counts first; asks before deleting.
+    Purge {
+        /// `telegram` or `imap`.
+        connector: String,
+        /// Only show what would go.
+        #[arg(long)]
+        dry_run: bool,
+        /// Do not ask.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Functional agents: install, list, ask, pause (design 11).
     Agent {
         #[command(subcommand)]
@@ -195,6 +208,19 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Service { action } => service(&config, &action),
         Command::Sync { limit } => sync(&config, limit).await,
+        Command::Purge {
+            connector,
+            dry_run,
+            yes,
+        } => {
+            let connector = match connector.as_str() {
+                "telegram" => genatrix_model::Connector::Telegram,
+                "imap" | "mail" => genatrix_model::Connector::Imap,
+                other => anyhow::bail!("no connector called {other}"),
+            };
+            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
+            purge::run(&config, &system, connector, dry_run, yes)
+        }
         Command::Agent { action } => {
             let system = System::open(config.clone(), ticket_key(&config, false)?)?;
             agents::terminal::command(std::sync::Arc::new(system), action).await

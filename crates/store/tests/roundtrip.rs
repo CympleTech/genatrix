@@ -410,3 +410,92 @@ fn folding_a_stray_self_address_rewrites_authors_recipients_and_directions() {
     assert!(me.merged_from.contains(&f.alice));
     assert_eq!(f.store.fold_person(f.me, f.me, true).unwrap(), 0);
 }
+
+#[test]
+fn purging_a_connector_takes_its_items_and_leaves_the_rest() {
+    use genatrix_model::{Commitment, CommitmentId, CommitmentStatus, Standing};
+    let f = fixture();
+    let tg1 = message(&f, "2:10", f.alice, f.me, "2026-09-01T10:00:00Z", "tg one");
+    let tg2 = message(&f, "2:11", f.me, f.alice, "2026-09-01T11:00:00Z", "tg two");
+    // A mail in the same store, which must not be touched.
+    let source = Source::new(Connector::Imap, "me@example.com", "m1");
+    let raw = Raw::describe(source.clone(), "message/rfc822", b"mail");
+    f.store.insert_raw(&raw).unwrap();
+    let mut mail = tg1.clone();
+    mail.id = ItemId::new();
+    mail.source = source;
+    mail.raw_id = raw.id;
+    mail.text = "a mail".into();
+    mail.thread_id = f
+        .store
+        .upsert_thread(&Thread {
+            id: ThreadId::new(),
+            kind: ThreadKind::MailThread,
+            source: Source::new(Connector::Imap, "me@example.com", "t1"),
+            title: None,
+            members: vec![],
+            first_at: None,
+            last_at: None,
+        })
+        .unwrap();
+    f.store.insert_item(&mail).unwrap();
+
+    let promise = |evidence: Vec<ItemId>| Commitment {
+        id: CommitmentId::new(),
+        from: f.me,
+        to: Some(f.alice),
+        what: "send it".into(),
+        due: None,
+        evidence,
+        status: CommitmentStatus::Open,
+        standing: Standing::Inferred,
+        created_at: Utc::now(),
+    };
+    f.store.insert_commitment(&promise(vec![tg1.id])).unwrap();
+    f.store
+        .insert_commitment(&promise(vec![tg2.id, mail.id]))
+        .unwrap();
+    f.store
+        .put_sync_cursor(Connector::Telegram, "me", "session", "{}")
+        .unwrap();
+    f.store
+        .put_sync_cursor(Connector::Telegram, "me", "chat:2#history", "{}")
+        .unwrap();
+
+    let dry = f
+        .store
+        .purge_connector(Connector::Telegram, &["session"], true)
+        .unwrap();
+    assert_eq!(dry.items, 2);
+    assert_eq!(
+        f.store.count_items_from(Connector::Telegram).unwrap(),
+        2,
+        "a dry run changes nothing"
+    );
+
+    let done = f
+        .store
+        .purge_connector(Connector::Telegram, &["session"], false)
+        .unwrap();
+    assert_eq!(done.items, 2);
+    assert_eq!(done.raws, 2);
+    assert_eq!(done.threads, 1);
+    assert_eq!(done.commitments, 1);
+    assert_eq!(done.cursors, 1);
+    assert_eq!(done.raw_files.len(), 2);
+    assert_eq!(f.store.count_items_from(Connector::Telegram).unwrap(), 0);
+    assert_eq!(f.store.count_items_from(Connector::Imap).unwrap(), 1);
+    assert!(f.store.search_items("tg one", 10).unwrap().is_empty());
+    assert!(
+        f.store
+            .get_sync_cursor(Connector::Telegram, "me", "session")
+            .unwrap()
+            .is_some()
+    );
+    // The promise that also rested on the mail stays, resting on the mail.
+    let left = f.store.commitments_from(mail.id).unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].evidence, vec![mail.id]);
+    // People stay, so the same people come back.
+    assert!(f.store.get_person(f.alice).unwrap().is_some());
+}

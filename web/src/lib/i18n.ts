@@ -68,6 +68,7 @@ const en: Dict = {
   'agents.grant.reads': 'Reads', 'agents.grant.takes': 'Takes', 'agents.grant.proposes': 'Proposes', 'agents.grant.model': 'Model', 'agents.grant.runs': 'Runs', 'agents.grant.cannot': 'Cannot',
   'agents.trial': 'Trial on your recent items', 'agents.trial.none': 'It runs only when you write to it or on its schedule, so there is nothing to try in advance.',
   'agents.trial.items': 'Given {n} recent item(s); nothing it did was kept.', 'agents.trial.noproposals': 'It would propose nothing.', 'agents.trial.log': 'What it logged ({n})',
+  'agents.reach.own': 'its own space', 'agents.reach.mail': 'mail to {to}',
   'agents.install': 'Install', 'agents.cancel': 'Cancel', 'agents.reading': 'Reading…', 'agents.choose': 'Install an agent from a file…',
   'agents.runsShort': 'runs', 'agents.approved': 'approved', 'agents.declined': 'declined', 'agents.pending': 'waiting', 'agents.space': 'space',
   'agents.chat.empty': 'Nothing yet. Write to it, or wait for what it watches.', 'agents.read': 'read {n} item(s)',
@@ -156,6 +157,7 @@ const en: Dict = {
   'records.noactions': 'No actions yet.', 'records.running': 'running', 'records.steps': '{end} · {steps} of {max} steps',
   'run.budget': 'run “{task}”, budget {n} steps', 'run.done': 'done in {n} step(s)', 'run.stopped': 'stopped after {n} step(s): {reason}',
   'settings.accounts': 'Accounts', 'settings.noaccounts': 'No accounts yet. Add one with `genatrix account --add you@example.com` or `--add-telegram +…`.',
+  'settings.language': 'Language', 'settings.language.note': 'For this device only.', 'settings.language.auto': 'Follow the system', 'settings.language.zh': '中文', 'settings.language.en': 'English',
   'settings.model': 'Model', 'settings.devices': 'Paired devices', 'settings.devices.note': 'Devices allowed to open this page from another address. Pair a phone here, on the machine Genatrix runs on: it scans the code, and from then on carries its own credential. Revoke a device and its credential is worth nothing.',
   'settings.pair': 'Pair a device', 'settings.pair.code': 'Open Genatrix on the phone at this address and enter the code, or scan:',
   'settings.pair.expires': 'The code is good for five minutes and for one device.', 'settings.pair.local': 'Pairing starts on the machine Genatrix runs on.',
@@ -235,6 +237,7 @@ const zh: Dict = {
   'agents.grant.reads': '能读', 'agents.grant.takes': '能取', 'agents.grant.proposes': '能提议', 'agents.grant.model': '模型', 'agents.grant.runs': '何时运行', 'agents.grant.cannot': '不能',
   'agents.trial': '在你最近的数据上试运行', 'agents.trial.none': '它只在你给它发消息或按日程时运行，没有可以提前试的。',
   'agents.trial.items': '给了它最近的 {n} 条；它做的一切都没有保留。', 'agents.trial.noproposals': '它不会提议任何事。', 'agents.trial.log': '它的日志（{n}）',
+  'agents.reach.own': '它自己的空间', 'agents.reach.mail': '发邮件给 {to}',
   'agents.install': '安装', 'agents.cancel': '取消', 'agents.reading': '读取中…', 'agents.choose': '从文件安装 agent…',
   'agents.runsShort': '次运行', 'agents.approved': '已批准', 'agents.declined': '已拒绝', 'agents.pending': '待批准', 'agents.space': '空间',
   'agents.chat.empty': '还没有内容。给它发条消息，或者等它关注的数据到来。', 'agents.read': '读了 {n} 条',
@@ -323,6 +326,7 @@ const zh: Dict = {
   'records.noactions': '还没有动作。', 'records.running': '进行中', 'records.steps': '{end} · {steps}/{max} 步',
   'run.budget': '运行"{task}"，预算 {n} 步', 'run.done': '{n} 步完成', 'run.stopped': '{n} 步后停止：{reason}',
   'settings.accounts': '账号', 'settings.noaccounts': '还没有账号。用 `genatrix account --add you@example.com` 或 `--add-telegram +…` 添加。',
+  'settings.language': '语言', 'settings.language.note': '只对这台设备生效。', 'settings.language.auto': '跟随系统', 'settings.language.zh': '中文', 'settings.language.en': 'English',
   'settings.model': '模型', 'settings.devices': '已配对设备', 'settings.devices.note': '允许从别的地址打开这个页面的设备。在 Genatrix 运行的这台机器上配对手机：手机扫码，之后带着自己的凭据。吊销一台设备，它的凭据立刻作废。',
   'settings.pair': '配对新设备', 'settings.pair.code': '在手机上打开这个地址并输入配对码，或者扫码：',
   'settings.pair.expires': '配对码五分钟内有效，只能用一次。', 'settings.pair.local': '配对要在 Genatrix 运行的这台机器上开始。',
@@ -338,7 +342,31 @@ const zh: Dict = {
   'unauthorized': '这台设备没有和这个 Genatrix 配对。', 'unauthorized.hint': '在 Genatrix 运行的那台机器上，到设置里配对。',
 };
 
-export const lang: 'zh' | 'en' = typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+// Design 06, "语言": the system's language unless this device was told
+// otherwise in Settings. The choice lives in this browser only; storage that
+// is unavailable (a private window) just means following the system.
+export type LangChoice = 'auto' | 'zh' | 'en';
+const KEY = 'genatrix.lang';
+
+export function languageChoice(): LangChoice {
+  try {
+    const v = localStorage.getItem(KEY);
+    if (v === 'zh' || v === 'en') return v;
+  } catch { /* follow the system */ }
+  return 'auto';
+}
+
+/** Remember the choice and show the page again in it. */
+export function setLanguage(choice: LangChoice) {
+  try {
+    if (choice === 'auto') localStorage.removeItem(KEY); else localStorage.setItem(KEY, choice);
+  } catch { /* nothing to remember it in */ }
+  location.reload();
+}
+
+const system: 'zh' | 'en' = typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+const chosen = languageChoice();
+export const lang: 'zh' | 'en' = chosen === 'auto' ? system : chosen;
 const dict = lang === 'zh' ? zh : en;
 
 export function t(key: string, vars: Record<string, string | number> = {}): string {

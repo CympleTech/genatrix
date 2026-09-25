@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { get, type AgentCard, type AgentPreview, type Risk } from '../lib/api';
+  import { get, langHeader, type AgentCard, type AgentPreview, type Risk } from '../lib/api';
   import { t } from '../lib/i18n';
   import { bytes, cardValue } from '../lib/format';
   import { go } from '../lib/router';
@@ -34,7 +34,7 @@
     try {
       const r = await fetch('/api/agents/preview', {
         method: 'POST', credentials: 'same-origin',
-        headers: { 'content-type': 'application/wasm' }, body: await f.arrayBuffer(),
+        headers: { 'content-type': 'application/wasm', ...langHeader }, body: await f.arrayBuffer(),
       });
       const body = await r.json().catch(() => null);
       if (!r.ok) throw new Error(body?.error || r.statusText);
@@ -49,7 +49,7 @@
     try {
       const r = await fetch('/api/agents/install', {
         method: 'POST', credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hash: preview.hash }),
+        headers: { 'content-type': 'application/json', ...langHeader }, body: JSON.stringify({ hash: preview.hash }),
       });
       const body = await r.json().catch(() => null);
       if (!r.ok) throw new Error(body?.error || r.statusText);
@@ -138,7 +138,7 @@
           <ul class="tried">
             {#each preview.trial.proposals as p}
               <li>
-                <span class="tried-head"><b>{p.label}</b> → {p.reach}</span>
+                <span class="tried-head"><b>{p.label}</b> → {p.to ? t('agents.reach.mail', { to: p.to }) : t('agents.reach.own')}</span>
                 {#if p.card}
                   <dl class="card-fields">
                     {#each p.card.fields as f}<dt>{f.label}</dt><dd>{cardValue(f.value)}</dd>{/each}

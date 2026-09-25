@@ -1,3 +1,5 @@
+import { lang } from './i18n';
+
 // The core's JSON interface. Every call goes to the same origin; a paired
 // device carries its cookie, loopback needs nothing.
 
@@ -20,15 +22,19 @@ async function read(response: Response): Promise<any> {
   return body;
 }
 
+// The core speaks the page's language where it writes words itself, such
+// as an agent's grants (design 06, "语言").
+export const langHeader = { 'accept-language': lang };
+
 export async function get<T = any>(path: string): Promise<T> {
-  return read(await fetch(path, { credentials: 'same-origin' }));
+  return read(await fetch(path, { credentials: 'same-origin', headers: langHeader }));
 }
 
 export async function post<T = any>(path: string, body: unknown = {}): Promise<T> {
   return read(await fetch(path, {
     method: 'POST',
     credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...langHeader },
     body: JSON.stringify(body),
   }));
 }
@@ -123,7 +129,7 @@ export interface AgentCard {
   runs: number; pending: number; approved: number; declined: number; space_bytes: number; risk: Risk;
 }
 export interface GrantLine { label: string; text: string }
-export interface Tried { label: string; reach: string; card: Card | null; draft: string | null }
+export interface Tried { label: string; to: string | null; card: Card | null; draft: string | null }
 export interface Trial {
   items: number; proposals: Tried[]; log: string[];
   outcome: 'ok' | 'refused' | 'limit' | 'trap' | 'agent' | 'none'; detail: string | null;

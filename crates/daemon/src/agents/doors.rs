@@ -40,8 +40,9 @@ pub(super) struct StoreDoors {
 pub struct Tried {
     /// The manifest's label for its kind.
     pub label: String,
-    /// What it would reach: the agent's own space, or a mail's recipients.
-    pub reach: String,
+    /// Whom a mail would reach, with its subject; `None` for the agent's
+    /// own space. The page says which in its own language.
+    pub to: Option<String>,
     /// The card, for an agent's own kind.
     pub card: Option<genatrix_agent::Card>,
     /// A mail's body, for an outward one.
@@ -361,23 +362,21 @@ impl Doors for StoreDoors {
             }
         };
         if let Some(sink) = &self.trial {
-            let (reach, card, draft) = match &effect {
-                genatrix_agent::Effect::Agent { card, .. } => {
-                    ("its own space".to_owned(), Some(card.clone()), None)
-                }
+            let (to, card, draft) = match &effect {
+                genatrix_agent::Effect::Agent { card, .. } => (None, Some(card.clone()), None),
                 genatrix_agent::Effect::SendMail { to, subject, .. } => (
-                    format!("mail to {} · {subject}", to.join(", ")),
+                    Some(format!("{} · {subject}", to.join(", "))),
                     None,
                     Some(draft),
                 ),
-                other => (other.kind().to_owned(), None, None),
+                other => (Some(other.kind().to_owned()), None, None),
             };
             let mut sink = sink
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             sink.push(Tried {
                 label: spec.label.clone(),
-                reach,
+                to,
                 card,
                 draft,
             });

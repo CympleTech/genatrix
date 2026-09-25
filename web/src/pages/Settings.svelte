@@ -1,7 +1,7 @@
 <script lang="ts">
   import qrcode from 'qrcode-generator';
   import { get, post, type Device } from '../lib/api';
-  import { t } from '../lib/i18n';
+  import { languageChoice, setLanguage, t, type LangChoice } from '../lib/i18n';
   import { bytes } from '../lib/format';
   import { status } from '../lib/status';
   import Empty from '../components/Empty.svelte';
@@ -62,6 +62,18 @@
 </script>
 
 <section class="pane settings">
+  <div class="section">
+    <h2 class="group-title">{t('settings.language')}</h2>
+    <div class="chooser">
+      {#each ['auto', 'zh', 'en'] as const as choice}
+        <button type="button" class="choose" class:is-on={languageChoice() === choice}
+          onclick={() => { if (languageChoice() !== choice) setLanguage(choice as LangChoice); }}>
+          {t(`settings.language.${choice}`)}
+        </button>
+      {/each}
+    </div>
+    <p class="note">{t('settings.language.note')}</p>
+  </div>
   <AccountsPanel />
   <ModelsPanel />
   <AgentsPanel />

@@ -1,0 +1,9 @@
+[package]
+name = "genatrix-agent-sdk"
+description = "Write a Genatrix functional agent: bindings to the WIT contract and small helpers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wit-bindgen.workspace = true

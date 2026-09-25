@@ -1,0 +1,152 @@
+// The one contract between Genatrix and a functional agent (design 11).
+//
+// An agent imports only what is below. It has no network, no files, no
+// processes and no environment: the host links none of them. Everything it
+// can reach goes through one of these doors, and the core decides what each
+// door returns.
+package genatrix:agent@0.1.0;
+
+interface types {
+    /// Sensitivity, as in design 02.
+    enum level { public, personal, secret }
+
+    /// An attachment of an item. Its bytes never cross a door; its text may.
+    record blob-ref {
+        id: string,
+        name: option<string>,
+        mime: string,
+        size: u64,
+    }
+
+    /// One item the agent's read scope lets it see.
+    record item {
+        id: string,
+        /// `imap`, `telegram`.
+        connector: string,
+        /// `mail`, `message`, `event`, ...
+        kind: string,
+        /// `inbound`, `outbound`, `internal`, `neutral`.
+        direction: string,
+        occurred-ms: s64,
+        /// The author's display name, if known.
+        author: option<string>,
+        /// The thread's title or the mail's subject, if any.
+        title: option<string>,
+        text: string,
+        blobs: list<blob-ref>,
+        level: level,
+    }
+
+    /// A narrowing of the read scope. The core intersects it with the
+    /// manifest's scope; there is no way to ask for more.
+    record filter {
+        since-ms: option<s64>,
+        until-ms: option<s64>,
+        /// Full-text words.
+        text: option<string>,
+        limit: u32,
+    }
+
+    /// Why a model is being called. A subset of design 02's closed list.
+    enum purpose { classify, extract, summarize, draft, translate }
+
+    record message {
+        /// `system` or `user`.
+        role: string,
+        content: string,
+    }
+
+    /// A value in the agent's own space.
+    variant value {
+        null,
+        integer(s64),
+        real(f64),
+        text(string),
+        bytes(list<u8>),
+    }
+
+    record money {
+        cents: s64,
+        /// ISO 4217, e.g. `NZD`.
+        currency: string,
+    }
+
+    variant field-value {
+        text(string),
+        money(money),
+        /// `YYYY-MM-DD`.
+        date(string),
+    }
+
+    record field {
+        label: string,
+        value: field-value,
+    }
+
+    /// What the approval page shows. Data only: the page renders it with a
+    /// fixed template and runs nothing the agent wrote.
+    record card {
+        title: string,
+        fields: list<field>,
+        /// Item ids this proposal rests on.
+        evidence: list<string>,
+    }
+}
+
+interface items {
+    use types.{item, filter};
+    query: func(filter: filter) -> list<item>;
+    /// Outside the read scope reads as absent.
+    get: func(id: string) -> option<item>;
+}
+
+interface blobs {
+    /// The text of an attachment, extracted by the core.
+    text: func(id: string) -> result<string, string>;
+}
+
+interface model {
+    use types.{purpose, message};
+    /// Goes through the egress gate. The level is what this run has read,
+    /// whatever the messages claim.
+    call: func(purpose: purpose, messages: list<message>) -> result<string, string>;
+}
+
+interface space {
+    use types.{value};
+    /// Run a statement in the agent's own database. Returns rows changed.
+    execute: func(sql: string, params: list<value>) -> result<u64, string>;
+    query: func(sql: string, params: list<value>) -> result<list<list<value>>, string>;
+}
+
+interface actions {
+    use types.{card};
+    /// Propose an effect for the user to approve. `kind` must be in the
+    /// manifest. `payload` is handed back to `apply` once approved.
+    propose: func(kind: string, card: card, payload: string) -> result<string, string>;
+}
+
+interface host {
+    /// The run's time, fixed for the run and recorded.
+    now-ms: func() -> s64;
+    /// A line in the run record.
+    log: func(line: string);
+}
+
+world agent {
+    import items;
+    import blobs;
+    import model;
+    import space;
+    import actions;
+    import host;
+
+    /// New items in scope arrived.
+    export on-items: func(ids: list<string>) -> result<_, string>;
+    /// The user wrote to the agent. The answer is shown in its conversation.
+    export on-message: func(text: string) -> result<string, string>;
+    /// A schedule named in the manifest came due.
+    export on-schedule: func(name: string) -> result<_, string>;
+    /// An approved proposal of the agent's own kind: write it to the space.
+    export apply: func(kind: string, payload: string) -> result<_, string>;
+}

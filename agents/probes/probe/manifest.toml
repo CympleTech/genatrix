@@ -1,0 +1,19 @@
+name = "Probe"
+purpose = "Tests the sandbox from the inside; never installed"
+author = "Genatrix tests"
+model = ["summarize"]
+
+[reads]
+connectors = ["imap"]
+max_level = "personal"
+
+[[proposes]]
+kind = "note"
+label = "Keep a note"
+
+[[triggers]]
+on = "message"
+
+[quota]
+seconds = 2
+memory_mb = 64

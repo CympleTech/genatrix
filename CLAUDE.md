@@ -34,6 +34,14 @@ way, for one accessor, and goes away when upstream ships it.
 `swift build`, not Cargo, and holds no data and no keys: it starts the core,
 shows what the core's local API says, and opens the page in a window.
 
+`wit/genatrix-agent.wit` is the one contract with functional agents (design
+11). `crates/host` runs them: it holds no data and reaches the store, the gate
+and actions only through the `Doors` trait the daemon implements. `agents/` is
+a separate Cargo workspace built for `wasm32-wasip2`: the guest SDK, the
+agents, and test probes. `agents/build.sh` builds and packs them and refreshes
+`crates/host/tests/fixtures/`, which are committed so the root workspace tests
+without the wasm target.
+
 `web/` is the interface (design 06): Svelte and Vite, phone first. Its build
 lands in `crates/daemon/src/web/dist/` under fixed names and is compiled into
 the core; the built files are committed, so changing `web/` means running
@@ -53,4 +61,10 @@ MLX Swift package, which takes several minutes. When `web/` changes:
 
 ```sh
 cd web && npm ci && npm run check && npm run build
+```
+
+When `agents/` or `wit/` changes:
+
+```sh
+cd agents && cargo fmt --all && cargo clippy --release -- -D warnings && ./build.sh
 ```

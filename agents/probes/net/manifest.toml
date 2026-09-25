@@ -1,0 +1,8 @@
+name = "Net probe"
+purpose = "Tries to open a socket; must not even start"
+author = "Genatrix tests"
+
+[reads]
+
+[[triggers]]
+on = "message"

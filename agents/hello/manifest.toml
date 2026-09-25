@@ -1,0 +1,19 @@
+name = "Hello"
+purpose = "Notes each new mail from the last week and answers how many it has seen"
+author = "Genatrix"
+model = ["summarize"]
+
+[reads]
+connectors = ["imap"]
+kinds = ["mail"]
+days = 7
+
+[[proposes]]
+kind = "note"
+label = "Keep a note"
+
+[[triggers]]
+on = "items"
+
+[[triggers]]
+on = "message"

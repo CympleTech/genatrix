@@ -1,0 +1,28 @@
+[package]
+name = "genatrix-host"
+description = "Runs functional agents: manifests, packages, and a WASM sandbox with only the doors the core opens"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+genatrix-model.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+sha2.workspace = true
+hex.workspace = true
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+wasmtime-wasi-io.workspace = true
+wasmparser.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+hex.workspace = true
+
+[lints]
+workspace = true

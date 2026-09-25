@@ -36,7 +36,7 @@ The version is the SHA-256 of the file. The manifest is read without instantiati
 ### Runner
 
 - wasmtime with the component model. Fuel for instructions, `StoreLimits` for memory, epoch interruption for wall time; each run a fresh `Store` and instance.
-- WASI is linked interface by interface, never whole: clocks (the wall clock is the run's `now`, fixed for the run), random (seeded per run and recorded), stdout and stderr into the run's log, environment empty, filesystem with no preopens. `wasi:sockets` and `wasi:http` are not linked, so a component that imports them fails to instantiate. That failure is the test for invariant 13.
+- WASI is linked interface by interface, never whole: clocks (the wall clock is the run's `now`, fixed for the run), random (seeded per run and recorded), stdout and stderr discarded (the `log` door is the record), environment empty, filesystem with no preopens. `wasi:sockets` and `wasi:http` are not linked, so a component that imports them fails to instantiate. That failure is the test for invariant 13.
 - Guest exports: `on-items(ids)`, `on-message(text)`, `on-schedule(name)`, `apply(kind, payload)`.
 
 ### Doors
@@ -77,6 +77,12 @@ Each step ends with the checks clean and the invariants it touches tested.
 | A8 | Management devices and the passphrase (design 06 v0.7); remote high-privilege operations | 11, 12, 18 |
 | A9 | Calendar connector; the travel agent | the interface holds for a second, different agent |
 | A10 | The developer guide, `genatrix agent test` (replay against fixtures or a snapshot, nothing executed), then open | |
+
+## Status
+
+| Step | State |
+|---|---|
+| A1 | done: the WIT world; manifest (closed schema, ceilings) and single-file package; the runner with fuel, memory and wall-time limits, a fixed clock, seeded randomness, WASI linked interface by interface without sockets; the `Doors` trait; `agents/sdk`, `agents/hello`, and two probes; fifteen sandbox tests against the built components, covering invariants 13, 19, 20 and the host's half of 14 |
 
 ## Decisions taken here
 

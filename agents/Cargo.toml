@@ -1,0 +1,22 @@
+# Guest code for functional agents (design 11). A workspace of its own:
+# everything here is built for wasm32-wasip2 and runs inside the core's
+# sandbox, never in the core itself.
+[workspace]
+resolver = "3"
+members = ["sdk", "hello", "probes/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+genatrix-agent-sdk = { path = "sdk" }
+wit-bindgen = "0.62"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"

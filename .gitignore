@@ -5,3 +5,4 @@
 /vendor/crabllm/mlx/.build
 apps/menubar/.build/
 /dist
+/agents/target

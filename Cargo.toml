@@ -24,6 +24,7 @@ genatrix-llm = { path = "crates/llm" }
 genatrix-connector = { path = "crates/connector" }
 genatrix-connector-imap = { path = "crates/connector-imap" }
 genatrix-connector-telegram = { path = "crates/connector-telegram" }
+genatrix-host = { path = "crates/host" }
 
 # vendored crabllm (see vendor/crabllm/GENATRIX-VENDOR.md)
 crabllm-core = { path = "vendor/crabllm/crates/core" }
@@ -59,6 +60,10 @@ regex = "1"
 hex = "0.4"
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
 tempfile = "3"
+wasmtime = { version = "49", default-features = false, features = ["cranelift", "component-model", "runtime", "std", "parallel-compilation"] }
+wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }
+wasmtime-wasi-io = { version = "49", default-features = false }
+wasmparser = "0.240"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

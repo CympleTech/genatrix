@@ -200,6 +200,86 @@ impl Store {
         Ok(n > 0)
     }
 
+    /// Fold one person into another, in one transaction: every item they
+    /// wrote or received, every commitment either way, and the direction of
+    /// each item recomputed when `into` is the user. The absorbed person stays as
+    /// a row with no items, named in `merged_from`, so the merge can be
+    /// undone (design 01). Returns how many items changed.
+    ///
+    /// Used when an address the store had as somebody else turns out to be
+    /// one of the user's own, because the user added it as an account.
+    pub fn fold_person(&self, from: PersonId, into: PersonId, into_is_self: bool) -> Result<usize> {
+        if from == into {
+            return Ok(0);
+        }
+        let (f, t) = (from.to_string(), into.to_string());
+        let quoted_from = format!("\"{f}\"");
+        let quoted_into = format!("\"{t}\"");
+        self.tx(|tx| {
+            // The items touched, before anything moves, with what the
+            // direction depends on.
+            let mut stmt = tx.prepare(
+                "SELECT id, author, recipients, direction FROM item
+                 WHERE author = ?1 OR recipients LIKE ?2",
+            )?;
+            let touched: Vec<(String, Option<String>, String, String)> = stmt
+                .query_map(params![f, format!("%{quoted_from}%")], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                })?
+                .collect::<std::result::Result<_, _>>()?;
+            drop(stmt);
+            for (id, author, recipients, direction) in &touched {
+                let author = author
+                    .as_deref()
+                    .map(|a| if a == f { t.as_str() } else { a });
+                let recipients = recipients.replace(&quoted_from, &quoted_into);
+                // A message the source gives no direction to keeps none.
+                let direction = if direction == "neutral" || !into_is_self {
+                    direction.clone()
+                } else {
+                    let from_self = author == Some(t.as_str());
+                    let to_self = recipients.contains(&quoted_into);
+                    match (from_self, to_self) {
+                        (true, true) => "internal",
+                        (true, false) => "outbound",
+                        (false, _) => "inbound",
+                    }
+                    .to_owned()
+                };
+                tx.execute(
+                    "UPDATE item SET author = ?2, recipients = ?3, direction = ?4 WHERE id = ?1",
+                    params![id, author, recipients, direction],
+                )?;
+            }
+            tx.execute(
+                "UPDATE commitment SET from_person = ?2 WHERE from_person = ?1",
+                params![f, t],
+            )?;
+            tx.execute(
+                "UPDATE commitment SET to_person = ?2 WHERE to_person = ?1",
+                params![f, t],
+            )?;
+            tx.execute(
+                "UPDATE handle SET person_id = ?2 WHERE person_id = ?1",
+                params![f, t],
+            )?;
+            let merged: String = tx.query_row(
+                "SELECT merged_from FROM person WHERE id = ?1",
+                params![t],
+                |r| r.get(0),
+            )?;
+            let mut merged: Vec<String> = serde_json::from_str(&merged).unwrap_or_default();
+            if !merged.contains(&f) {
+                merged.push(f.clone());
+            }
+            tx.execute(
+                "UPDATE person SET merged_from = ?2 WHERE id = ?1",
+                params![t, serde_json::to_string(&merged)?],
+            )?;
+            Ok(touched.len())
+        })
+    }
+
     /// Items authored by one person become authored by another. Returns
     /// how many. Direction is not recomputed here; the caller re-derives.
     pub fn reassign_author(&self, from: PersonId, to: PersonId) -> Result<usize> {

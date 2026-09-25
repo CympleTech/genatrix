@@ -372,3 +372,41 @@ fn export_then_import_is_lossless() {
         merged_from: vec![],
     };
 }
+
+#[test]
+fn folding_a_stray_self_address_rewrites_authors_recipients_and_directions() {
+    // Alice turns out to be the user's second account.
+    let f = fixture();
+    let bob = f
+        .store
+        .person_for_handle(HandleKind::TelegramId, "3", "Bob")
+        .unwrap();
+    message(&f, "2:1", f.alice, f.me, "2026-09-01T10:00:00Z", "a to me");
+    message(&f, "2:2", f.me, f.alice, "2026-09-01T11:00:00Z", "me to a");
+    message(&f, "2:3", f.alice, bob, "2026-09-01T12:00:00Z", "a to bob");
+    message(&f, "2:4", bob, f.me, "2026-09-01T13:00:00Z", "bob to me");
+
+    assert_eq!(f.store.fold_person(f.alice, f.me, true).unwrap(), 3);
+
+    let direction_of = |text: &str| {
+        let all = f.store.query_items(&ItemQuery::default()).unwrap();
+        let item = all.into_iter().find(|i| i.text == text).unwrap();
+        assert!(!item.recipients.contains(&f.alice));
+        assert_ne!(item.author, Some(f.alice));
+        item.direction
+    };
+    assert_eq!(direction_of("a to me"), Direction::Internal);
+    assert_eq!(direction_of("me to a"), Direction::Internal);
+    assert_eq!(direction_of("a to bob"), Direction::Outbound);
+    assert_eq!(direction_of("bob to me"), Direction::Inbound);
+
+    let handle = f
+        .store
+        .find_handle(HandleKind::TelegramId, "2")
+        .unwrap()
+        .unwrap();
+    assert_eq!(handle.person_id, f.me);
+    let me = f.store.self_person().unwrap().unwrap();
+    assert!(me.merged_from.contains(&f.alice));
+    assert_eq!(f.store.fold_person(f.me, f.me, true).unwrap(), 0);
+}

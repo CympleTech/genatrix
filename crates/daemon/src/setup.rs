@@ -47,13 +47,58 @@ pub async fn add_mail(
     }
     Keychain::mail().store(&account.address, password)?;
     accounts.save(&path)?;
-    let me = system
-        .store
-        .person_for_handle(HandleKind::Email, &account.address, "")?;
-    if system.store.self_person()?.is_none() {
-        system.store.set_self(me)?;
-    }
+    claim_address(system, HandleKind::Email, &account.address, "")?;
     Ok(account)
+}
+
+/// An account's address is the user's own (design 01). With no self person
+/// yet, the address's person becomes it. With one already, the address
+/// joins it; and if the store had the address as somebody else, which is
+/// what happens when a second mailbox has been writing to the first, that
+/// somebody is folded into the user: their messages become the user's own,
+/// with directions recomputed, and they leave the list of people. Returns
+/// how many items changed hands.
+pub fn claim_address(
+    system: &System,
+    kind: HandleKind,
+    value: &str,
+    name: &str,
+) -> anyhow::Result<usize> {
+    let Some(me) = system.store.self_person()? else {
+        let person = system.store.person_for_handle(kind, value, name)?;
+        system.store.set_self(person)?;
+        return Ok(0);
+    };
+    match system.store.find_handle(kind, value)? {
+        Some(existing) if existing.person_id == me.id => Ok(0),
+        Some(existing) => {
+            let moved = system.store.fold_person(existing.person_id, me.id, true)?;
+            tracing::info!(
+                items = moved,
+                "an account's address was somebody else; folded into you"
+            );
+            // The people and groups lists counted them as somebody else.
+            *system
+                .people
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+            *system
+                .groups
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+            Ok(moved)
+        }
+        None => {
+            system.store.insert_handle(&Handle {
+                id: HandleId::new(),
+                person_id: me.id,
+                kind,
+                value: Handle::normalize(kind, value),
+                confidence: Confidence::Confirmed,
+            })?;
+            Ok(0)
+        }
+    }
 }
 
 /// Keep a Telegram sign-in: the session in the encrypted store, the account
@@ -70,32 +115,12 @@ pub fn keep_telegram(system: &System, phone: &str, signed_in: &SignedIn) -> anyh
     accounts.add_telegram(phone, signed_in.user_id, &signed_in.name);
     accounts.save(&path)?;
 
-    // With a self person already there from an earlier account, the handle
-    // joins it rather than making a stranger (design 01).
-    let value = signed_in.user_id.to_string();
-    if let Some(me) = system.store.self_person()? {
-        if let Some(existing) = system.store.find_handle(HandleKind::TelegramId, &value)? {
-            if existing.person_id != me.id {
-                system
-                    .store
-                    .move_handle(HandleKind::TelegramId, &value, me.id)?;
-                system.store.reassign_author(existing.person_id, me.id)?;
-            }
-        } else {
-            system.store.insert_handle(&Handle {
-                id: HandleId::new(),
-                person_id: me.id,
-                kind: HandleKind::TelegramId,
-                value,
-                confidence: Confidence::Confirmed,
-            })?;
-        }
-    } else {
-        let me = system
-            .store
-            .person_for_handle(HandleKind::TelegramId, &value, &signed_in.name)?;
-        system.store.set_self(me)?;
-    }
+    claim_address(
+        system,
+        HandleKind::TelegramId,
+        &signed_in.user_id.to_string(),
+        &signed_in.name,
+    )?;
     Ok(())
 }
 

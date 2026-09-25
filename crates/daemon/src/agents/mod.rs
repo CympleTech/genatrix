@@ -7,7 +7,9 @@
 //! own key (15), and what it reads is what its manifest names (14).
 
 mod doors;
+pub mod life;
 pub mod terminal;
+pub mod words;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -32,6 +34,8 @@ pub struct Agents {
     /// One run at a time. Runs are short and rare; taking turns keeps a
     /// space from seeing two runs' statements interleaved.
     turn: tokio::sync::Mutex<()>,
+    /// Packages uploaded from the page, by hash, waiting for their install.
+    pub(crate) staged: Mutex<HashMap<String, (Instant, Vec<u8>)>>,
 }
 
 impl std::fmt::Debug for Agents {
@@ -52,6 +56,7 @@ impl Agents {
             runner: OnceLock::new(),
             spaces: Mutex::new(HashMap::new()),
             turn: tokio::sync::Mutex::new(()),
+            staged: Mutex::new(HashMap::new()),
         }
     }
 
@@ -65,6 +70,14 @@ impl Agents {
 
     fn package_path(&self, agent_id: &str, hash: &str) -> PathBuf {
         self.dir.join(agent_id).join(format!("{hash}.wasm"))
+    }
+
+    /// Close an agent's space, so its file can go.
+    fn forget_space(&self, agent_id: &str) {
+        self.spaces
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(agent_id);
     }
 
     fn space(&self, agent_id: &str, quota_mb: u32) -> anyhow::Result<Arc<Space>> {
@@ -99,6 +112,8 @@ pub fn install(system: &System, bytes: Vec<u8>, now_ms: i64) -> anyhow::Result<S
         state: AgentState::Active,
         space_level: genatrix_model::Level::Public,
         installed_ms: now_ms,
+        // New items are what arrives from now on.
+        cursor: Some(system.store.latest_item_row()?),
     };
     let path = system.agents.package_path(&agent.id, &agent.version);
     if let Some(parent) = path.parent() {

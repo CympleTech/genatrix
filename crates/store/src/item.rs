@@ -139,6 +139,12 @@ pub struct ItemQuery {
     /// Only items whose text contains this phrase. Under three characters
     /// matches nothing, as in [`Store::search_items`].
     pub text: Option<String>,
+    /// Only items stored after this row, as [`Store::item_row`] numbers
+    /// them: every new item or new version gets a higher one.
+    pub after_row: Option<i64>,
+    /// Order by storage, oldest first, instead of by occurrence, newest
+    /// first: for handing new items over in the order they came.
+    pub by_ingestion: bool,
     /// Include upstream-deleted items. Off by default.
     pub include_tombstoned: bool,
     /// Which versions.
@@ -257,6 +263,10 @@ impl ItemQuery {
                 ));
             }
         }
+        if let Some(after) = self.after_row {
+            let p = arg(Box::new(after));
+            where_.push(format!("i.rowid > {p}"));
+        }
         if !self.include_tombstoned {
             where_.push("i.tombstoned = 0".into());
         }
@@ -265,11 +275,16 @@ impl ItemQuery {
         }
         let limit = if self.limit == 0 { 100 } else { self.limit };
         let sql = format!(
-            "SELECT i.* FROM item i {} ORDER BY i.occurred_ms DESC, i.id DESC LIMIT {} OFFSET {}",
+            "SELECT i.* FROM item i {} ORDER BY {} LIMIT {} OFFSET {}",
             if where_.is_empty() {
                 String::new()
             } else {
                 format!("WHERE {}", where_.join(" AND "))
+            },
+            if self.by_ingestion {
+                "i.rowid ASC"
+            } else {
+                "i.occurred_ms DESC, i.id DESC"
             },
             limit,
             self.offset
@@ -406,6 +421,25 @@ impl Store {
             return Err(crate::Error::NotFound(format!("item {id}")));
         }
         Ok(())
+    }
+
+    /// The storage row of an item: what [`ItemQuery::after_row`] compares.
+    pub fn item_row(&self, id: ItemId) -> Result<Option<i64>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT rowid FROM item WHERE id = ?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// The highest storage row so far; 0 when there are no items.
+    pub fn latest_item_row(&self) -> Result<i64> {
+        Ok(self
+            .conn()
+            .query_row("SELECT coalesce(max(rowid), 0) FROM item", [], |r| r.get(0))?)
     }
 
     /// Run a timeline query.

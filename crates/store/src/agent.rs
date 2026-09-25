@@ -42,6 +42,8 @@ pub struct StoredAgent {
     pub space_level: Level,
     /// When it was installed.
     pub installed_ms: i64,
+    /// The storage row of the last item handed to it as new.
+    pub cursor: Option<i64>,
 }
 
 /// One run, as recorded.
@@ -94,6 +96,9 @@ fn row_to_agent(r: &rusqlite::Row<'_>) -> rusqlite::Result<(StoredAgent, String,
             },
             space_level: Level::Public,
             installed_ms: r.get("installed_ms")?,
+            cursor: r
+                .get::<_, Option<String>>("cursor")?
+                .and_then(|c| c.parse().ok()),
         },
         state,
         level,
@@ -111,15 +116,16 @@ impl Store {
     pub fn insert_agent(&self, agent: &StoredAgent, manifest: &str) -> Result<()> {
         self.tx(|tx| {
             tx.execute(
-                "INSERT INTO agent (id, name, version, state, space_level, installed_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO agent (id, name, version, state, space_level, installed_ms, cursor)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     agent.id,
                     agent.name,
                     agent.version,
                     agent.state.as_str(),
                     agent.space_level.as_str(),
-                    agent.installed_ms
+                    agent.installed_ms,
+                    agent.cursor.map(|c| c.to_string())
                 ],
             )?;
             tx.execute(
@@ -210,6 +216,33 @@ impl Store {
         Ok(())
     }
 
+    /// Move an agent's new-items cursor.
+    pub fn set_agent_cursor(&self, id: &str, cursor: i64) -> Result<()> {
+        self.conn().execute(
+            "UPDATE agent SET cursor = ?2 WHERE id = ?1",
+            params![id, cursor.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Forget an agent: its row, its approved versions, its runs. The
+    /// ledger keeps what it did; its space file is the caller's to remove.
+    pub fn delete_agent(&self, id: &str) -> Result<()> {
+        self.conn()
+            .execute("DELETE FROM agent WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// When a schedule of this agent last ran, if it ever did.
+    pub fn last_schedule_run(&self, agent_id: &str, name: &str) -> Result<Option<i64>> {
+        Ok(self.conn().query_row(
+            "SELECT max(started_ms) FROM agent_run
+             WHERE agent_id = ?1 AND invocation = 'schedule' AND input = ?2",
+            params![agent_id, name],
+            |r| r.get(0),
+        )?)
+    }
+
     /// Proposals made since `since_ms`, by one agent or by all of them.
     pub fn agent_proposals_since(&self, agent_id: Option<&str>, since_ms: i64) -> Result<u64> {
         let n: i64 = self.conn().query_row(
@@ -276,6 +309,7 @@ mod tests {
             state: AgentState::Active,
             space_level: Level::Public,
             installed_ms: 5,
+            cursor: None,
         }
     }
 

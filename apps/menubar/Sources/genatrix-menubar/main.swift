@@ -225,7 +225,7 @@ final class Core {
 
 /// One window with the page in it. Made on first open, kept across closes,
 /// reloaded when the core it showed has gone away and come back.
-final class Page: NSObject, NSWindowDelegate, WKNavigationDelegate {
+final class Page: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
     private var window: NSWindow?
     private var web: WKWebView?
     private var failed = false
@@ -255,6 +255,7 @@ final class Page: NSObject, NSWindowDelegate, WKNavigationDelegate {
         let web = WKWebView(frame: window.contentView!.bounds, configuration: configuration)
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
+        web.uiDelegate = self
         window.contentView?.addSubview(web)
         web.load(URLRequest(url: url))
         self.window = window
@@ -266,10 +267,34 @@ final class Page: NSObject, NSWindowDelegate, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed = true }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed = true }
 
+    // A file input on the page, such as installing an agent from a package:
+    // the system's open panel, since a web view has none of its own.
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        if let window = window {
+            panel.beginSheetModal(for: window) { answer in
+                completionHandler(answer == .OK ? panel.urls : nil)
+            }
+        } else {
+            completionHandler(panel.runModal() == .OK ? panel.urls : nil)
+        }
+    }
+
     // Links that leave the core's page go to the browser; the window shows
-    // Genatrix and nothing else.
+    // Genatrix and nothing else. A download, such as an agent's exported
+    // data, goes to the browser too, which saves it where downloads go.
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if navigationAction.shouldPerformDownload, let url = navigationAction.request.url {
+            NSWorkspace.shared.open(url)
+            decisionHandler(.cancel)
+            return
+        }
         if let url = navigationAction.request.url, let host = url.host,
            host != "127.0.0.1", host != "localhost", navigationAction.navigationType == .linkActivated {
             NSWorkspace.shared.open(url)

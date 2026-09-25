@@ -31,6 +31,21 @@ pub(super) struct StoreDoors {
     read: Vec<ItemId>,
     /// Proposals made in this run, not yet in the run record.
     proposed: u64,
+    /// In a trial, where proposals go instead of the approvals.
+    trial: Option<Arc<std::sync::Mutex<Vec<Tried>>>>,
+}
+
+/// A proposal a trial run would have made.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct Tried {
+    /// The manifest's label for its kind.
+    pub label: String,
+    /// What it would reach: the agent's own space, or a mail's recipients.
+    pub reach: String,
+    /// The card, for an agent's own kind.
+    pub card: Option<genatrix_agent::Card>,
+    /// A mail's body, for an outward one.
+    pub draft: Option<String>,
 }
 
 impl StoreDoors {
@@ -53,54 +68,19 @@ impl StoreDoors {
             handle,
             read: Vec::new(),
             proposed: 0,
+            trial: None,
         }
     }
 
-    /// The read scope as a query, narrowed by the agent's filter. `None`
-    /// when the manifest reads nothing.
+    /// The read scope as a query, narrowed by the agent's filter.
     pub(super) fn scoped(&self, filter: &wit::Filter) -> Option<ItemQuery> {
-        let r = &self.manifest.reads;
-        let connectors: Vec<Connector> = r
-            .connectors
-            .iter()
-            .filter_map(|c| match c.as_str() {
-                "imap" => Some(Connector::Imap),
-                "telegram" => Some(Connector::Telegram),
-                _ => None,
-            })
-            .collect();
-        if connectors.is_empty() {
-            return None;
-        }
-        let kinds = r
-            .kinds
-            .iter()
-            .filter_map(|k| match k.as_str() {
-                "mail" => Some(Kind::Mail),
-                "message" => Some(Kind::Message),
-                "event" => Some(Kind::Event),
-                _ => None,
-            })
-            .collect();
-        let floor = r.days.map(|d| self.now - Duration::days(i64::from(d)));
-        let asked = filter.since_ms.and_then(DateTime::from_timestamp_millis);
-        let since = match (floor, asked) {
-            (Some(f), Some(a)) => Some(f.max(a)),
-            (f, a) => f.or(a),
-        };
-        Some(ItemQuery {
-            since,
-            until: filter.until_ms.and_then(DateTime::from_timestamp_millis),
-            kinds,
-            max_level: Some(r.max_level),
-            connectors,
-            with_attachment: r.with_attachment,
-            attachment_mimes: r.mime.clone(),
-            matching: r.matching.clone(),
-            text: filter.text.clone(),
-            limit: filter.limit.clamp(1, 200),
-            ..ItemQuery::default()
-        })
+        scope(&self.manifest, self.now, filter)
+    }
+
+    /// Hold proposals instead of storing them: a trial run before install.
+    pub(super) fn trial(mut self, sink: Arc<std::sync::Mutex<Vec<Tried>>>) -> Self {
+        self.trial = Some(sink);
+        self
     }
 
     fn to_wit(&self, item: &Item) -> wit::Item {
@@ -203,6 +183,57 @@ impl StoreDoors {
     }
 }
 
+/// A manifest's read scope as a query, narrowed by the agent's filter.
+/// `None` when the manifest reads nothing.
+pub(super) fn scope(
+    manifest: &Manifest,
+    now: DateTime<Utc>,
+    filter: &wit::Filter,
+) -> Option<ItemQuery> {
+    let r = &manifest.reads;
+    let connectors: Vec<Connector> = r
+        .connectors
+        .iter()
+        .filter_map(|c| match c.as_str() {
+            "imap" => Some(Connector::Imap),
+            "telegram" => Some(Connector::Telegram),
+            _ => None,
+        })
+        .collect();
+    if connectors.is_empty() {
+        return None;
+    }
+    let kinds = r
+        .kinds
+        .iter()
+        .filter_map(|k| match k.as_str() {
+            "mail" => Some(Kind::Mail),
+            "message" => Some(Kind::Message),
+            "event" => Some(Kind::Event),
+            _ => None,
+        })
+        .collect();
+    let floor = r.days.map(|d| now - Duration::days(i64::from(d)));
+    let asked = filter.since_ms.and_then(DateTime::from_timestamp_millis);
+    let since = match (floor, asked) {
+        (Some(f), Some(a)) => Some(f.max(a)),
+        (f, a) => f.or(a),
+    };
+    Some(ItemQuery {
+        since,
+        until: filter.until_ms.and_then(DateTime::from_timestamp_millis),
+        kinds,
+        max_level: Some(r.max_level),
+        connectors,
+        with_attachment: r.with_attachment,
+        attachment_mimes: r.mime.clone(),
+        matching: r.matching.clone(),
+        text: filter.text.clone(),
+        limit: filter.limit.clamp(1, 200),
+        ..ItemQuery::default()
+    })
+}
+
 fn space_value(v: wit::Value) -> SpaceValue {
     match v {
         wit::Value::Null => SpaceValue::Null,
@@ -299,7 +330,9 @@ impl Doors for StoreDoors {
             .proposal(kind)
             .cloned()
             .ok_or_else(|| format!("`{kind}` is not declared in the manifest"))?;
-        self.within_cap()?;
+        if self.trial.is_none() {
+            self.within_cap()?;
+        }
         let read: std::collections::HashSet<ItemId> = self.read.iter().copied().collect();
         // Evidence is what the agent actually read in this run, nothing it
         // merely names.
@@ -327,6 +360,29 @@ impl Doors for StoreDoors {
                 return Err("this kind of effect is not open to agents yet".into());
             }
         };
+        if let Some(sink) = &self.trial {
+            let (reach, card, draft) = match &effect {
+                genatrix_agent::Effect::Agent { card, .. } => {
+                    ("its own space".to_owned(), Some(card.clone()), None)
+                }
+                genatrix_agent::Effect::SendMail { to, subject, .. } => (
+                    format!("mail to {} · {subject}", to.join(", ")),
+                    None,
+                    Some(draft),
+                ),
+                other => (other.kind().to_owned(), None, None),
+            };
+            let mut sink = sink
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            sink.push(Tried {
+                label: spec.label.clone(),
+                reach,
+                card,
+                draft,
+            });
+            return Ok(format!("trial-{}", sink.len()));
+        }
         let action = self
             .system
             .actions

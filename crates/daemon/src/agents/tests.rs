@@ -652,3 +652,140 @@ async fn too_many_proposals_pause_the_agent() {
         genatrix_store::AgentState::Paused
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_trial_runs_on_recent_items_and_keeps_nothing() {
+    // Design 11, ruling 9.
+    let (_dir, system) = test_system();
+    let s = seed(&system);
+    let package = Package::read(fixture("hello")).unwrap();
+    let trial = life::trial(Arc::clone(&system), package).await.unwrap();
+    assert_eq!(trial.outcome, "ok", "{:?}", trial.detail);
+    // Hello reads personal mail from imap in the last week: of the five
+    // seeded, not the Telegram one, the secret one or the old one.
+    assert_eq!(trial.items, 2);
+    assert!(trial.log.contains(&"seen Invoice 42".to_owned()));
+    assert!(system.store.all_agents().unwrap().is_empty());
+    assert!(
+        system
+            .actions
+            .list(&system.store, None, 10)
+            .unwrap()
+            .is_empty()
+    );
+    let _ = s;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn new_items_wake_an_agent_once() {
+    let (_dir, system) = test_system();
+    seed(&system);
+    let agent = install(&system, fixture("hello"), 1).unwrap();
+    // What was there at install is history, not news.
+    assert_eq!(life::wake(Arc::clone(&system)).await.unwrap(), 0);
+    let thread = system.store.all_items().unwrap()[0].thread_id;
+    let fresh = mail(
+        &system,
+        thread,
+        Connector::Imap,
+        "Invoice 43",
+        0,
+        Level::Personal,
+        true,
+    );
+    assert_eq!(life::wake(Arc::clone(&system)).await.unwrap(), 1);
+    let runs = system.store.agent_runs(&agent.id, 5).unwrap();
+    assert_eq!(runs[0].reads, vec![fresh.to_string()]);
+    assert_eq!(life::wake(Arc::clone(&system)).await.unwrap(), 0);
+}
+
+#[test]
+fn schedules_fall_due_where_they_say() {
+    use chrono::{Local, TimeZone};
+    let now = Local.with_ymd_and_hms(2026, 9, 25, 10, 0, 0).unwrap(); // a Friday
+    let at = |every: &str, t: &str| {
+        life::last_due(every, t, now)
+            .unwrap()
+            .format("%Y-%m-%d %H:%M")
+            .to_string()
+    };
+    assert_eq!(at("daily", "09:00"), "2026-09-25 09:00");
+    assert_eq!(at("daily", "11:00"), "2026-09-24 11:00");
+    assert_eq!(at("weekly:fri", "09:00"), "2026-09-25 09:00");
+    assert_eq!(at("weekly:fri", "11:00"), "2026-09-18 11:00");
+    assert_eq!(at("weekly:mon", "09:00"), "2026-09-21 09:00");
+    assert_eq!(at("monthly:1", "09:00"), "2026-09-01 09:00");
+    assert_eq!(at("monthly:28", "09:00"), "2026-08-28 09:00");
+    let january = Local.with_ymd_and_hms(2027, 1, 5, 8, 0, 0).unwrap();
+    assert_eq!(
+        life::last_due("monthly:10", "09:00", january)
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string(),
+        "2026-12-10"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pausing_withdraws_what_it_proposed() {
+    let (_dir, system) = test_system();
+    let agent = install(&system, fixture("hello"), 1).unwrap();
+    let outcome = run(
+        Arc::clone(&system),
+        &agent.id,
+        Invocation::Message("x".into()),
+    )
+    .await
+    .unwrap();
+    let id = outcome.proposals[0].clone();
+    assert_eq!(life::pause(&system, &agent.id).unwrap(), 1);
+    let action = system.actions.get(&system.store, &id).unwrap().unwrap();
+    assert!(matches!(
+        action.status,
+        genatrix_agent::Status::Declined { .. }
+    ));
+    assert_eq!(
+        system.store.get_agent(&agent.id).unwrap().unwrap().state,
+        genatrix_store::AgentState::Paused
+    );
+    life::resume(&system, &agent.id).unwrap();
+    assert_eq!(
+        system.store.get_agent(&agent.id).unwrap().unwrap().state,
+        genatrix_store::AgentState::Active
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn export_then_uninstall_leaves_nothing_behind() {
+    let (_dir, system) = test_system();
+    let s = seed(&system);
+    let agent = install(&system, fixture("hello"), 1).unwrap();
+    run(
+        Arc::clone(&system),
+        &agent.id,
+        Invocation::Items(vec![s.in_scope.to_string()]),
+    )
+    .await
+    .unwrap();
+    let exported = life::export(&system, &agent.id).unwrap();
+    assert_eq!(exported["tables"]["seen"]["rows"][0][1], "Invoice 42");
+    let dir = system.config.agents_dir().join(&agent.id);
+    assert!(dir.exists());
+    life::uninstall(&system, &agent.id).unwrap();
+    assert!(!dir.exists());
+    assert!(system.store.get_agent(&agent.id).unwrap().is_none());
+    assert!(system.store.agent_runs(&agent.id, 5).unwrap().is_empty());
+}
+
+#[test]
+fn risk_is_the_worst_thing_a_manifest_allows() {
+    use genatrix_host::Manifest;
+    let m = |s: &str| Manifest::parse(s).unwrap();
+    assert_eq!(life::risk(&m(SCOPED)), life::Risk::Own);
+    assert_eq!(life::risk(&m(MAILER)), life::Risk::Strangers);
+    let reads_only = SCOPED.replace(
+        "[[proposes]]\nkind = \"note\"\nlabel = \"Keep a note\"\n",
+        "",
+    );
+    assert_eq!(life::risk(&m(&reads_only)), life::Risk::Reads);
+}

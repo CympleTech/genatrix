@@ -200,6 +200,43 @@ impl Space {
         let _ = conn.execute_batch(sql);
     }
 
+    /// Every table and its rows, for the user to take away before an
+    /// uninstall (design 11, ruling 6).
+    #[allow(clippy::type_complexity, reason = "table, columns, rows")]
+    pub fn dump(
+        &self,
+    ) -> std::result::Result<Vec<(String, Vec<String>, Vec<Vec<SpaceValue>>)>, String> {
+        let tables: Vec<String> = {
+            let conn = self.conn();
+            let mut stmt = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+                .map_err(explain)?;
+            let names = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(explain)?;
+            names
+                .collect::<std::result::Result<_, _>>()
+                .map_err(explain)?
+        };
+        let mut out = Vec::new();
+        for table in tables {
+            let quoted = format!("\"{}\"", table.replace('"', "\"\""));
+            let columns: Vec<String> = {
+                let conn = self.conn();
+                let stmt = conn
+                    .prepare(&format!("SELECT * FROM {quoted} LIMIT 0"))
+                    .map_err(explain)?;
+                stmt.column_names()
+                    .iter()
+                    .map(|c| (*c).to_owned())
+                    .collect()
+            };
+            let rows = self.query(&format!("SELECT * FROM {quoted}"), &[])?;
+            out.push((table, columns, rows));
+        }
+        Ok(out)
+    }
+
     /// End the run: roll back a transaction the agent left open.
     pub fn finish(&self) -> bool {
         let conn = self.conn();
@@ -376,6 +413,22 @@ mod tests {
             vec![vec![SpaceValue::Integer(2)]]
         );
         assert!(!s.finish());
+    }
+
+    #[test]
+    fn a_dump_has_every_table() {
+        let s = space(10);
+        s.execute("CREATE TABLE b (x, y)", &[]).unwrap();
+        s.execute("CREATE TABLE a (z)", &[]).unwrap();
+        s.execute("INSERT INTO b VALUES (1, 'one')", &[]).unwrap();
+        let d = s.dump().unwrap();
+        assert_eq!(d.len(), 2);
+        assert_eq!(d[0].0, "a");
+        assert_eq!(d[1].1, vec!["x".to_owned(), "y".to_owned()]);
+        assert_eq!(
+            d[1].2,
+            vec![vec![SpaceValue::Integer(1), SpaceValue::Text("one".into())]]
+        );
     }
 
     #[test]

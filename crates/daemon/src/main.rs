@@ -653,6 +653,12 @@ async fn settle_actions(system: &std::sync::Arc<System>) {
         Ok(n) => tracing::info!(n, "agent action(s) carried out"),
         Err(e) => tracing::warn!(error = %e, "could not carry out agent actions"),
     }
+    // Agents whose new items arrived or whose schedule came due.
+    match agents::life::wake(std::sync::Arc::clone(system)).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(n, "agent run(s)"),
+        Err(e) => tracing::warn!(error = %e, "could not wake agents"),
+    }
 }
 
 async fn pipelines_as_mail_arrives(system: std::sync::Arc<System>) {

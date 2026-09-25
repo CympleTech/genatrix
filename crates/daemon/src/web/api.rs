@@ -441,7 +441,7 @@ fn handle_view(h: genatrix_model::Handle) -> HandleView {
 /// (design 06 v0.6: a multi-party container is one party).
 #[derive(Serialize)]
 struct Party {
-    /// `person`, `group` or `channel`.
+    /// `person`, `group`, `channel` or `agent`.
     kind: &'static str,
     id: String,
     name: String,
@@ -565,7 +565,27 @@ async fn chats(State(system): Shared) -> Result<Json<Vec<Party>>, ApiError> {
                 }
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+    // Installed agents are parties too (design 06 v0.5, design 11): the
+    // same list, ordered by when each last said something.
+    let mut out = out;
+    for agent in system.store.all_agents()? {
+        let Ok(c) = super::agents::card(&system, &agent) else {
+            continue;
+        };
+        out.push(Party {
+            kind: "agent",
+            id: c.id,
+            name: c.name,
+            last_at: day_of_ms(c.last_ms),
+            last_ms: c.last_ms,
+            last_text: c.last_text.map(flat),
+            last_author: None,
+            roles: Vec::new(),
+            messages: c.runs,
+        });
+    }
+    out.sort_by_key(|p| std::cmp::Reverse(p.last_ms));
     Ok(Json(out))
 }
 
@@ -827,7 +847,7 @@ async fn set_relationship(
 }
 
 #[derive(Serialize)]
-struct ActionView {
+pub(super) struct ActionView {
     id: String,
     kind: String,
     /// Where it would go, in words: recipients and subject, or a chat's name.
@@ -859,7 +879,11 @@ struct ActionView {
     card: Option<genatrix_agent::Card>,
 }
 
-fn action_view(system: &System, a: &genatrix_agent::Action, nonce: Option<String>) -> ActionView {
+pub(super) fn action_view(
+    system: &System,
+    a: &genatrix_agent::Action,
+    nonce: Option<String>,
+) -> ActionView {
     use genatrix_agent::action::Status;
     let (target, account) = match &a.effect {
         genatrix_agent::Effect::SendMail {

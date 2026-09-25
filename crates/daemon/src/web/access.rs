@@ -140,6 +140,7 @@ mod tests {
             .merge(super::super::api::routes())
             .merge(super::super::devices::routes())
             .merge(super::super::setup::routes())
+            .merge(super::super::agents::routes())
             .fallback(axum::routing::get(|| async { "page" }))
             .layer(axum::middleware::from_fn_with_state(
                 Arc::clone(system),
@@ -362,6 +363,37 @@ mod tests {
             .next()
             .unwrap()
             .to_owned()
+    }
+
+    /// Design 02, invariant 18: agents are installed and removed on this
+    /// machine; a paired device can talk to them and pause them, no more.
+    #[tokio::test]
+    async fn agents_are_installed_from_this_machine_only() {
+        let (_dir, system) = crate::system::test_system();
+        let app = app(&system);
+        let phone = paired_cookie(&app).await;
+        for (path, body) in [
+            ("/api/agents/preview", serde_json::json!({})),
+            ("/api/agents/install", serde_json::json!({"hash": "x"})),
+            ("/api/agent/x/uninstall", serde_json::json!({})),
+        ] {
+            let r = call(&app, LAN, "POST", path, Some(&phone), Some(body)).await;
+            assert_eq!(r.status(), StatusCode::FORBIDDEN, "{path}");
+        }
+        // Here, the same route is open: a bad package is refused on its
+        // merits, not for where it came from.
+        let r = call(
+            &app,
+            HERE,
+            "POST",
+            "/api/agents/install",
+            None,
+            Some(serde_json::json!({"hash": "x"})),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CONFLICT);
+        let r = call(&app, LAN, "GET", "/api/agents", Some(&phone), None).await;
+        assert_eq!(r.status(), StatusCode::OK);
     }
 
     /// Design 02, invariant 12: credentials are typed on this machine.

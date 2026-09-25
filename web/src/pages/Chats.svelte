@@ -12,15 +12,16 @@
   import { t } from '../lib/i18n';
   import { initials } from '../lib/format';
   import { go } from '../lib/router';
+  import AgentChat from '../components/AgentChat.svelte';
   import Conversation from '../components/Conversation.svelte';
   import Empty from '../components/Empty.svelte';
   import Icon from '../components/Icon.svelte';
 
   // Design 06 v0.6, "对话": one list of conversations. A party is a person
   // (what passed one to one) or a group or channel (the container is one
-  // party; its members are not listed one by one). An agent will be one more
-  // kind of party in the same list.
-  let { kind = 'person', id = null }: { kind?: 'person' | 'group'; id?: string | null } = $props();
+  // party; its members are not listed one by one). An installed agent is one
+  // more kind of party in the same list (design 11).
+  let { kind = 'person', id = null }: { kind?: 'person' | 'group' | 'agent'; id?: string | null } = $props();
   let parties = $state<Party[] | null>(cached);
   let error = $state('');
   let filter = $state('');
@@ -46,7 +47,8 @@
     return q ? parties.filter((p) => p.name.toLowerCase().includes(q)) : parties;
   });
   const current = $derived(parties?.find((p) => p.id === id) ?? null);
-  const href = (p: Party) => (p.kind === 'person' ? `/chats/${p.id}` : `/chats/g/${p.id}`);
+  const href = (p: Party) =>
+    p.kind === 'person' ? `/chats/${p.id}` : p.kind === 'agent' ? `/chats/a/${p.id}` : `/chats/g/${p.id}`;
 </script>
 
 <section class="pane chats-pane" class:has-detail={!!id}>
@@ -63,7 +65,7 @@
       {#each shown as p (p.kind + p.id)}
         <li>
           <button type="button" class="party" class:is-on={p.id === id} onclick={() => go(href(p))}>
-            <span class="avatar" class:multi={p.kind !== 'person'}>
+            <span class="avatar" class:multi={p.kind !== 'person'} class:agent={p.kind === 'agent'}>
               {#if p.kind === 'person'}{initials(p.name)}{:else}<Icon name={p.kind} size={18} />{/if}
             </span>
             <span class="party-body">
@@ -86,7 +88,11 @@
 
   {#if id}
     {#key kind + id}
-      <Conversation {kind} {id} name={current?.name ?? ''} />
+      {#if kind === 'agent'}
+        <AgentChat {id} name={current?.name ?? ''} />
+      {:else}
+        <Conversation {kind} {id} name={current?.name ?? ''} />
+      {/if}
     {/key}
   {/if}
 </section>

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Subcommand;
-use genatrix_host::manifest::{BlobAccess, Effect, Manifest, Targets, Trigger};
+use genatrix_host::manifest::Manifest;
 use genatrix_host::{Invocation, Package};
 use genatrix_store::AgentState;
 
@@ -50,93 +50,10 @@ pub enum AgentAction {
     },
 }
 
-/// What a manifest allows, one line per grant, in words.
+/// What a manifest allows, one line per grant, in English.
 #[must_use]
 pub fn describe(m: &Manifest) -> Vec<(&'static str, String)> {
-    let r = &m.reads;
-    let reads = if r.connectors.is_empty() {
-        "nothing".to_owned()
-    } else {
-        let kinds = if r.kinds.is_empty() {
-            "items".to_owned()
-        } else {
-            r.kinds.join(" and ")
-        };
-        let attachment = match (r.with_attachment, r.mime.is_empty()) {
-            (false, _) => String::new(),
-            (true, true) => " with an attachment".to_owned(),
-            (true, false) => format!(" with an attachment of type {}", r.mime.join(", ")),
-        };
-        let mentioning = if r.matching.is_empty() {
-            String::new()
-        } else {
-            format!(" mentioning {}", r.matching.join(" or "))
-        };
-        let window = r.days.map_or_else(
-            || "all history".to_owned(),
-            |d| format!("the last {d} days"),
-        );
-        let s = format!(
-            "{kinds} from {}{attachment}{mentioning}, from {window}, up to {}",
-            r.connectors.join(" and "),
-            r.max_level.as_str()
-        );
-        s
-    };
-    let blobs = match m.blobs {
-        BlobAccess::None => "no attachments".to_owned(),
-        BlobAccess::Text => "the text of those attachments".to_owned(),
-    };
-    let proposes = if m.proposes.is_empty() {
-        "nothing".to_owned()
-    } else {
-        m.proposes
-            .iter()
-            .map(|p| {
-                let reach = match (&p.effect, &p.targets) {
-                    (Effect::Own, _) => "in its own space".to_owned(),
-                    (e, Some(Targets::Addresses(a))) => format!("{e:?} to {}", a.join(", ")),
-                    (e, Some(Targets::Rule(rule))) => format!("{e:?}, {rule:?}"),
-                    (e, None) => format!("{e:?}"),
-                };
-                format!("{} ({reach}), with your approval", p.label)
-            })
-            .collect::<Vec<_>>()
-            .join("; ")
-    };
-    let model = if m.model.is_empty() {
-        "no model".to_owned()
-    } else {
-        format!(
-            "{}; on this machine only",
-            m.model
-                .iter()
-                .map(|p| format!("{p:?}").to_lowercase())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-    let when = m
-        .triggers
-        .iter()
-        .map(|t| match t {
-            Trigger::Items => "when new items in scope arrive".to_owned(),
-            Trigger::Message => "when you write to it".to_owned(),
-            Trigger::Schedule { every, at, .. } => format!("{every} at {at}"),
-        })
-        .collect::<Vec<_>>()
-        .join("; ");
-    vec![
-        ("reads", reads),
-        ("takes", blobs),
-        ("proposes", proposes),
-        ("model", model),
-        ("runs", when),
-        (
-            "cannot",
-            "reach the network, read anything else, or see other agents' data".into(),
-        ),
-    ]
+    super::words::describe(m, super::words::Lang::En)
 }
 
 /// Carry out one `genatrix agent` command.

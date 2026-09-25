@@ -339,6 +339,28 @@
   .card-fields dd { @apply m-0 break-words; }
   .card-fields dd.money { font-variant-numeric: tabular-nums; }
 
+  /* ---- agents (design 11) ---- */
+  .avatar.agent { color: var(--ink); }
+  .linkish { @apply p-0 text-left; background: none; border: 0; cursor: pointer; }
+  .linkish:hover { text-decoration: underline; }
+  .risk.outward, .risk.strangers { color: var(--accent-ink); }
+  .risk-badge { @apply shrink-0 rounded-full border px-2.5 py-0.5 text-[12px]; border-color: var(--line); color: var(--muted); }
+  .risk-badge.outward, .risk-badge.strangers { border-color: var(--accent-ink); color: var(--accent-ink); }
+  .agent-preview { @apply mt-2 flex flex-col gap-2 rounded-[12px] border border-line p-4; }
+  .preview-head { @apply flex items-center gap-3; }
+  .preview-purpose { @apply m-0 text-[15px]; }
+  .card-fields.grants { @apply text-[14px]; }
+  .tried { @apply m-0 flex list-none flex-col gap-2 p-0; }
+  .tried-head { @apply text-[14px]; }
+  .tried-draft { @apply m-0 whitespace-pre-wrap rounded-[12px] border border-line px-3 py-2 text-[14px]; background: var(--surface-2); }
+  .trial-log pre { @apply m-0 mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-[12px]; color: var(--muted); }
+  .hidden-file { display: none; }
+  label.choose { cursor: pointer; }
+  .bubble.failed { color: var(--muted); font-style: italic; }
+  .composer-input {
+    @apply min-h-[40px] min-w-0 flex-1 rounded-full border border-line bg-surface px-4 py-2 text-[15px];
+  }
+
   /* ---- sources ---- */
   .sources { @apply mt-1.5 flex flex-wrap gap-x-2.5 gap-y-1.5; }
   .source-wrap { display: contents; }

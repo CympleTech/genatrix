@@ -14,6 +14,7 @@
 //! `web/README.md` for the front-end side.
 
 mod access;
+mod agents;
 mod api;
 mod devices;
 mod setup;
@@ -56,6 +57,7 @@ pub async fn serve(system: Arc<System>, serving: &Serving) -> anyhow::Result<()>
         .merge(api::routes())
         .merge(devices::routes())
         .merge(setup::routes())
+        .merge(agents::routes())
         // Every other path is the page: the app routes on the client side,
         // so a link to /approvals or /pair?code=... opens on the right screen.
         .fallback(get(index))

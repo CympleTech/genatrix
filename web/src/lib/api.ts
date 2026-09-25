@@ -111,10 +111,31 @@ export interface ChatMessage {
 export interface ChatPage { messages: ChatMessage[]; earlier: boolean }
 
 export interface Party {
-  kind: 'person' | 'group' | 'channel'; id: string; name: string;
+  kind: 'person' | 'group' | 'channel' | 'agent'; id: string; name: string;
   last_at: string | null; last_ms: number; last_text: string | null; last_author: string | null;
   roles: string[]; messages: number;
 }
+// --- functional agents (design 11; crates/daemon/src/web/agents.rs) ---
+export type Risk = 'reads' | 'own' | 'outward' | 'strangers';
+export interface AgentCard {
+  id: string; name: string; purpose: string; author: string; state: 'active' | 'paused';
+  level: string; version: string; installed_ms: number; last_ms: number; last_text: string | null;
+  runs: number; pending: number; approved: number; declined: number; space_bytes: number; risk: Risk;
+}
+export interface GrantLine { label: string; text: string }
+export interface Tried { label: string; reach: string; card: Card | null; draft: string | null }
+export interface Trial {
+  items: number; proposals: Tried[]; log: string[];
+  outcome: 'ok' | 'refused' | 'limit' | 'trap' | 'agent' | 'none'; detail: string | null;
+}
+export interface AgentPreview {
+  hash: string; name: string; author: string; purpose: string; lines: GrantLine[]; risk: Risk; trial: Trial;
+}
+export interface Turn {
+  at: string; you: string | null; woke_by: string | null; answer: string | null;
+  outcome: string; detail: string | null; reads: number; actions: Action[];
+}
+export interface AgentDetail { card: AgentCard; lines: GrantLine[]; turns: Turn[] }
 export interface Speaker { name: string; count: number; me: boolean }
 export interface GroupDetail {
   id: string; name: string; kind: 'group' | 'channel'; voices: number; messages: number; mine: number;

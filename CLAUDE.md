@@ -11,7 +11,7 @@ commit messages, and CI.
 
 ## Design first
 
-The eleven design documents are settled. When code and design disagree, change
+Design documents 00–10 are settled; 11 (functional agents) is a draft awaiting the author's rulings. When code and design disagree, change
 the design document first, in the same change. Every invariant listed in
 `docs/design/02-trust-boundary.md` gets a test in the commit that introduces the
 code it constrains.

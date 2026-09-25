@@ -120,7 +120,8 @@ enum Command {
     /// Remove everything one connector brought in, so it is fetched again
     /// under today's rules. Shows the counts first; asks before deleting.
     Purge {
-        /// `telegram` or `imap`.
+        /// `telegram` or `imap`; or `promises`, for the promises the model
+        /// inferred and you never judged, to be read again.
         connector: String,
         /// Only show what would go.
         #[arg(long)]
@@ -213,12 +214,13 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
             yes,
         } => {
+            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
             let connector = match connector.as_str() {
                 "telegram" => genatrix_model::Connector::Telegram,
                 "imap" | "mail" => genatrix_model::Connector::Imap,
+                "promises" => return purge::promises(&system, dry_run, yes),
                 other => anyhow::bail!("no connector called {other}"),
             };
-            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
             purge::run(&config, &system, connector, dry_run, yes)
         }
         Command::Agent { action } => {

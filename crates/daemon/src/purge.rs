@@ -26,6 +26,37 @@ fn core_running(config: &Config) -> bool {
     })
 }
 
+/// Remove the promises the model inferred and the user never judged, so
+/// the messages are read again under the current rules. What the user
+/// confirmed or rejected stays.
+pub fn promises(system: &System, dry_run: bool, yes: bool) -> anyhow::Result<()> {
+    let n = system.store.unjudged_commitments(false)?;
+    println!("Promises the model inferred that you never confirmed or rejected: {n}");
+    println!("The ones you confirmed or rejected stay.");
+    if dry_run {
+        println!("Nothing was changed.");
+        return Ok(());
+    }
+    if !yes {
+        print!("Type DELETE to remove these: ");
+        std::io::stdout().flush()?;
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        if line.trim() != "DELETE" {
+            println!("Nothing was changed.");
+            return Ok(());
+        }
+    }
+    let removed = system.store.unjudged_commitments(true)?;
+    system.ledger.append(
+        "purge",
+        "promises",
+        &serde_json::json!({ "removed": removed }),
+    )?;
+    println!("Removed {removed}. Recent messages are read for promises again as the core runs.");
+    Ok(())
+}
+
 /// Purge one connector's data.
 pub fn run(
     config: &Config,

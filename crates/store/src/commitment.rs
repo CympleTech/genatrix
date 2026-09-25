@@ -179,6 +179,48 @@ impl Store {
             .transpose()
     }
 
+    /// Whether an open promise from `from` to `to` with the same words was
+    /// recorded since `since`: the same promise said again.
+    pub fn open_commitment_like(
+        &self,
+        from: genatrix_model::PersonId,
+        to: Option<genatrix_model::PersonId>,
+        what: &str,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool> {
+        let n: i64 = self.conn().query_row(
+            "SELECT count(*) FROM commitment
+             WHERE from_person = ?1 AND to_person IS ?2 AND lower(trim(what)) = lower(trim(?3))
+               AND status IN ('open', 'overdue') AND created_at >= ?4",
+            params![
+                from.to_string(),
+                to.map(|t| t.to_string()),
+                what,
+                crate::time::utc_to_col(since)
+            ],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Promises the model inferred and the user never judged. Counted, or
+    /// removed so that the messages can be read again under new rules; what
+    /// the user confirmed or rejected stays (design 07: a rejection is
+    /// remembered).
+    pub fn unjudged_commitments(&self, remove: bool) -> Result<usize> {
+        let conn = self.conn();
+        if remove {
+            Ok(conn.execute("DELETE FROM commitment WHERE standing = 'inferred'", [])?)
+        } else {
+            let n: i64 = conn.query_row(
+                "SELECT count(*) FROM commitment WHERE standing = 'inferred'",
+                [],
+                |r| r.get(0),
+            )?;
+            Ok(usize::try_from(n).unwrap_or(0))
+        }
+    }
+
     /// Current items of these directions without a given label annotation,
     /// newest first: what a pipeline that marks its work with a label has
     /// not yet looked at.

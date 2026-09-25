@@ -20,7 +20,7 @@ use genatrix_gate::gate::{Initiator, Message, Request};
 use genatrix_llm::ticket::Purpose;
 use genatrix_model::{
     Annotation, AnnotationKind, Commitment, CommitmentId, CommitmentStatus, Direction, Item, Level,
-    Payload, PersonId, Producer, Standing,
+    Payload, PersonId, Producer, Standing, ThreadKind,
 };
 use genatrix_store::Store;
 
@@ -28,22 +28,40 @@ use super::store_error;
 
 /// The label that marks a message as read for promises. The version is
 /// part of it: a new prompt reads everything again.
-pub const LABEL: &str = "commitments/1";
+pub const LABEL: &str = "commitments/2";
 /// Messages per model call.
 pub const BATCH: usize = 8;
+/// Messages handed to the model in one pass; the rest wait for the next.
+const PER_PASS: usize = BATCH * 3;
+/// Messages looked at in one pass. Most are set aside by the rules without
+/// the model, so a pass can look at many.
+const LOOKED_AT: u32 = 400;
+/// How far back promises are read (design 07, "什么算承诺").
+const WINDOW_DAYS: i64 = 30;
+/// A promise said again within this many days is the same promise.
+const SAME_WITHIN_DAYS: i64 = 14;
 /// Characters of a message the model sees.
 const EXCERPT_CHARS: usize = 600;
 
 const SYSTEM: &str = "/no_think
 You read messages between the account holder, called ME, and other people. \
-Find explicit promises: something the writer says they will do, give, send, \
-pay, attend or decide, for the other party. Only what the message states; \
-never guess. Ignore marketing, notifications and anything not written by a \
-person to a person.
+Find promises. A promise is the writer committing, to the person they are \
+writing to, to do a specific thing in the future: send, pay, give, call, \
+book, finish, reply, attend. Most messages contain none; that is normal. \
+When unsure, it is not a promise.
+
+These are NOT promises:
+- something already done, reported in the past (\"I sent it\", \"提交了\", \"做了体检\")
+- the writer's own plans that nobody was promised (\"去鸟岛看看\", \"going to the market\")
+- questions, suggestions, wishes, maybes (\"这周末吧?\", \"maybe next week\")
+- requests to the other person (\"can you send it\")
+- notices from shops, services and systems (orders, bookings, receipts)
 
 For each promise output one line of JSON and nothing else:
-{\"id\": <message number>, \"who\": \"me\" or \"them\", \"what\": \"<short, in the message's language>\", \"due\": \"YYYY-MM-DD\" or null}
-\"who\" is who made the promise. A message with no promise gets no line. \
+{\"id\": <message number>, \"who\": \"me\" or \"them\", \"what\": \"<verb and object, who it is for if said; in the message's language>\", \"due\": \"YYYY-MM-DD\" or null}
+\"who\" is who made the promise. \"what\" must say what will be done and to \
+what: \"send Alice the signed lease\", not \"send\". \"due\" only if the \
+message names a day or deadline. A message with no promise gets no line. \
 If there is nothing at all, output nothing.";
 
 /// What one pass did.
@@ -79,19 +97,22 @@ pub async fn run<C: ModelCaller>(
         .map_err(|e| RunError::Ledger(store_error(&e)))?
         .map(|p| p.id);
     let candidates: Vec<Item> = store
-        .items_without_label(LABEL, u32::try_from(BATCH * 3).unwrap_or(24))
+        .items_without_label(LABEL, LOOKED_AT)
         .map_err(|e| RunError::Ledger(store_error(&e)))?;
 
-    // Correspondence only: mail and chat, to or from the user, not public.
-    let (readable, skipped): (Vec<Item>, Vec<Item>) = candidates.into_iter().partition(|i| {
-        matches!(i.payload, Payload::Mail { .. } | Payload::Message { .. })
-            && matches!(i.direction, Direction::Inbound | Direction::Outbound)
-            && i.sensitivity != Level::Public
-    });
+    // The rules first (design 07, "什么算承诺"): recent correspondence
+    // between people. What they set aside is marked read without the model.
+    let since = Utc::now() - chrono::Duration::days(WINDOW_DAYS);
+    let (mut readable, skipped): (Vec<Item>, Vec<Item>) = candidates
+        .into_iter()
+        .partition(|i| worth_reading(store, i, since));
     for item in &skipped {
         mark(store, item)?;
         report.read += 1;
     }
+    // The model reads a few batches a pass; the rest stay unmarked for the
+    // next one.
+    readable.truncate(PER_PASS);
 
     for batch in readable.chunks(BATCH) {
         let found = ask(ctx, store, me, batch).await?;
@@ -109,6 +130,20 @@ pub async fn run<C: ModelCaller>(
                     _ => continue,
                 }
             };
+            if !says_enough(&f.what) {
+                continue;
+            }
+            let since =
+                item.occurred_at.with_timezone(&Utc) - chrono::Duration::days(SAME_WITHIN_DAYS);
+            if store
+                .open_commitment_like(from, to, &f.what, since)
+                .map_err(|e| RunError::Ledger(store_error(&e)))?
+            {
+                continue;
+            }
+            // A deadline before the message itself is the model copying the
+            // message's date, not a deadline.
+            let written = item.occurred_at.date_naive();
             let commitment = Commitment {
                 id: CommitmentId::new(),
                 from,
@@ -116,6 +151,7 @@ pub async fn run<C: ModelCaller>(
                 what: f.what.clone(),
                 due: f
                     .due
+                    .filter(|d| *d >= written)
                     .and_then(|d| d.and_hms_opt(23, 59, 0))
                     .map(|t| Utc.from_utc_datetime(&t)),
                 evidence: vec![item.id],
@@ -134,6 +170,65 @@ pub async fn run<C: ModelCaller>(
         }
     }
     Ok(report)
+}
+
+/// Whether the rules let the model read this message for promises: mail or
+/// chat, to or from the user, not public, recent, between people. In a
+/// group only the user's own words; channels and bulk or automatic mail
+/// not at all.
+fn worth_reading(store: &Store, item: &Item, since: chrono::DateTime<Utc>) -> bool {
+    if item.sensitivity == Level::Public
+        || !matches!(item.direction, Direction::Inbound | Direction::Outbound)
+        || item.occurred_at.with_timezone(&Utc) < since
+    {
+        return false;
+    }
+    match &item.payload {
+        Payload::Mail { from, headers, .. } => {
+            let bulk = headers.iter().any(|(name, value)| match name.as_str() {
+                "list-unsubscribe" | "list-id" | "x-autoreply" => true,
+                "precedence" => matches!(
+                    value.trim().to_lowercase().as_str(),
+                    "bulk" | "list" | "junk"
+                ),
+                "auto-submitted" => !value.trim().eq_ignore_ascii_case("no"),
+                _ => false,
+            });
+            let from = from.to_lowercase();
+            let machine = [
+                "noreply",
+                "no-reply",
+                "donotreply",
+                "do-not-reply",
+                "notifications@",
+                "mailer-daemon",
+            ]
+            .iter()
+            .any(|m| from.contains(m));
+            !bulk && !machine
+        }
+        Payload::Message { .. } => {
+            let kind = store
+                .get_thread(item.thread_id)
+                .ok()
+                .flatten()
+                .map(|t| t.kind);
+            match kind {
+                Some(ThreadKind::Channel) => false,
+                Some(ThreadKind::GroupChat) => item.direction == Direction::Outbound,
+                _ => true,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Whether a promise says what will be done and to what: two words at
+/// least, or four characters in a script written without spaces.
+fn says_enough(what: &str) -> bool {
+    let what = what.trim();
+    let wide = what.chars().filter(|c| !c.is_ascii()).count();
+    what.split_whitespace().count() >= 2 || wide >= 4
 }
 
 /// The person on the other side of a message from the user.
@@ -158,7 +253,7 @@ fn mark(store: &Store, item: &Item) -> Result<(), RunError> {
             item.id,
             Producer::Rule {
                 rule: "commitments".into(),
-                version: "1".into(),
+                version: "2".into(),
             },
             AnnotationKind::Label {
                 label: LABEL.into(),
@@ -297,6 +392,141 @@ fn parse(raw: &str, expected: usize) -> Vec<Found> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use genatrix_model::{Connector, ItemId, Raw, Source, Thread, ThreadId};
+
+    #[test]
+    fn a_promise_says_what_and_to_what() {
+        assert!(says_enough("send Alice the lease"));
+        assert!(says_enough("周五前发报价"));
+        assert!(!says_enough("send"));
+        assert!(!says_enough("预约"));
+        assert!(!says_enough("抓紧找"));
+    }
+
+    fn item(
+        store: &Store,
+        kind: ThreadKind,
+        connector: Connector,
+        dir: Direction,
+        days_ago: i64,
+        payload: Payload,
+    ) -> Item {
+        let ext = ulid::Ulid::new().to_string();
+        let source = Source::new(connector, "me", &ext);
+        let raw = Raw::describe(source.clone(), "text/plain", ext.as_bytes());
+        store.insert_raw(&raw).unwrap();
+        let thread = store
+            .upsert_thread(&Thread {
+                id: ThreadId::new(),
+                kind,
+                source: Source::new(connector, "me", format!("t{ext}")),
+                title: None,
+                members: vec![],
+                first_at: None,
+                last_at: None,
+            })
+            .unwrap();
+        let when = Utc::now() - chrono::Duration::days(days_ago);
+        Item {
+            id: ItemId::new(),
+            source,
+            raw_id: raw.id,
+            supersedes: None,
+            thread_id: thread,
+            occurred_at: when.fixed_offset(),
+            ingested_at: Utc::now(),
+            direction: dir,
+            author: None,
+            recipients: vec![],
+            text: "I will send it on Friday".into(),
+            blobs: vec![],
+            sensitivity: Level::Personal,
+            tombstoned: false,
+            payload,
+        }
+    }
+
+    fn mail(from: &str, headers: Vec<(&str, &str)>) -> Payload {
+        Payload::Mail {
+            subject: "s".into(),
+            from: from.into(),
+            to: vec![],
+            cc: vec![],
+            message_id: None,
+            in_reply_to: None,
+            references: vec![],
+            labels: vec![],
+            headers: headers
+                .into_iter()
+                .map(|(a, b)| (a.to_owned(), b.to_owned()))
+                .collect(),
+        }
+    }
+
+    fn chat() -> Payload {
+        Payload::Message {
+            reply_to: None,
+            forwarded_from: None,
+            edited: false,
+        }
+    }
+
+    #[test]
+    fn the_rules_read_recent_words_between_people() {
+        use Direction::{Inbound, Outbound};
+        use ThreadKind::{Channel, DirectChat, GroupChat, MailThread};
+        let store = Store::open_in_memory(&genatrix_keys::DbKey::from_bytes([2; 32])).unwrap();
+        let since = Utc::now() - chrono::Duration::days(WINDOW_DAYS);
+        let check = |kind, connector, dir, days, payload| {
+            let i = item(&store, kind, connector, dir, days, payload);
+            worth_reading(&store, &i, since)
+        };
+        assert!(check(
+            MailThread,
+            Connector::Imap,
+            Inbound,
+            2,
+            mail("alice@example.com", vec![])
+        ));
+        assert!(
+            !check(
+                MailThread,
+                Connector::Imap,
+                Inbound,
+                40,
+                mail("alice@example.com", vec![])
+            ),
+            "too old"
+        );
+        assert!(!check(
+            MailThread,
+            Connector::Imap,
+            Inbound,
+            2,
+            mail("a@x.com", vec![("list-unsubscribe", "<mailto:u>")])
+        ));
+        assert!(!check(
+            MailThread,
+            Connector::Imap,
+            Inbound,
+            2,
+            mail("a@x.com", vec![("precedence", "bulk")])
+        ));
+        assert!(!check(
+            MailThread,
+            Connector::Imap,
+            Inbound,
+            2,
+            mail("Shop <noreply@shop.com>", vec![])
+        ));
+        assert!(check(DirectChat, Connector::Telegram, Inbound, 2, chat()));
+        assert!(check(GroupChat, Connector::Telegram, Outbound, 2, chat()));
+        assert!(
+            !check(GroupChat, Connector::Telegram, Inbound, 2, chat()),
+            "others in a group"
+        );
+        assert!(!check(Channel, Connector::Telegram, Inbound, 2, chat()));
+    }
 
     #[test]
     fn promises_are_read_and_the_rest_is_dropped() {

@@ -179,6 +179,27 @@ impl Space {
         Ok(out)
     }
 
+    /// Begin an apply: everything until [`Space::end_apply`] lands whole or
+    /// not at all.
+    pub fn begin_apply(&self) -> std::result::Result<(), String> {
+        self.conn()
+            .execute_batch("SAVEPOINT genatrix_apply")
+            .map_err(explain)
+    }
+
+    /// End an apply: keep its writes, or undo every one of them.
+    pub fn end_apply(&self, keep: bool) {
+        let conn = self.conn();
+        let sql = if keep {
+            "RELEASE genatrix_apply"
+        } else {
+            "ROLLBACK TO genatrix_apply; RELEASE genatrix_apply"
+        };
+        // An agent that committed on its own has already ended the
+        // savepoint; there is nothing left to end.
+        let _ = conn.execute_batch(sql);
+    }
+
     /// End the run: roll back a transaction the agent left open.
     pub fn finish(&self) -> bool {
         let conn = self.conn();
@@ -338,6 +359,23 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(e, "the run's time is up");
+    }
+
+    #[test]
+    fn an_apply_lands_whole_or_not_at_all() {
+        let s = space(10);
+        s.execute("CREATE TABLE t (x)", &[]).unwrap();
+        s.begin_apply().unwrap();
+        s.execute("INSERT INTO t VALUES (1)", &[]).unwrap();
+        s.end_apply(false);
+        s.begin_apply().unwrap();
+        s.execute("INSERT INTO t VALUES (2)", &[]).unwrap();
+        s.end_apply(true);
+        assert_eq!(
+            s.query("SELECT x FROM t", &[]).unwrap(),
+            vec![vec![SpaceValue::Integer(2)]]
+        );
+        assert!(!s.finish());
     }
 
     #[test]

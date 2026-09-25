@@ -289,6 +289,23 @@ impl Store {
         )?)
     }
 
+    /// Whether the user has ever written to this person: an outbound item
+    /// with them among its recipients. What "a known contact" means when an
+    /// agent's manifest limits whom it may write to (design 11).
+    pub fn has_written_to(&self, person: PersonId) -> Result<bool> {
+        let found: Option<i64> = self
+            .conn()
+            .query_row(
+                "SELECT 1 FROM item i WHERE i.direction IN ('outbound', 'internal')
+                   AND EXISTS (SELECT 1 FROM json_each(i.recipients) WHERE value = ?1)
+                 LIMIT 1",
+                [person.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
     /// Handles of one person.
     pub fn handles_of(&self, person: PersonId) -> Result<Vec<Handle>> {
         let conn = self.conn();

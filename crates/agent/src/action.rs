@@ -72,6 +72,69 @@ pub enum Effect {
         /// Which part of the profile.
         collection: String,
     },
+    /// Something an installed agent does in its own space (design 11).
+    ///
+    /// Executed by the core, which hands the approved payload to the
+    /// agent's `apply` with nothing but its space linked. The card is what
+    /// the user saw; it is part of the action and cannot change.
+    Agent {
+        /// Which agent.
+        agent: String,
+        /// Its name when it proposed this.
+        name: String,
+        /// The hash of the version that proposed it. Another version does
+        /// not apply it.
+        version: String,
+        /// The agent's kind, declared in its manifest.
+        #[serde(rename = "agent_kind")]
+        agent_kind: String,
+        /// The manifest's label for the kind.
+        label: String,
+        /// What the approval page shows.
+        card: Card,
+    },
+}
+
+/// What the approval page shows for an agent's proposal: data only, drawn
+/// with one fixed template (design 11, ruling 4).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Card {
+    /// One line.
+    pub title: String,
+    /// Labelled values, in order.
+    pub fields: Vec<CardField>,
+}
+
+/// One labelled value on a card.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CardField {
+    /// What it is.
+    pub label: String,
+    /// The value.
+    pub value: CardValue,
+}
+
+/// A value on a card.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CardValue {
+    /// Plain text.
+    Text {
+        /// The text.
+        text: String,
+    },
+    /// An amount of money in minor units.
+    Money {
+        /// Cents.
+        cents: i64,
+        /// ISO 4217.
+        currency: String,
+    },
+    /// A calendar date, `YYYY-MM-DD`.
+    Date {
+        /// The date.
+        date: String,
+    },
 }
 
 impl Effect {
@@ -83,6 +146,7 @@ impl Effect {
             Self::SendMessage { .. } => "send_message",
             Self::CreateEvent { .. } => "create_event",
             Self::WriteMemory { .. } => "write_memory",
+            Self::Agent { .. } => "agent",
         }
     }
 
@@ -94,14 +158,22 @@ impl Effect {
             Self::SendMail { account, .. }
             | Self::SendMessage { account, .. }
             | Self::CreateEvent { account } => Some(account),
-            Self::WriteMemory { .. } => None,
+            Self::WriteMemory { .. } | Self::Agent { .. } => None,
         }
     }
 
     /// Whether a connector may execute this, as opposed to the core.
     #[must_use]
     pub const fn runs_in_a_connector(&self) -> bool {
-        !matches!(self, Self::WriteMemory { .. })
+        !matches!(self, Self::WriteMemory { .. } | Self::Agent { .. })
+    }
+
+    /// Whether the user may edit the payload. An agent's payload is what
+    /// its `apply` reads; the user approves or declines it, and edits
+    /// nothing the card does not show.
+    #[must_use]
+    pub const fn editable(&self) -> bool {
+        !matches!(self, Self::Agent { .. })
     }
 }
 
@@ -299,6 +371,9 @@ pub enum ActionError {
     /// The execution token is wrong, missing, or already used.
     #[error("execution token is not valid for this action")]
     BadToken,
+    /// This kind of action is approved or declined as it is.
+    #[error("this action cannot be edited")]
+    NotEditable,
 }
 
 /// What the approval endpoint passes in.
@@ -364,6 +439,9 @@ impl Action {
     /// Record an edit. This voids any approval: what was approved is not
     /// what would now be sent.
     pub fn edit(&mut self, payload: impl Into<String>) -> Result<&Version, ActionError> {
+        if !self.effect.editable() {
+            return Err(ActionError::NotEditable);
+        }
         match self.status {
             Status::Pending | Status::Approved { .. } => {}
             _ => {

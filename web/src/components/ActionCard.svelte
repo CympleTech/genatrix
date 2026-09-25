@@ -1,6 +1,6 @@
 <script lang="ts">
   import { get, post, type Action } from '../lib/api';
-  import { kindWord, statusLine } from '../lib/format';
+  import { cardValue, kindWord, statusLine } from '../lib/format';
   import { t } from '../lib/i18n';
   import SourceChip from './SourceChip.svelte';
   import { refreshPending } from '../lib/status';
@@ -100,9 +100,22 @@
     <h4 class="card-label">{t('action.why')}</h4>
     <p class="rationale">{current.rationale}</p>
   {/if}
-  <h4 class="card-label">{t('action.draft')}{current.versions > 1 ? ' · ' + t('action.version', { v: current.version }) : ''}</h4>
-  <textarea class="draft" bind:value={draft} readonly={!editable}></textarea>
-  <p class="note">{t('action.drafted', { where: current.drafted, account: current.account })}</p>
+  {#if current.card}
+    <!-- An agent's proposal: its data in one fixed template, nothing of the
+         agent's own drawn here (design 11, ruling 4). -->
+    <h4 class="card-label">{current.card.title}</h4>
+    <dl class="card-fields">
+      {#each current.card.fields as f}
+        <dt>{f.label}</dt>
+        <dd class:money={f.value.type === 'money'}>{cardValue(f.value)}</dd>
+      {/each}
+    </dl>
+    <p class="note">{t('action.by_agent')}</p>
+  {:else}
+    <h4 class="card-label">{t('action.draft')}{current.versions > 1 ? ' · ' + t('action.version', { v: current.version }) : ''}</h4>
+    <textarea class="draft" bind:value={draft} readonly={!editable || !current.editable}></textarea>
+    <p class="note">{t('action.drafted', { where: current.drafted, account: current.account })}</p>
+  {/if}
   {#if current.result}
     <h4 class="card-label">{t('action.sent')}</h4>
     <div class="sources"><SourceChip src={current.result} /></div>
@@ -111,7 +124,7 @@
     <p class="note">{settled}</p>
   {:else if current.status === 'pending'}
     <div class="chooser">
-      <button type="button" class="choose primary" disabled={busy} onclick={approve}>{t('action.approve')}</button>
+      <button type="button" class="choose primary" disabled={busy} onclick={approve}>{current.card ? t('action.approve_agent') : t('action.approve')}</button>
       <button type="button" class="choose lowers" disabled={busy} onclick={decline}>{t('action.decline')}</button>
       {#if askingReason}
         <input class="reason" bind:value={reason} placeholder={t('action.reason')} onkeydown={(e) => { if (e.key === 'Enter') decline(); }} />
@@ -120,7 +133,7 @@
     </div>
   {:else if current.status === 'approved'}
     <div class="chooser">
-      <span class="note sending">{t('action.approved')}</span>
+      <span class="note sending">{current.card ? t('action.approved_agent') : t('action.approved')}</span>
       {#if current.can_withdraw}
         <button type="button" class="choose lowers" disabled={busy} onclick={withdraw}>{t('action.withdraw')}</button>
       {/if}

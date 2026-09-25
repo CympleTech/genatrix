@@ -382,6 +382,41 @@ impl Actions {
         Ok(out)
     }
 
+    /// Approved actions the core carries out itself, an agent's own
+    /// effects, with their tokens, marked as handed out the same way a
+    /// connector's are. The core then reports like a connector would.
+    pub fn approved_in_core(
+        &self,
+        store: &Store,
+        ledger: &Ledger,
+    ) -> anyhow::Result<Vec<(Action, Version, ExecutionToken)>> {
+        let mut out = Vec::new();
+        for mut action in self.list(store, Some("approved"), 1000)? {
+            if !matches!(action.effect, Effect::Agent { .. }) {
+                continue;
+            }
+            let Some(token) = action.token_for_execution() else {
+                continue;
+            };
+            match action.begin_execution(&token, Utc::now()) {
+                Ok(version) => {
+                    Self::save(store, &action)?;
+                    Self::record(ledger, &action, "executing", "core", "handed to the agent")?;
+                    self.handed
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(action.id.clone(), token.expose().to_owned());
+                    out.push((action, version, token));
+                }
+                Err(e) => {
+                    Self::save(store, &action)?;
+                    Self::record(ledger, &action, "refused", "core", e.to_string())?;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// The connector reported. Only the connector that was handed the
     /// action, shown by the token, may say how it went. Status becomes
     /// executed, failed or unknown; the result item, when there is one,

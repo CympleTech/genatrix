@@ -398,3 +398,257 @@ async fn a_paused_agent_is_not_woken() {
         .is_err()
     );
 }
+
+fn approve_as_the_page_would(system: &System, id: &str) -> genatrix_agent::Action {
+    let action = system.actions.get(&system.store, id).unwrap().unwrap();
+    let current = action.current().clone();
+    let nonce = system.actions.nonce_for(id);
+    system
+        .actions
+        .approve(
+            &system.store,
+            &system.ledger,
+            id,
+            &genatrix_agent::Approval {
+                version: current.seq,
+                payload_hash: current.payload_hash,
+            },
+            &nonce,
+        )
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proposal_is_approved_and_applied_to_the_space() {
+    let (_dir, system) = test_system();
+    let agent = install(&system, fixture("hello"), 1).unwrap();
+    let outcome = run(
+        Arc::clone(&system),
+        &agent.id,
+        Invocation::Message("pay the rates".into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        outcome.result.unwrap().unwrap(),
+        "I have seen 0 mails. I proposed keeping your note."
+    );
+    let id = outcome.proposals[0].clone();
+    let action = system.actions.get(&system.store, &id).unwrap().unwrap();
+    let genatrix_agent::Effect::Agent {
+        card, agent_kind, ..
+    } = &action.effect
+    else {
+        panic!("{:?}", action.effect);
+    };
+    assert_eq!(agent_kind, "note");
+    assert_eq!(card.title, "Keep a note");
+    // Approved or declined as it is: the payload is the agent's, not a draft.
+    assert!(
+        system
+            .actions
+            .edit(&system.store, &system.ledger, &id, "other".into())
+            .is_err()
+    );
+
+    approve_as_the_page_would(&system, &id);
+    assert_eq!(execute_approved(Arc::clone(&system)).await.unwrap(), 1);
+    let done = system.actions.get(&system.store, &id).unwrap().unwrap();
+    assert!(
+        matches!(done.status, genatrix_agent::Status::Executed { .. }),
+        "{:?}",
+        done.status
+    );
+    let space = system.agents.space(&agent.id, 50).unwrap();
+    assert_eq!(
+        space.query("SELECT text FROM note", &[]).unwrap(),
+        vec![vec![SpaceValue::Text("pay the rates".into())]]
+    );
+    // Nothing is carried out twice.
+    assert_eq!(execute_approved(Arc::clone(&system)).await.unwrap(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proposal_from_another_version_is_not_applied() {
+    let (_dir, system) = test_system();
+    let agent = install(&system, fixture("hello"), 1).unwrap();
+    let outcome = run(
+        Arc::clone(&system),
+        &agent.id,
+        Invocation::Message("x".into()),
+    )
+    .await
+    .unwrap();
+    let id = outcome.proposals[0].clone();
+    approve_as_the_page_would(&system, &id);
+    // As if the agent had become another version since it proposed.
+    let mut action = system.actions.get(&system.store, &id).unwrap().unwrap();
+    if let genatrix_agent::Effect::Agent { version, .. } = &mut action.effect {
+        *version = "0000".into();
+    }
+    system
+        .store
+        .put_action(
+            &genatrix_store::ActionColumns {
+                id: &action.id,
+                run_id: &action.run_id,
+                kind: action.effect.kind(),
+                account: None,
+                status: crate::actions::status_of(&action),
+                created_at: &action.created_at.to_rfc3339(),
+                expires_at: &action.expires_at.to_rfc3339(),
+            },
+            &serde_json::to_string(&action).unwrap(),
+        )
+        .unwrap();
+    execute_approved(Arc::clone(&system)).await.unwrap();
+    let done = system.actions.get(&system.store, &id).unwrap().unwrap();
+    assert!(
+        matches!(&done.status, genatrix_agent::Status::Failed { detail } if detail.contains("changed")),
+        "{:?}",
+        done.status
+    );
+}
+
+const MAILER: &str = r#"
+name = "Mailer"
+purpose = "Writes to the accountant about invoices"
+author = "tests"
+
+[reads]
+connectors = ["imap"]
+kinds = ["mail"]
+max_level = "personal"
+
+[[proposes]]
+kind = "to_accountant"
+label = "Send to the accountant"
+effect = "send_mail"
+targets = ["accountant@example.nz"]
+
+[[proposes]]
+kind = "reply"
+label = "Reply"
+effect = "send_mail"
+targets = "same_thread"
+
+[[proposes]]
+kind = "note"
+label = "Keep a note"
+
+[[triggers]]
+on = "message"
+
+[quota]
+proposals_per_day = 3
+"#;
+
+fn card() -> wit::Card {
+    wit::Card {
+        title: "t".into(),
+        fields: Vec::new(),
+        evidence: Vec::new(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mail_goes_only_where_the_manifest_says() {
+    // Invariant 21: a target outside the manifest's rule never reaches the
+    // approvals.
+    let (_dir, system) = test_system();
+    let s = seed(&system);
+    let agent = install(&system, with_manifest(MAILER), 1).unwrap();
+    let handle = tokio::runtime::Handle::current();
+    let sys = Arc::clone(&system);
+    let results = tokio::task::spawn_blocking(move || {
+        let mut doors = doors_for(&sys, &agent, handle);
+        let mail = |to: &str, reply: Option<ItemId>| {
+            serde_json::json!({
+                "to": [to],
+                "subject": "Invoice",
+                "body": "Attached.",
+                "reply_to": reply.map(|r| r.to_string()),
+            })
+            .to_string()
+        };
+        let listed = doors.propose(
+            "to_accountant",
+            card(),
+            mail("Accountant <accountant@example.nz>", None),
+            Level::Public,
+        );
+        let stranger = doors.propose(
+            "to_accountant",
+            card(),
+            mail("thief@example.com", None),
+            Level::Public,
+        );
+        // A reply before the item was read in this run is refused.
+        let unread = doors.propose(
+            "reply",
+            card(),
+            mail("billing@power.nz", Some(s.in_scope)),
+            Level::Public,
+        );
+        doors.get(&s.in_scope.to_string()).unwrap();
+        let same_thread = doors.propose(
+            "reply",
+            card(),
+            mail("billing@power.nz", Some(s.in_scope)),
+            Level::Public,
+        );
+        let elsewhere = doors.propose(
+            "reply",
+            card(),
+            mail("thief@example.com", Some(s.in_scope)),
+            Level::Public,
+        );
+        (listed, stranger, unread, same_thread, elsewhere)
+    })
+    .await
+    .unwrap();
+    let (listed, stranger, unread, same_thread, elsewhere) = results;
+    // No mail account is configured in the test core, so the listed one
+    // gets as far as choosing an account and stops there.
+    assert!(listed.unwrap_err().contains("no mail account"));
+    assert!(stranger.unwrap_err().contains("outside"));
+    assert!(unread.unwrap_err().contains("read in this run"));
+    let id = same_thread.unwrap();
+    let action = system.actions.get(&system.store, &id).unwrap().unwrap();
+    match &action.effect {
+        genatrix_agent::Effect::SendMail { to, account, .. } => {
+            assert_eq!(to, &vec!["billing@power.nz".to_owned()]);
+            assert_eq!(account, "me@example.com");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(action.current().payload, "Attached.");
+    assert!(elsewhere.unwrap_err().contains("outside"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn too_many_proposals_pause_the_agent() {
+    // Design 11, ruling 8.
+    let (_dir, system) = test_system();
+    let agent = install(&system, with_manifest(MAILER), 1).unwrap();
+    let id = agent.id.clone();
+    let handle = tokio::runtime::Handle::current();
+    let sys = Arc::clone(&system);
+    let results = tokio::task::spawn_blocking(move || {
+        let mut doors = doors_for(&sys, &agent, handle);
+        (0..4)
+            .map(|_| {
+                doors
+                    .propose("note", card(), "n".into(), Level::Public)
+                    .is_ok()
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap();
+    assert_eq!(results, vec![true, true, true, false]);
+    assert_eq!(
+        system.store.get_agent(&id).unwrap().unwrap().state,
+        genatrix_store::AgentState::Paused
+    );
+}

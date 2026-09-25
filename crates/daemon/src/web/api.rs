@@ -853,6 +853,10 @@ struct ActionView {
     can_withdraw: bool,
     /// The outbound item the action produced, once it has.
     result: Option<SourceRef>,
+    /// Whether the draft may be edited. An agent's proposal may not.
+    editable: bool,
+    /// For an agent's proposal: what the fixed template shows.
+    card: Option<genatrix_agent::Card>,
 }
 
 fn action_view(system: &System, a: &genatrix_agent::Action, nonce: Option<String>) -> ActionView {
@@ -880,6 +884,13 @@ fn action_view(system: &System, a: &genatrix_agent::Action, nonce: Option<String
         }
         genatrix_agent::Effect::CreateEvent { account } => ("calendar".to_owned(), account.clone()),
         genatrix_agent::Effect::WriteMemory { collection } => (collection.clone(), String::new()),
+        genatrix_agent::Effect::Agent { name, label, .. } => {
+            (format!("{name} · {label}"), String::new())
+        }
+    };
+    let card = match &a.effect {
+        genatrix_agent::Effect::Agent { card, .. } => Some(card.clone()),
+        _ => None,
     };
     let status_detail = match &a.status {
         Status::Declined { reason } => reason.clone(),
@@ -919,6 +930,8 @@ fn action_view(system: &System, a: &genatrix_agent::Action, nonce: Option<String
         versions: u32::try_from(a.versions.len()).unwrap_or(0),
         can_withdraw,
         result,
+        editable: a.effect.editable(),
+        card,
     }
 }
 
@@ -1070,7 +1083,19 @@ async fn approve_action(
         .actions
         .approve(&system.store, &system.ledger, &id, &approval, &body.nonce)
     {
-        Ok(a) => Ok(Json(action_view(&system, &a, None)).into_response()),
+        Ok(a) => {
+            // An agent's own effect is carried out by the core, now, rather
+            // than waiting for the next pass of the loop.
+            if matches!(a.effect, genatrix_agent::Effect::Agent { .. }) {
+                let system = std::sync::Arc::clone(&system);
+                tokio::spawn(async move {
+                    if let Err(e) = crate::agents::execute_approved(system).await {
+                        tracing::warn!(error = %e, "could not carry out an agent's approved action");
+                    }
+                });
+            }
+            Ok(Json(action_view(&system, &a, None)).into_response())
+        }
         Err(e) => Ok(decision_error(&e)),
     }
 }

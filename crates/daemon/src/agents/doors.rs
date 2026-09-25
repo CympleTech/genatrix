@@ -10,11 +10,11 @@ use std::sync::Arc;
 use chrono::{DateTime, Duration, Utc};
 use genatrix_agent::run::ModelCaller;
 use genatrix_gate::gate::{Initiator, Message, Request};
-use genatrix_host::manifest::{Manifest, Purpose};
+use genatrix_host::manifest::{Effect, Manifest, Proposal, Purpose, TargetRule, Targets, ceiling};
 use genatrix_host::{Doors, wit};
 use genatrix_llm::ticket::Purpose as GatePurpose;
-use genatrix_model::{Connector, Direction, Item, ItemId, Kind, Level, Payload};
-use genatrix_store::{ItemQuery, Space, SpaceValue, StoredAgent};
+use genatrix_model::{Connector, Direction, HandleKind, Item, ItemId, Kind, Level, Payload};
+use genatrix_store::{AgentState, ItemQuery, Space, SpaceValue, StoredAgent};
 
 use crate::system::System;
 
@@ -29,6 +29,8 @@ pub(super) struct StoreDoors {
     handle: tokio::runtime::Handle,
     /// Items handed to the agent so far, for the egress record's provenance.
     read: Vec<ItemId>,
+    /// Proposals made in this run, not yet in the run record.
+    proposed: u64,
 }
 
 impl StoreDoors {
@@ -50,6 +52,7 @@ impl StoreDoors {
             now,
             handle,
             read: Vec::new(),
+            proposed: 0,
         }
     }
 
@@ -286,11 +289,227 @@ impl Doors for StoreDoors {
 
     fn propose(
         &mut self,
-        _kind: &str,
-        _card: wit::Card,
-        _payload: String,
+        kind: &str,
+        card: wit::Card,
+        payload: String,
         _level: Level,
     ) -> Result<String, String> {
-        Err("proposals are not available yet".into())
+        let spec = self
+            .manifest
+            .proposal(kind)
+            .cloned()
+            .ok_or_else(|| format!("`{kind}` is not declared in the manifest"))?;
+        self.within_cap()?;
+        let read: std::collections::HashSet<ItemId> = self.read.iter().copied().collect();
+        // Evidence is what the agent actually read in this run, nothing it
+        // merely names.
+        let evidence: Vec<ItemId> = card
+            .evidence
+            .iter()
+            .filter_map(|e| e.parse().ok())
+            .filter(|e| read.contains(e))
+            .collect();
+        let rationale = format!("{} · {}", self.agent.name, spec.label);
+        let (effect, draft) = match spec.effect {
+            Effect::Own => (
+                genatrix_agent::Effect::Agent {
+                    agent: self.agent.id.clone(),
+                    name: self.agent.name.clone(),
+                    version: self.agent.version.clone(),
+                    agent_kind: kind.to_owned(),
+                    label: spec.label.clone(),
+                    card: card_of(card),
+                },
+                payload,
+            ),
+            Effect::SendMail => self.outward_mail(&spec, &payload, &read)?,
+            Effect::SendMessage | Effect::CreateEvent => {
+                return Err("this kind of effect is not open to agents yet".into());
+            }
+        };
+        let action = self
+            .system
+            .actions
+            .propose(
+                &self.system.store,
+                &self.system.ledger,
+                &self.run,
+                effect,
+                draft,
+                rationale,
+                evidence,
+            )
+            .map_err(|e| e.to_string())?;
+        self.proposed += 1;
+        Ok(action.id)
+    }
+}
+
+impl StoreDoors {
+    /// The daily limits: the manifest's for this agent, the core's for all
+    /// of them. Going over pauses the agent until the user looks
+    /// (design 11, ruling 8).
+    fn within_cap(&mut self) -> Result<(), String> {
+        let since = (self.now - Duration::days(1)).timestamp_millis();
+        let store = &self.system.store;
+        let mine = store
+            .agent_proposals_since(Some(&self.agent.id), since)
+            .map_err(|e| e.to_string())?
+            + self.proposed;
+        let everyone = store
+            .agent_proposals_since(None, since)
+            .map_err(|e| e.to_string())?
+            + self.proposed;
+        let limit = u64::from(self.manifest.quota.proposals_per_day);
+        if mine >= limit || everyone >= u64::from(ceiling::PROPOSALS_PER_DAY) {
+            let _ = store.set_agent_state(&self.agent.id, AgentState::Paused);
+            tracing::warn!(agent = %self.agent.id, "an agent reached its daily proposals and was paused");
+            return Err("the daily limit on proposals is reached; the agent is paused".into());
+        }
+        Ok(())
+    }
+
+    /// A mail, to whom the manifest allows and no one else (design 02,
+    /// invariant 21). Refused here, before anything reaches the approvals.
+    fn outward_mail(
+        &self,
+        spec: &Proposal,
+        payload: &str,
+        read: &std::collections::HashSet<ItemId>,
+    ) -> Result<(genatrix_agent::Effect, String), String> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Mail {
+            to: Vec<String>,
+            subject: String,
+            body: String,
+            #[serde(default)]
+            reply_to: Option<String>,
+        }
+        let mail: Mail = serde_json::from_str(payload)
+            .map_err(|e| format!("a mail is {{to, subject, body, reply_to?}}: {e}"))?;
+        let to: Vec<String> = mail.to.iter().map(|a| bare(a)).collect();
+        if to.is_empty() || to.iter().any(|a| !a.contains('@')) {
+            return Err("a mail needs at least one address".into());
+        }
+        let store = &self.system.store;
+        let replied = match &mail.reply_to {
+            None => None,
+            Some(id) => {
+                let id: ItemId = id
+                    .parse()
+                    .map_err(|_| "reply_to is not an item".to_owned())?;
+                if !read.contains(&id) {
+                    return Err("reply_to must be an item read in this run".into());
+                }
+                store.get_item(id).map_err(|e| e.to_string())?
+            }
+        };
+        let allowed = match &spec.targets {
+            Some(Targets::Addresses(list)) => {
+                let list: Vec<String> = list.iter().map(|a| bare(a)).collect();
+                to.iter().all(|a| list.contains(a))
+            }
+            Some(Targets::Rule(TargetRule::SameThread)) => {
+                let Some(Item {
+                    payload:
+                        Payload::Mail {
+                            from, to: t, cc, ..
+                        },
+                    ..
+                }) = &replied
+                else {
+                    return Err("same_thread needs reply_to on a mail".into());
+                };
+                let thread: Vec<String> = std::iter::once(from)
+                    .chain(t)
+                    .chain(cc)
+                    .map(|a| bare(a))
+                    .collect();
+                to.iter().all(|a| thread.contains(a))
+            }
+            Some(Targets::Rule(TargetRule::KnownContacts)) => to.iter().all(|a| {
+                store
+                    .find_handle(HandleKind::Email, a)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|h| store.has_written_to(h.person_id).unwrap_or(false))
+            }),
+            None => false,
+        };
+        if !allowed {
+            return Err("an address is outside what the manifest allows".into());
+        }
+        let (account, in_reply_to, references) = if let Some(Item {
+            source,
+            payload:
+                Payload::Mail {
+                    message_id,
+                    references,
+                    ..
+                },
+            ..
+        }) = &replied
+        {
+            let mut chain = references.clone();
+            chain.extend(message_id.clone());
+            (source.account.clone(), message_id.clone(), chain)
+        } else {
+            let accounts = crate::accounts::Accounts::load(&self.system.config.accounts_path())
+                .map_err(|e| e.to_string())?;
+            let first = accounts
+                .mail
+                .keys()
+                .next()
+                .cloned()
+                .ok_or_else(|| "there is no mail account to send from".to_owned())?;
+            (first, None, Vec::new())
+        };
+        Ok((
+            genatrix_agent::Effect::SendMail {
+                account,
+                to,
+                subject: mail.subject,
+                in_reply_to,
+                references,
+            },
+            mail.body,
+        ))
+    }
+}
+
+/// The address in `Name <address>`, lowercased.
+fn bare(address: &str) -> String {
+    let a = match (address.find('<'), address.rfind('>')) {
+        (Some(open), Some(close)) if open < close => &address[open + 1..close],
+        _ => address,
+    };
+    a.trim().to_lowercase()
+}
+
+fn card_of(card: wit::Card) -> genatrix_agent::Card {
+    use genatrix_agent::{CardField, CardValue};
+    genatrix_agent::Card {
+        title: card.title.chars().take(200).collect(),
+        fields: card
+            .fields
+            .into_iter()
+            .take(40)
+            .map(|f| CardField {
+                label: f.label.chars().take(80).collect(),
+                value: match f.value {
+                    wit::FieldValue::Text(text) => CardValue::Text {
+                        text: text.chars().take(2000).collect(),
+                    },
+                    wit::FieldValue::Money(m) => CardValue::Money {
+                        cents: m.cents,
+                        currency: m.currency.chars().take(3).collect(),
+                    },
+                    wit::FieldValue::Date(date) => CardValue::Date {
+                        date: date.chars().take(10).collect(),
+                    },
+                },
+            })
+            .collect(),
     }
 }

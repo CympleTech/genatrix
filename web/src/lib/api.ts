@@ -59,7 +59,16 @@ export interface Action {
   status: string; status_detail: string; created_at: string; expires_in_secs: number;
   nonce: string | null; drafted: string; versions: number; can_withdraw: boolean;
   result: SourceRef | null;
+  /** False for an agent's proposal: approved or declined as it is. */
+  editable: boolean;
+  /** An agent's proposal: data for the one fixed template (design 11). */
+  card: Card | null;
 }
+export type CardValue =
+  | { type: 'text'; text: string }
+  | { type: 'money'; cents: number; currency: string }
+  | { type: 'date'; date: string };
+export interface Card { title: string; fields: { label: string; value: CardValue }[] }
 export interface Today { digest: Digest | null; commitments: Commitment[]; commitments_total: number; actions: Action[]; pending_actions: number }
 export interface Handle { kind: string; value: string; inferred: boolean }
 export interface PersonCard {

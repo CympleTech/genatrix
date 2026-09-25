@@ -639,6 +639,22 @@ fn rate_per_minute(count: usize, d: std::time::Duration) -> u64 {
 /// has no summary (design 03). Each pass has its own run and step budget;
 /// a pass that stops at the budget continues on the next tick, and what it
 /// did stays done.
+/// Lapse what nobody decided in time, and carry out approved proposals of
+/// agents' own kinds that nothing has carried out yet, such as one approved
+/// while the core was stopping.
+async fn settle_actions(system: &std::sync::Arc<System>) {
+    match system.actions.expire_due(&system.store, &system.ledger) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(n, "action(s) expired"),
+        Err(e) => tracing::warn!(error = %e, "could not expire actions"),
+    }
+    match agents::execute_approved(std::sync::Arc::clone(system)).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(n, "agent action(s) carried out"),
+        Err(e) => tracing::warn!(error = %e, "could not carry out agent actions"),
+    }
+}
+
 async fn pipelines_as_mail_arrives(system: std::sync::Arc<System>) {
     let mut judged_at_count: Option<u64> = None;
     loop {
@@ -693,11 +709,7 @@ async fn pipelines_as_mail_arrives(system: std::sync::Arc<System>) {
             finish_run(ctx, "summarize", result);
         }
 
-        match system.actions.expire_due(&system.store, &system.ledger) {
-            Ok(0) => {}
-            Ok(n) => tracing::info!(n, "action(s) expired"),
-            Err(e) => tracing::warn!(error = %e, "could not expire actions"),
-        }
+        settle_actions(&system).await;
 
         if let Some(mut ctx) = begin_run(&system, "commitments") {
             let result = pipeline::commitments::run(&system.store, &mut ctx)

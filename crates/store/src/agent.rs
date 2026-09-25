@@ -210,6 +210,17 @@ impl Store {
         Ok(())
     }
 
+    /// Proposals made since `since_ms`, by one agent or by all of them.
+    pub fn agent_proposals_since(&self, agent_id: Option<&str>, since_ms: i64) -> Result<u64> {
+        let n: i64 = self.conn().query_row(
+            "SELECT coalesce(sum(json_array_length(proposals)), 0) FROM agent_run
+             WHERE started_ms >= ?1 AND (?2 IS NULL OR agent_id = ?2)",
+            params![since_ms, agent_id],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
     /// An agent's most recent runs, newest first.
     pub fn agent_runs(&self, agent_id: &str, limit: u32) -> Result<Vec<AgentRun>> {
         let conn = self.conn();

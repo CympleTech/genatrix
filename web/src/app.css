@@ -330,6 +330,14 @@
   textarea.draft[readonly] { color: var(--muted); }
   .card-label { @apply mb-1 mt-3 text-[11px] font-semibold uppercase tracking-[0.08em]; color: var(--faint); }
   .rationale { @apply m-0; }
+  /* An agent's proposal: labelled values, one fixed layout (design 11). */
+  .card-fields {
+    @apply m-0 grid grid-cols-[minmax(96px,max-content)_1fr] gap-x-4 gap-y-1.5 rounded-[12px] border border-line px-3.5 py-2.5 text-[15px];
+    background: var(--surface-2);
+  }
+  .card-fields dt { color: var(--muted); }
+  .card-fields dd { @apply m-0 break-words; }
+  .card-fields dd.money { font-variant-numeric: tabular-nums; }
 
   /* ---- sources ---- */
   .sources { @apply mt-1.5 flex flex-wrap gap-x-2.5 gap-y-1.5; }

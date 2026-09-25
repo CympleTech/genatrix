@@ -1,5 +1,5 @@
 import { t } from './i18n';
-import type { Action } from './api';
+import type { Action, CardValue } from './api';
 
 export const LEVELS = ['public', 'personal', 'secret'] as const;
 
@@ -28,9 +28,24 @@ export function expiresIn(secs: number): string {
 // matters most: it must never read like a failure to be retried (design 05).
 export function statusLine(a: Action): string {
   if (a.status === 'pending') return expiresIn(a.expires_in_secs);
-  const key = `action.status.${a.status}`;
+  // An agent's own effect is done or not done, never sent.
+  const own = `action.status.agent.${a.status}`;
+  const key = a.kind === 'agent' && t(own) !== own ? own : `action.status.${a.status}`;
   const word = t(key) === key ? a.status : t(key);
   return a.status_detail ? `${word} · ${a.status_detail}` : word;
+}
+
+/** A card value as text. Money is minor units; shown with two decimals. */
+export function cardValue(v: CardValue): string {
+  switch (v.type) {
+    case 'text': return v.text;
+    case 'date': return v.date;
+    case 'money': {
+      const sign = v.cents < 0 ? '−' : '';
+      const abs = Math.abs(v.cents);
+      return `${sign}${v.currency} ${Math.floor(abs / 100).toLocaleString()}.${String(abs % 100).padStart(2, '0')}`;
+    }
+  }
 }
 
 export function hours(h: number | null): string {

@@ -169,9 +169,17 @@ pub async fn run(
         now,
         tokio::runtime::Handle::current(),
     );
+    let applying = matches!(invocation, Invocation::Apply { .. });
+    if applying {
+        space.begin_apply().map_err(anyhow::Error::msg)?;
+    }
     let outcome = tokio::task::spawn_blocking(move || runner.run(&package, run, Box::new(doors)))
         .await
         .context("the agent's run did not finish")?;
+    if applying {
+        // An approved effect lands whole or not at all.
+        space.end_apply(outcome.result.is_ok());
+    }
     if space.finish() {
         tracing::warn!(agent = %agent.id, "a transaction left open was rolled back");
     }
@@ -187,6 +195,63 @@ pub async fn run(
         &outcome,
     )?;
     Ok(outcome)
+}
+
+/// Carry out every approved proposal of an agent's own kind: hand its
+/// payload to the agent's `apply`, then report like a connector would.
+/// Returns how many were carried out, well or not.
+pub async fn execute_approved(system: Arc<System>) -> anyhow::Result<usize> {
+    use genatrix_agent::action::Status;
+    let handed = system
+        .actions
+        .approved_in_core(&system.store, &system.ledger)?;
+    let count = handed.len();
+    for (action, version, token) in handed {
+        let genatrix_agent::Effect::Agent {
+            agent,
+            version: proposed_by,
+            agent_kind,
+            ..
+        } = &action.effect
+        else {
+            continue;
+        };
+        let current = system.store.get_agent(agent)?;
+        let status = match current {
+            None => Status::Failed {
+                detail: "the agent is no longer installed".into(),
+            },
+            Some(a) if &a.version != proposed_by => Status::Failed {
+                detail: "the agent changed since it proposed this; ask it again".into(),
+            },
+            Some(_) => {
+                let invocation = Invocation::Apply {
+                    kind: agent_kind.clone(),
+                    payload: version.payload.clone(),
+                };
+                match run(Arc::clone(&system), agent, invocation).await {
+                    Ok(Outcome { result: Ok(_), .. }) => Status::Executed { result: None },
+                    Ok(Outcome { result: Err(e), .. }) => Status::Failed {
+                        detail: format!("{e:?}"),
+                    },
+                    Err(e) => Status::Failed {
+                        detail: e.to_string(),
+                    },
+                }
+            }
+        };
+        if let Err(e) = system.actions.report(
+            &system.store,
+            &system.ledger,
+            &action.id,
+            token.expose(),
+            status,
+            None,
+        ) {
+            tracing::warn!(action = %action.id, error = %e, "could not report an agent action");
+        }
+    }
+    Ok(count)
 }
 
 fn record(

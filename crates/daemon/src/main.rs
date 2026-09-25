@@ -11,6 +11,7 @@
 
 mod accounts;
 mod actions;
+mod agents;
 mod caller;
 mod config;
 mod connectors;
@@ -115,6 +116,11 @@ enum Command {
         #[arg(long)]
         to: PathBuf,
     },
+    /// Functional agents: install, list, ask, pause (design 11).
+    Agent {
+        #[command(subcommand)]
+        action: agents::terminal::AgentAction,
+    },
     /// Serve the interface.
     Serve {
         /// Address to listen on. Loopback by default, which only this machine
@@ -189,6 +195,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Service { action } => service(&config, &action),
         Command::Sync { limit } => sync(&config, limit).await,
+        Command::Agent { action } => {
+            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
+            agents::terminal::command(std::sync::Arc::new(system), action).await
+        }
         Command::Serve { bind, port } => serve(&config, &web::Serving { bind, port }).await,
     }
 }

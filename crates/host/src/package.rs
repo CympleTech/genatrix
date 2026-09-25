@@ -102,6 +102,43 @@ impl Package {
     }
 }
 
+/// The component inside a package: the same bytes without Genatrix's
+/// sections, ready to be packed again with another manifest.
+pub fn unpack(bytes: &[u8]) -> Result<Vec<u8>, HostError> {
+    let mut cut: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut depth = 0usize;
+    for payload in Parser::new(0).parse_all(bytes) {
+        let payload = payload.map_err(|e| HostError::Package(e.to_string()))?;
+        match payload {
+            Payload::Version { .. } => depth += 1,
+            Payload::End(_) => depth = depth.saturating_sub(1),
+            Payload::CustomSection(reader)
+                if depth == 1 && reader.name().starts_with("genatrix:") =>
+            {
+                let body = reader.range();
+                let mut size = Vec::new();
+                leb128(&mut size, body.len());
+                let start = body.start - size.len() - 1;
+                if bytes.get(start) != Some(&0) || bytes[start + 1..body.start] != size[..] {
+                    return Err(HostError::Package(
+                        "a section header is not canonical".into(),
+                    ));
+                }
+                cut.push(start..body.end);
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    for r in cut {
+        out.extend_from_slice(&bytes[at..r.start]);
+        at = r.end;
+    }
+    out.extend_from_slice(&bytes[at..]);
+    Ok(out)
+}
+
 /// The custom sections of the outermost component, not of the modules and
 /// components nested inside it.
 fn top_level_sections(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, HostError> {

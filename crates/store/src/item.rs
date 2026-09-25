@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use genatrix_model::{
-    ContentHash, Direction, Item, ItemId, Kind, Level, PersonId, Source, ThreadId,
+    Connector, ContentHash, Direction, Item, ItemId, Kind, Level, PersonId, Source, ThreadId,
 };
 use rusqlite::{OptionalExtension, Row, ToSql, params};
 
@@ -125,6 +125,20 @@ pub struct ItemQuery {
     pub person: Option<PersonId>,
     /// Only items at most this sensitive. Used by the gate to scope reads.
     pub max_level: Option<Level>,
+    /// Only items from these connectors. Empty means any.
+    pub connectors: Vec<Connector>,
+    /// Only these items. Empty means any.
+    pub ids: Vec<ItemId>,
+    /// Only items with at least one attachment.
+    pub with_attachment: bool,
+    /// Only items with an attachment of one of these types. Empty means any.
+    pub attachment_mimes: Vec<String>,
+    /// Only items whose subject, sender or author contains one of these
+    /// words. Empty means any.
+    pub matching: Vec<String>,
+    /// Only items whose text contains this phrase. Under three characters
+    /// matches nothing, as in [`Store::search_items`].
+    pub text: Option<String>,
     /// Include upstream-deleted items. Off by default.
     pub include_tombstoned: bool,
     /// Which versions.
@@ -136,6 +150,10 @@ pub struct ItemQuery {
 }
 
 impl ItemQuery {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one clause per field, in field order"
+    )]
     fn build(&self) -> (String, Vec<Box<dyn ToSql>>) {
         let mut where_: Vec<String> = Vec::new();
         let mut args: Vec<Box<dyn ToSql>> = Vec::new();
@@ -180,6 +198,64 @@ impl ItemQuery {
                 .map(|x| arg(Box::new(x.as_str())))
                 .collect();
             where_.push(format!("i.sensitivity IN ({})", allowed.join(",")));
+        }
+        if !self.connectors.is_empty() {
+            let ps: Vec<String> = self
+                .connectors
+                .iter()
+                .map(|c| arg(Box::new(c.as_str())))
+                .collect();
+            where_.push(format!("i.connector IN ({})", ps.join(",")));
+        }
+        if !self.ids.is_empty() {
+            let ps: Vec<String> = self
+                .ids
+                .iter()
+                .map(|id| arg(Box::new(id.to_string())))
+                .collect();
+            where_.push(format!("i.id IN ({})", ps.join(",")));
+        }
+        if self.with_attachment || !self.attachment_mimes.is_empty() {
+            where_.push("json_array_length(i.blobs) > 0".into());
+        }
+        if !self.attachment_mimes.is_empty() {
+            let ps: Vec<String> = self
+                .attachment_mimes
+                .iter()
+                .map(|m| arg(Box::new(m.clone())))
+                .collect();
+            where_.push(format!(
+                "EXISTS (SELECT 1 FROM json_each(i.blobs) j JOIN blob b ON b.hash = j.value
+                         WHERE b.mime IN ({}))",
+                ps.join(",")
+            ));
+        }
+        if !self.matching.is_empty() {
+            let any: Vec<String> = self
+                .matching
+                .iter()
+                .map(|w| {
+                    let p = arg(Box::new(format!("%{}%", w.replace(['%', '_'], ""))));
+                    format!(
+                        "(json_extract(i.payload, '$.subject') LIKE {p}
+                          OR json_extract(i.payload, '$.from') LIKE {p}
+                          OR EXISTS (SELECT 1 FROM person a WHERE a.id = i.author
+                                     AND a.display_name LIKE {p}))"
+                    )
+                })
+                .collect();
+            where_.push(format!("({})", any.join(" OR ")));
+        }
+        if let Some(text) = &self.text {
+            let q = text.trim();
+            if q.chars().count() < 3 {
+                where_.push("0".into());
+            } else {
+                let p = arg(Box::new(format!("\"{}\"", q.replace('"', "\"\""))));
+                where_.push(format!(
+                    "i.rowid IN (SELECT rowid FROM item_fts WHERE item_fts MATCH {p})"
+                ));
+            }
         }
         if !self.include_tombstoned {
             where_.push("i.tombstoned = 0".into());

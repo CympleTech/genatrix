@@ -23,6 +23,7 @@ use crate::DbKey;
 /// gets a new version inside the existing one.
 const DB_INFO: &[u8] = b"genatrix/db/v1";
 const FILE_INFO: &[u8] = b"genatrix/file/v1";
+const SPACE_INFO: &[u8] = b"genatrix/space/v1";
 
 /// The one secret. Everything else is derived.
 ///
@@ -66,6 +67,13 @@ impl MasterKey {
     #[must_use]
     pub fn db_key(&self, label: &str) -> DbKey {
         DbKey::from_bytes(self.derive(DB_INFO, label.as_bytes()))
+    }
+
+    /// The key for one functional agent's space database (design 08, 11).
+    /// Bound to the agent's id, so no two spaces share a key.
+    #[must_use]
+    pub fn space_key(&self, agent_id: &str) -> DbKey {
+        DbKey::from_bytes(self.derive(SPACE_INFO, agent_id.as_bytes()))
     }
 
     /// The key for one content-addressed file.
@@ -146,6 +154,11 @@ mod tests {
             m.file_key(&[1; 32]).as_bytes(),
             m.file_key(&[2; 32]).as_bytes()
         );
+        // Every agent's space has its own key, and none is the store's.
+        let a = m.space_key("agent-a").pragma_literal();
+        assert_ne!(a, m.space_key("agent-b").pragma_literal());
+        assert_ne!(a, m.db_key("agent-a").pragma_literal());
+        assert_ne!(a, store);
         // And a file key is not a database key wearing a different hat.
         assert!(!store.contains(&hex::encode(m.file_key(&[1; 32]).as_bytes())));
     }

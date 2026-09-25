@@ -74,6 +74,13 @@ impl Config {
         self.data_dir.join("rules").join("sensitivity.toml")
     }
 
+    /// Installed functional agents: one directory each, holding its
+    /// approved packages and its space (design 11).
+    #[must_use]
+    pub fn agents_dir(&self) -> PathBuf {
+        self.data_dir.join("agents")
+    }
+
     /// The accounts this copy reads.
     #[must_use]
     pub fn accounts_path(&self) -> PathBuf {
@@ -101,6 +108,7 @@ impl Config {
             self.data_dir.join("raw"),
             self.data_dir.join("blobs"),
             self.data_dir.join("models"),
+            self.data_dir.join("agents"),
         ] {
             std::fs::create_dir_all(dir)?;
         }

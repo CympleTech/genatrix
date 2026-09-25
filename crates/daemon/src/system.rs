@@ -42,6 +42,8 @@ pub struct System {
     pub model_state: tokio::sync::watch::Sender<crate::models::ModelState>,
     /// Actions: proposed, decided, executed, recorded.
     pub actions: crate::actions::Actions,
+    /// Installed functional agents: packages, spaces, the sandbox (design 11).
+    pub agents: crate::agents::Agents,
     /// The live pairing code, if any (design 06, "形态").
     pub pairing: crate::web::Pairing,
     /// The key the gateway checks tickets with, kept so the model side can be
@@ -143,6 +145,7 @@ impl System {
             config.ledger_path(),
             &master.db_key("ledger"),
         )?);
+        let agents_dir = config.agents_dir();
         let raw_files = Arc::new(FileStore::open(
             config.data_dir.join("raw"),
             master.clone(),
@@ -196,6 +199,7 @@ impl System {
             people: std::sync::Mutex::new(None),
             groups: std::sync::Mutex::new(None),
             actions: crate::actions::Actions::default(),
+            agents: crate::agents::Agents::new(agents_dir, master.clone()),
             pairing: crate::web::Pairing::default(),
             ticket_key,
             connector_tasks: std::sync::Mutex::new(Vec::new()),

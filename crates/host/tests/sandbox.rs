@@ -362,4 +362,16 @@ fn the_package_is_its_hash_and_packs_once() {
     assert_eq!(p.manifest.name, "Hello");
     let again = Package::pack(&p.bytes, "name = \"x\"", None, None);
     assert!(again.is_err());
+    // Unpacked, it is the bare component, and packs again to the same bytes.
+    let bare = genatrix_host::package::unpack(&p.bytes).unwrap();
+    assert!(bare.len() < p.bytes.len());
+    let manifest = std::fs::read_to_string(format!(
+        "{}/../../agents/hello/manifest.toml",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    assert_eq!(
+        Package::pack(&bare, &manifest, None, None).unwrap(),
+        p.bytes
+    );
 }

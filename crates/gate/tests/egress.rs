@@ -206,6 +206,27 @@ fn switching_the_cloud_off_sends_everything_local() {
 }
 
 #[test]
+fn an_installed_agent_stays_local_unless_its_own_switch_is_on() {
+    // Design 11, ruling 12: the global switch is not enough for an agent.
+    let f = fixture(true);
+    let mut r = request(Purpose::Summarize, Level::Public, "a public notice");
+    r.initiator = Initiator::Installed {
+        agent: "a1".into(),
+        version: "h1".into(),
+        run: "r1".into(),
+        cloud: false,
+    };
+    assert_eq!(f.gate.prepare(&r).unwrap().location, Location::Local);
+    r.initiator = Initiator::Installed {
+        agent: "a1".into(),
+        version: "h1".into(),
+        run: "r2".into(),
+        cloud: true,
+    };
+    assert_eq!(f.gate.prepare(&r).unwrap().location, Location::Cloud);
+}
+
+#[test]
 fn a_corpus_purpose_never_resolves_to_the_cloud() {
     let f = fixture(true);
     for purpose in [Purpose::Classify, Purpose::Extract, Purpose::Embed] {

@@ -58,7 +58,7 @@ clap = { version = "4", features = ["derive"] }
 toml = "0.9"
 regex = "1"
 hex = "0.4"
-rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "hooks", "limits"] }
 tempfile = "3"
 wasmtime = { version = "49", default-features = false, features = ["cranelift", "component-model", "runtime", "std", "parallel-compilation"] }
 wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }

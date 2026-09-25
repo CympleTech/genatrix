@@ -16,6 +16,7 @@
 #![forbid(unsafe_code)]
 
 mod action;
+mod agent;
 mod annotation;
 mod blob;
 mod commitment;
@@ -30,12 +31,14 @@ mod migrate;
 mod person;
 mod raw;
 mod relationship;
+mod space;
 mod store;
 mod thread;
 mod time;
 mod vector;
 
 pub use action::{ActionColumns, StoredAction};
+pub use agent::{AgentRun, AgentState, StoredAgent};
 pub use cursor::StoredCursor;
 pub use device::Device;
 pub use error::{Error, Result};
@@ -45,6 +48,7 @@ pub use genatrix_keys::DbKey;
 pub use group::{GroupOverview, LastWord};
 pub use item::{ItemQuery, ItemVersion};
 pub use relationship::{PersonOverview, Relationship, RelationshipStats};
+pub use space::{Space, SpaceValue};
 pub use store::Store;
 pub use vector::EMBEDDING_DIMS;
 

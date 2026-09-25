@@ -83,6 +83,7 @@ Each step ends with the checks clean and the invariants it touches tested.
 | Step | State |
 |---|---|
 | A1 | done: the WIT world; manifest (closed schema, ceilings) and single-file package; the runner with fuel, memory and wall-time limits, a fixed clock, seeded randomness, WASI linked interface by interface without sockets; the `Doors` trait; `agents/sdk`, `agents/hello`, and two probes; fifteen sandbox tests against the built components, covering invariants 13, 19, 20 and the host's half of 14 |
+| A2 | done: `agent`, `agent_version`, `agent_run` tables; each space its own SQLCipher file keyed by `space_key(agent_id)`, with attach limit zero, an authorizer against attach, pragmas, virtual tables and extensions, one statement per call, a page ceiling, and a deadline while a statement runs; the daemon's doors against the store (read scope as an `ItemQuery` the agent's filter only narrows), the gate (`Initiator::Installed`, local unless the agent's own cloud switch is on), and the space; packages kept per version and refused unless their hash is approved; each run recorded in the store and, by reference, in the ledger; `genatrix agent install/list/ask/pause/resume/runs` on this machine. Tests for invariants 14, 15, 17, 20 and ruling 12. Attachment text and proposals answer "not available yet" until A5 and A3 |
 
 ## Decisions taken here
 

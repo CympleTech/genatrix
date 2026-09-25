@@ -38,6 +38,19 @@ pub enum Initiator {
         /// The run it belongs to.
         run: String,
     },
+    /// An installed functional agent (design 11).
+    Installed {
+        /// Which agent.
+        agent: String,
+        /// The hash of the version that ran.
+        version: String,
+        /// The run.
+        run: String,
+        /// Whether the user let this agent use a cloud model. Off unless
+        /// switched on for this agent (design 11, ruling 12). It can only
+        /// narrow where a call goes, never widen it.
+        cloud: bool,
+    },
     /// A pipeline or scheduled rule.
     Rule {
         /// Which one.
@@ -290,8 +303,14 @@ impl EgressGate {
             Level::Secret => TicketLevel::Secret,
         };
         let preferred = self.registry.resolve(request.purpose, prospective);
+        // An installed agent without its own cloud switch stays local,
+        // whatever the global switch says.
+        let agent_kept_local =
+            matches!(request.initiator, Initiator::Installed { cloud: false, .. });
         let entry = match preferred {
-            Some(e) if e.location() == Location::Cloud && !self.cloud_enabled => {
+            Some(e)
+                if e.location() == Location::Cloud && (!self.cloud_enabled || agent_kept_local) =>
+            {
                 self.registry.resolve_local(request.purpose)
             }
             other => other,
@@ -407,6 +426,7 @@ fn caller_of(initiator: &Initiator) -> String {
     match initiator {
         Initiator::User => "user".into(),
         Initiator::Agent { run } => format!("agent:{run}"),
+        Initiator::Installed { agent, run, .. } => format!("installed:{agent}:{run}"),
         Initiator::Rule { name } => format!("rule:{name}"),
     }
 }

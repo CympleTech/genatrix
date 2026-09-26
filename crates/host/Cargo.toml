@@ -21,6 +21,8 @@ wasmtime-wasi-io.workspace = true
 wasmparser.workspace = true
 
 [dev-dependencies]
+genatrix-store.workspace = true
+genatrix-keys.workspace = true
 sha2.workspace = true
 hex.workspace = true
 

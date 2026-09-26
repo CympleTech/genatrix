@@ -14,7 +14,9 @@ for dir in "$here/hello" "$here"/probes/*; do
     wasm="$here/target/wasm32-wasip2/release/genatrix_agent_$name.wasm"
     "$pack" "$wasm" "$dir/manifest.toml" -o "$out/$name.wasm"
 done
-for name in hello probe net; do
+"$pack" "$here/target/wasm32-wasip2/release/genatrix_agent_nz_tax.wasm" \
+    "$here/nz-tax/agent/manifest.toml" -o "$out/nz-tax.wasm"
+for name in hello probe net nz-tax; do
     cp "$out/$name.wasm" "$root/crates/host/tests/fixtures/$name.wasm"
 done
 # The core's attachment reader is not a package: it is compiled into the

@@ -1,0 +1,13 @@
+[package]
+name = "taxrules"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Typed loader for the YAML rule files and the deterministic calculations they drive."
+
+[dependencies]
+taxcore.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+chrono.workspace = true
+thiserror.workspace = true

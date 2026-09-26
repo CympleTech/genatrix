@@ -68,4 +68,8 @@ When `agents/` or `wit/` changes:
 
 ```sh
 cd agents && cargo fmt --all && cargo clippy --release -- -D warnings && ./build.sh
+cargo test --target aarch64-apple-darwin -p taxcore -p taxrules -p genatrix-agent-nz-tax
 ```
+
+The guest workspace builds for `wasm32-wasip2` by default; its unit tests run
+natively with the explicit target.

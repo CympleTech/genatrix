@@ -1,0 +1,132 @@
+# New Zealand tax rules for the 2025-26 year (1 April 2025 - 31 March 2026).
+#
+# Rules are data, not code. A Budget that changes a rate adds a new file here;
+# it never edits an existing one, because a return already filed under these
+# figures must recompute to the same numbers years later.
+#
+# Rates are exact rationals. 10.5% is 105/1000, never 0.105.
+
+meta:
+  jurisdiction: NZ
+  tax_year: "2025-26"
+  # Bump when this file is corrected. Recorded on every computed return.
+  version: 1
+  verified_on: 2026-07-31
+  sources:
+    - https://www.ird.govt.nz/income-tax/income-tax-for-individuals/tax-codes-and-tax-rates-for-individuals/tax-rates-for-individuals
+    - https://www.ird.govt.nz/gst
+    - https://www.ird.govt.nz/income-tax/provisional-tax
+
+gst:
+  rate:
+    numerator: 15
+    denominator: 100
+  # Compulsory registration once taxable supplies pass this in any 12 months,
+  # looking back or reasonably projected forward.
+  registration_threshold_nzd: 60000
+  registration_window_days: 21
+
+  filing_frequencies:
+    - id: monthly
+      months_per_period: 1
+      anchor_end_month: 3
+      # Compulsory above this turnover.
+      required_above_nzd: 24000000
+    - id: two_monthly
+      months_per_period: 2
+      anchor_end_month: 3
+      default: true
+    - id: six_monthly
+      months_per_period: 6
+      anchor_end_month: 3
+      available_below_nzd: 500000
+
+  # Returns and payment are due on the 28th of the month after the period ends,
+  # with two exceptions that exist to avoid the Christmas and year-end crush.
+  due_date:
+    months_after_period_end: 1
+    day: 28
+    exceptions:
+      - when_period_ends_in_month: 3
+        due_month: 5
+        due_day: 7
+        due_year_offset: 0
+      - when_period_ends_in_month: 11
+        due_month: 1
+        due_day: 15
+        due_year_offset: 1
+
+income_tax:
+  # Applied progressively; there is no tax-free threshold in New Zealand.
+  brackets:
+    - up_to_nzd: 15600
+      rate: { numerator: 105, denominator: 1000 }
+    - up_to_nzd: 53500
+      rate: { numerator: 175, denominator: 1000 }
+    - up_to_nzd: 78100
+      rate: { numerator: 30, denominator: 100 }
+    - up_to_nzd: 180000
+      rate: { numerator: 33, denominator: 100 }
+    - up_to_nzd: null
+      rate: { numerator: 39, denominator: 100 }
+
+  return_due:
+    # Self-filed.
+    self_filed: { month: 7, day: 7 }
+    # With a registered tax agent's extension of time.
+    with_tax_agent: { month: 3, day: 31, year_offset: 1 }
+
+provisional_tax:
+  # Provisional tax applies once residual income tax passes this.
+  residual_income_tax_threshold_nzd: 5000
+  standard_option:
+    # 105% of the previous year's RIT when that return is filed, otherwise 110%
+    # of the year before that.
+    uplift_prior_year: { numerator: 105, denominator: 100 }
+    uplift_two_years_prior: { numerator: 110, denominator: 100 }
+
+deductions:
+  # Entertainment is half deductible unless it falls in a statutory exception
+  # (e.g. entertainment enjoyed while travelling on business).
+  entertainment:
+    deductible: { numerator: 50, denominator: 100 }
+
+  home_office:
+    # Either a measured floor-area proportion of actual premises costs, or the
+    # square-metre rate. Both are supported; the rate is published annually.
+    method: floor_area_or_square_metre_rate
+    square_metre_rate_nzd: 61.15
+    square_metre_rate_note: >-
+      Covers utilities only. Mortgage interest, rates and rent are claimed
+      separately on the business-use proportion of floor area.
+
+  motor_vehicle:
+    # IRD kilometre rates, published each year. Tier 1 covers the first 14,000 km
+    # of total annual travel, tier 2 every kilometre after that.
+    method: kilometre_rate_or_actual_costs
+    tier_one_limit_km: 14000
+    kilometre_rates_nzd:
+      petrol_or_diesel: { tier_one: 1.17, tier_two: 0.37 }
+      petrol_hybrid: { tier_one: 1.17, tier_two: 0.23 }
+      electric: { tier_one: 1.17, tier_two: 0.14 }
+    note: >-
+      Verify tier two rates against the IRD operational statement for this year
+      before relying on a claim.
+    needs_verification: true
+
+# Treatments that are commonly misapplied. Used to seed account defaults and to
+# warn during review; never to decide silently.
+gst_treatment_hints:
+  zero_rated:
+    - exported goods and services
+    - going-concern sales between registered persons
+    - most land transactions between registered persons
+  exempt:
+    - residential rent
+    - financial services
+    - donated goods sold by a non-profit
+  not_subject:
+    - drawings and capital introduced
+    - wages and PAYE
+    - transfers between own accounts
+    - private expenditure

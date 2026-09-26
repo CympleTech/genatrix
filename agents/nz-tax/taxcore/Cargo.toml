@@ -1,0 +1,13 @@
+[package]
+name = "taxcore"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Domain model for the tax engine: money, double-entry ledger, documents, provenance. No I/O."
+
+[dependencies]
+serde.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+sha2.workspace = true

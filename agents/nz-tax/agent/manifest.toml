@@ -1,0 +1,39 @@
+name = "NZ tax"
+purpose = "Reads PDF invoices in your mail, checks every figure, proposes each purchase for your books, and works out GST and income tax the way IRD asks"
+author = "Genatrix"
+blobs = "text"
+model = ["extract", "classify"]
+
+[reads]
+connectors = ["imap"]
+kinds = ["mail"]
+with_attachment = true
+mime = ["application/pdf"]
+days = 400
+max_level = "secret"
+
+[[proposes]]
+kind = "record_entry"
+label = "Record an entry"
+
+[[proposes]]
+kind = "gst_return"
+label = "GST return"
+
+[[triggers]]
+on = "items"
+
+[[triggers]]
+on = "message"
+
+[[triggers]]
+on = "schedule"
+name = "gst_period"
+every = "monthly:1"
+at = "09:00"
+
+[quota]
+space_mb = 200
+seconds = 300
+memory_mb = 256
+proposals_per_day = 60

@@ -142,6 +142,7 @@ impl Store {
 
         for hash in only_ours(&tx, c)? {
             out.blobs += tx.execute("DELETE FROM blob WHERE hash = ?1", [&hash])?;
+            tx.execute("DELETE FROM blob_text WHERE hash = ?1", [&hash])?;
             if let Ok(h) = hash.parse::<ContentHash>() {
                 out.blob_files.push(h);
             }

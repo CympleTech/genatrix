@@ -39,6 +39,54 @@ impl Store {
         Ok(())
     }
 
+    /// The text read out of an attachment by this version of the reader:
+    /// `Some(Ok(text))`, `Some(Err(why))` if it could not be read, `None` if
+    /// this reader has not tried.
+    pub fn blob_text(
+        &self,
+        hash: &ContentHash,
+        reader: &str,
+    ) -> Result<Option<std::result::Result<String, String>>> {
+        let row: Option<(Option<String>, Option<String>)> = self
+            .conn()
+            .query_row(
+                "SELECT text, error FROM blob_text WHERE hash = ?1 AND reader = ?2",
+                params![hash.to_string(), reader],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        Ok(row.map(|(text, error)| match (text, error) {
+            (Some(t), _) => Ok(t),
+            (None, e) => Err(e.unwrap_or_default()),
+        }))
+    }
+
+    /// Keep what the reader made of an attachment.
+    pub fn put_blob_text(
+        &self,
+        hash: &ContentHash,
+        reader: &str,
+        read: &std::result::Result<String, String>,
+    ) -> Result<()> {
+        let (text, error) = match read {
+            Ok(t) => (Some(t.as_str()), None),
+            Err(e) => (None, Some(e.as_str())),
+        };
+        self.conn().execute(
+            "INSERT INTO blob_text (hash, reader, text, error, read_at) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (hash) DO UPDATE SET reader = excluded.reader, text = excluded.text,
+                 error = excluded.error, read_at = excluded.read_at",
+            params![
+                hash.to_string(),
+                reader,
+                text,
+                error,
+                crate::time::utc_to_col(chrono::Utc::now())
+            ],
+        )?;
+        Ok(())
+    }
+
     /// Fetch blob metadata.
     pub fn get_blob(&self, hash: &ContentHash) -> Result<Option<Blob>> {
         self.conn()

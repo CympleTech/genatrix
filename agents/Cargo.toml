@@ -3,7 +3,7 @@
 # sandbox, never in the core itself.
 [workspace]
 resolver = "3"
-members = ["sdk", "hello", "probes/*"]
+members = ["sdk", "hello", "extract", "probes/*"]
 
 [workspace.package]
 version = "0.1.0"

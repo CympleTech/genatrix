@@ -375,3 +375,47 @@ fn the_package_is_its_hash_and_packs_once() {
         p.bytes
     );
 }
+
+fn fixture_bytes(name: &str) -> Vec<u8> {
+    std::fs::read(format!(
+        "{}/tests/fixtures/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap()
+}
+
+#[test]
+fn the_reader_takes_the_text_out_of_a_pdf() {
+    let text = RUNNER
+        .extract_text("application/pdf", &fixture_bytes("invoice.pdf"))
+        .unwrap();
+    assert!(text.contains("Invoice 42"), "{text}");
+    assert!(text.contains("Total NZD 115.00"), "{text}");
+}
+
+#[test]
+fn the_reader_reads_plain_text_and_refuses_what_it_cannot() {
+    assert_eq!(
+        RUNNER
+            .extract_text("text/plain; charset=utf-8", b"line one\n\n\n\nline two  ")
+            .unwrap(),
+        "line one\n\nline two"
+    );
+    assert!(matches!(
+        RUNNER.extract_text("image/png", b"x"),
+        Err(RunError::Agent(_))
+    ));
+    assert!(matches!(
+        RUNNER.extract_text("application/pdf", b"not a pdf at all"),
+        Err(RunError::Agent(_) | RunError::Trap(_))
+    ));
+}
+
+#[test]
+fn a_pdf_that_inflates_past_the_limit_stops_the_reader_not_the_core() {
+    // 700 MB of zeros in a 700 KB stream; the reader has 512 MB.
+    let started = Instant::now();
+    let r = RUNNER.extract_text("application/pdf", &fixture_bytes("bomb.pdf"));
+    assert!(matches!(r, Err(RunError::Limit(_))), "{r:?}");
+    assert!(started.elapsed().as_secs() < 30);
+}

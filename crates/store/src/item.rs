@@ -139,6 +139,8 @@ pub struct ItemQuery {
     /// Only items whose text contains this phrase. Under three characters
     /// matches nothing, as in [`Store::search_items`].
     pub text: Option<String>,
+    /// Only items that carry this attachment, by its hash.
+    pub with_blob: Option<String>,
     /// Only items stored after this row, as [`Store::item_row`] numbers
     /// them: every new item or new version gets a higher one.
     pub after_row: Option<i64>,
@@ -262,6 +264,12 @@ impl ItemQuery {
                     "i.rowid IN (SELECT rowid FROM item_fts WHERE item_fts MATCH {p})"
                 ));
             }
+        }
+        if let Some(hash) = &self.with_blob {
+            let p = arg(Box::new(hash.clone()));
+            where_.push(format!(
+                "EXISTS (SELECT 1 FROM json_each(i.blobs) WHERE value = {p})"
+            ));
         }
         if let Some(after) = self.after_row {
             let p = arg(Box::new(after));

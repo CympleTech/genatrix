@@ -39,7 +39,8 @@ shows what the core's local API says, and opens the page in a window.
 and actions only through the `Doors` trait the daemon implements. `agents/` is
 a separate Cargo workspace built for `wasm32-wasip2`: the guest SDK, the
 agents, and test probes. `agents/build.sh` builds and packs them and refreshes
-`crates/host/tests/fixtures/`, which are committed so the root workspace tests
+`crates/host/tests/fixtures/` and `crates/host/extractor.wasm` (the core's
+attachment reader), which are committed so the root workspace builds and tests
 without the wasm target.
 
 `web/` is the interface (design 06): Svelte and Vite, phone first. Its build

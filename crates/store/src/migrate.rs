@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use crate::error::{Error, Result};
 
 /// Highest migration this build knows.
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 13;
 
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_init.sql")),
@@ -20,7 +20,11 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (9, include_str!("../migrations/0009_one_to_one.sql")),
     (10, include_str!("../migrations/0010_agents.sql")),
     (11, include_str!("../migrations/0011_agent_cursor.sql")),
-    (12, include_str!("../migrations/0012_foreign_key_indexes.sql")),
+    (
+        12,
+        include_str!("../migrations/0012_foreign_key_indexes.sql"),
+    ),
+    (13, include_str!("../migrations/0013_blob_text.sql")),
 ];
 
 pub(crate) fn current_version(conn: &Connection) -> Result<i64> {

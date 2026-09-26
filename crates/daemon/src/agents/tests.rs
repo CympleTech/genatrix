@@ -49,6 +49,29 @@ fn mail(
     level: Level,
     pdf: bool,
 ) -> ItemId {
+    mail_carrying(
+        system,
+        thread,
+        connector,
+        subject,
+        days_ago,
+        level,
+        pdf,
+        Vec::new(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mail_carrying(
+    system: &System,
+    thread: ThreadId,
+    connector: Connector,
+    subject: &str,
+    days_ago: i64,
+    level: Level,
+    pdf: bool,
+    carried: Vec<ContentHash>,
+) -> ItemId {
     let store = &system.store;
     let ext = ulid::Ulid::new().to_string();
     let source = Source::new(connector, "me@example.com", &ext);
@@ -57,7 +80,7 @@ fn mail(
     let author = store
         .person_for_handle(HandleKind::Email, "billing@power.nz", "Power Co")
         .unwrap();
-    let mut blobs = Vec::new();
+    let mut blobs = carried;
     if pdf {
         let hash = ContentHash::of(ext.as_bytes());
         store
@@ -788,4 +811,123 @@ fn risk_is_the_worst_thing_a_manifest_allows() {
         "",
     );
     assert_eq!(life::risk(&m(&reads_only)), life::Risk::Reads);
+}
+
+fn host_fixture(name: &str) -> Vec<u8> {
+    std::fs::read(format!(
+        "{}/../host/tests/fixtures/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap()
+}
+
+/// A mail carrying these attachments, their bytes in the encrypted file
+/// store as sync would leave them.
+fn mail_with(
+    system: &System,
+    level: Level,
+    attachments: &[(&str, Vec<u8>)],
+) -> (ItemId, Vec<ContentHash>) {
+    let thread = system
+        .store
+        .upsert_thread(&Thread {
+            id: ThreadId::new(),
+            kind: ThreadKind::MailThread,
+            source: Source::new(
+                Connector::Imap,
+                "me@example.com",
+                ulid::Ulid::new().to_string(),
+            ),
+            title: None,
+            members: Vec::new(),
+            first_at: None,
+            last_at: None,
+        })
+        .unwrap();
+    let mut hashes = Vec::new();
+    for (mime, bytes) in attachments {
+        let hash = system.blob_files.put(bytes).unwrap();
+        system
+            .store
+            .upsert_blob(&Blob {
+                hash,
+                mime: (*mime).to_owned(),
+                size: bytes.len() as u64,
+                name_hint: None,
+            })
+            .unwrap();
+        hashes.push(hash);
+    }
+    let id = mail_carrying(
+        system,
+        thread,
+        Connector::Imap,
+        "Invoice 42",
+        1,
+        level,
+        false,
+        hashes.clone(),
+    );
+    (id, hashes)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn attachment_text_comes_from_the_reader_within_scope() {
+    let (_dir, system) = test_system();
+    let manifest = SCOPED.replace(
+        "model = [\"extract\"]",
+        "model = [\"extract\"]\nblobs = \"text\"",
+    );
+    let agent = install(&system, with_manifest(&manifest), 1).unwrap();
+    let (_, invoice) = mail_with(
+        &system,
+        Level::Personal,
+        &[
+            ("application/pdf", host_fixture("invoice.pdf")),
+            ("text/plain", b"a note".to_vec()),
+        ],
+    );
+    // Other bytes: the same file carried by an item in scope would be
+    // readable through that item, which is right.
+    let mut other_pdf = host_fixture("invoice.pdf");
+    other_pdf.extend_from_slice(b"% another copy\n");
+    let (_, secret) = mail_with(&system, Level::Secret, &[("application/pdf", other_pdf)]);
+    let (_, broken) = mail_with(
+        &system,
+        Level::Personal,
+        &[("application/pdf", b"not a pdf".to_vec())],
+    );
+    let (invoice_pdf, broken_pdf) = (invoice[0], broken[0]);
+    let handle = tokio::runtime::Handle::current();
+    let sys = Arc::clone(&system);
+    let (pdf, again, note, other, bad) = tokio::task::spawn_blocking(move || {
+        let mut doors = doors_for(&sys, &agent, handle);
+        let pdf = doors.blob_text(&invoice[0].to_string());
+        let again = doors.blob_text(&invoice[0].to_string());
+        let note = doors.blob_text(&invoice[1].to_string());
+        let other = doors.blob_text(&secret[0].to_string());
+        let bad = doors.blob_text(&broken[0].to_string());
+        (pdf, again, note, other, bad)
+    })
+    .await
+    .unwrap();
+    let (text, level) = pdf.unwrap();
+    assert!(text.contains("Total NZD 115.00"), "{text}");
+    assert_eq!(level, Level::Personal);
+    assert_eq!(again.unwrap().0, text);
+    // Read once, kept: the store has it under this reader's version.
+    let reader = genatrix_host::Runner::extractor_version();
+    assert!(matches!(
+        system.store.blob_text(&invoice_pdf, &reader).unwrap(),
+        Some(Ok(_))
+    ));
+    // A type the manifest does not name, and an item above its level.
+    assert!(note.is_err());
+    assert!(other.is_err());
+    // A file that cannot be read says so, and says so from memory next time.
+    assert!(bad.is_err());
+    assert!(matches!(
+        system.store.blob_text(&broken_pdf, &reader).unwrap(),
+        Some(Err(_))
+    ));
 }

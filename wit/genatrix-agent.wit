@@ -150,3 +150,11 @@ world agent {
     /// An approved proposal of the agent's own kind: write it to the space.
     export apply: func(kind: string, payload: string) -> result<_, string>;
 }
+
+/// The core's own attachment reader (design 11, "第一个 agent"): text out
+/// of a file from a stranger's mail, in a sandbox with nothing to reach.
+/// It imports nothing; a parser that goes wrong has only its own memory.
+world extractor {
+    /// The text of a file of this type, or why there is none.
+    export extract: func(mime: string, bytes: list<u8>) -> result<string, string>;
+}

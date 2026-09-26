@@ -18,6 +18,9 @@ use genatrix_store::{AgentState, ItemQuery, Space, SpaceValue, StoredAgent};
 
 use crate::system::System;
 
+/// The largest attachment the reader is given.
+const MAX_ATTACHMENT: u64 = 25 << 20;
+
 /// One run's doors.
 pub(super) struct StoreDoors {
     system: Arc<System>,
@@ -283,8 +286,62 @@ impl Doors for StoreDoors {
         self.found(&items).into_iter().next()
     }
 
-    fn blob_text(&mut self, _id: &str) -> Result<(String, Level), String> {
-        Err("attachment text is not available yet".into())
+    fn blob_text(&mut self, id: &str) -> Result<(String, Level), String> {
+        let hash: genatrix_model::ContentHash = id
+            .parse()
+            .map_err(|_| "that is not an attachment".to_owned())?;
+        // In scope means carried by an item the manifest lets it read, and
+        // of a type the manifest names when it names any.
+        let whole = wit::Filter {
+            since_ms: None,
+            until_ms: None,
+            text: None,
+            limit: 200,
+        };
+        let mut q = self.scoped(&whole).ok_or("not in scope")?;
+        q.with_blob = Some(hash.to_string());
+        let store = &self.system.store;
+        let items = store.query_items(&q).map_err(|e| e.to_string())?;
+        let level = items
+            .iter()
+            .map(|i| i.sensitivity)
+            .max()
+            .ok_or_else(|| "not in scope".to_owned())?;
+        let blob = store
+            .get_blob(&hash)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "not in scope".to_owned())?;
+        let mimes = &self.manifest.reads.mime;
+        if !mimes.is_empty() && !mimes.iter().any(|m| blob.mime.starts_with(m.as_str())) {
+            return Err("not in scope".into());
+        }
+        self.read.extend(items.iter().map(|i| i.id));
+
+        let reader = genatrix_host::Runner::extractor_version();
+        if let Some(done) = store.blob_text(&hash, &reader).map_err(|e| e.to_string())? {
+            return done.map(|t| (t, level));
+        }
+        let read = if blob.size > MAX_ATTACHMENT {
+            Err(format!("larger than {} MB", MAX_ATTACHMENT >> 20))
+        } else {
+            let bytes = self
+                .system
+                .blob_files
+                .get(&hash)
+                .map_err(|e| e.to_string())?;
+            let runner = self.system.agents.runner().map_err(|e| e.to_string())?;
+            runner
+                .extract_text(&blob.mime, &bytes)
+                .map_err(|e| match e {
+                    genatrix_host::RunError::Agent(why) => why,
+                    other => format!("{other:?}"),
+                })
+        };
+        // What could not be read is kept too, so a bad file is tried once.
+        store
+            .put_blob_text(&hash, &reader, &read)
+            .map_err(|e| e.to_string())?;
+        read.map(|t| (t, level))
     }
 
     fn call_model(

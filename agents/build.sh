@@ -17,3 +17,6 @@ done
 for name in hello probe net; do
     cp "$out/$name.wasm" "$root/crates/host/tests/fixtures/$name.wasm"
 done
+# The core's attachment reader is not a package: it is compiled into the
+# core as it is.
+cp "$here/target/wasm32-wasip2/release/genatrix_extract.wasm" "$root/crates/host/extractor.wasm"

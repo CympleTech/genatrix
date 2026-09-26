@@ -22,6 +22,32 @@ mod bindings {
     });
 }
 
+#[allow(missing_docs, clippy::pedantic)]
+mod extractor_bindings {
+    wasmtime::component::bindgen!({
+        world: "extractor",
+        path: "../../wit",
+    });
+}
+
+/// The core's attachment reader, built from `agents/extract` by
+/// `agents/build.sh` and compiled into the core.
+pub const EXTRACTOR: &[u8] = include_bytes!("../extractor.wasm");
+/// Wall time one extraction may take.
+const EXTRACT_SECONDS: u32 = 20;
+/// Memory one extraction may use.
+const EXTRACT_MEMORY_MB: u32 = 512;
+/// The extractor runs under a manifest of its own that reads nothing and
+/// may do nothing; its world imports no doors in any case.
+const EXTRACTOR_MANIFEST: &str = r#"
+name = "Attachment reader"
+purpose = "Reads the text of attachments for the core"
+author = "Genatrix"
+[reads]
+[[triggers]]
+on = "message"
+"#;
+
 use bindings::genatrix::agent as doors;
 /// The types that cross a door, as the WIT file defines them.
 pub use bindings::genatrix::agent::types as wit;
@@ -139,6 +165,7 @@ pub struct Runner {
     engine: Engine,
     linker: Linker<RunState>,
     compiled: Mutex<HashMap<String, Component>>,
+    extractor: Arc<Manifest>,
 }
 
 impl Runner {
@@ -170,7 +197,67 @@ impl Runner {
             engine,
             linker,
             compiled: Mutex::new(HashMap::new()),
+            extractor: Arc::new(Manifest::parse(EXTRACTOR_MANIFEST)?),
         })
+    }
+
+    /// The extractor's version: its first bytes of hash, so text read by an
+    /// older reader can be told from text read by this one.
+    #[must_use]
+    pub fn extractor_version() -> String {
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(EXTRACTOR))[..16].to_owned()
+    }
+
+    /// The text of an attachment, read in the sandbox by the core's own
+    /// reader, which has no doors at all (design 11, "第一个 agent").
+    pub fn extract_text(&self, mime: &str, bytes: &[u8]) -> Result<String, RunError> {
+        let key = format!("extractor:{}", Self::extractor_version());
+        let component = {
+            let mut cache = self
+                .compiled
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(c) = cache.get(&key) {
+                c.clone()
+            } else {
+                let c = Component::new(&self.engine, EXTRACTOR)
+                    .map_err(|e| RunError::Refused(format!("the reader does not load: {e}")))?;
+                cache.insert(key, c.clone());
+                c
+            }
+        };
+        let state = RunState::new(
+            Arc::clone(&self.extractor),
+            Box::new(NoDoors),
+            false,
+            Level::Public,
+            0,
+            0,
+            EXTRACT_MEMORY_MB,
+        );
+        let (mut store, _) = self.store(state, EXTRACT_SECONDS);
+        let reader =
+            extractor_bindings::Extractor::instantiate(&mut store, &component, &self.linker)
+                .map_err(|e| RunError::Refused(format!("the reader does not start: {e}")))?;
+        match reader.call_extract(&mut store, mime, bytes) {
+            Ok(Ok(text)) => Ok(text),
+            Ok(Err(e)) => Err(RunError::Agent(e)),
+            Err(trap) => Err(classify_trap(&trap)),
+        }
+    }
+
+    /// A store with the sandbox's limits: memory from the state, fuel and
+    /// wall time from `seconds`. Returns the fuel it started with.
+    fn store(&self, state: RunState, seconds: u32) -> (Store<RunState>, u64) {
+        let mut store = Store::new(&self.engine, state);
+        store.limiter(|s| &mut s.limits);
+        let fuel = u64::from(seconds) * FUEL_PER_SECOND;
+        let _ = store.set_fuel(fuel);
+        let ticks = u64::from(seconds) * (1000 / u64::try_from(TICK.as_millis()).unwrap_or(10));
+        store.set_epoch_deadline(ticks);
+        store.epoch_deadline_trap();
+        (store, fuel)
     }
 
     fn component(&self, package: &Package) -> Result<Component, RunError> {
@@ -207,47 +294,17 @@ impl Runner {
         };
 
         let quota = manifest.quota;
-        let limits = StoreLimitsBuilder::new()
-            .memory_size(usize::try_from(quota.memory_mb).unwrap_or(16) << 20)
-            .instances(64)
-            .memories(16)
-            .tables(64)
-            .table_elements(1 << 20)
-            .trap_on_grow_failure(true)
-            .build();
-        let wasi = WasiCtxBuilder::new()
-            .wall_clock(FixedClock(run.now_ms))
-            .secure_random(wasmtime_wasi::Deterministic::new(seed_bytes(run.seed, 0)))
-            .insecure_random(wasmtime_wasi::Deterministic::new(seed_bytes(run.seed, 1)))
-            .insecure_random_seed(u128::from(run.seed))
-            .stdout(wasmtime_wasi::p2::pipe::SinkOutputStream)
-            .stderr(wasmtime_wasi::p2::pipe::SinkOutputStream)
-            .allow_tcp(false)
-            .allow_udp(false)
-            .allow_ip_name_lookup(false)
-            .build();
         let applying = matches!(run.invocation, Invocation::Apply { .. });
-        let state = RunState {
-            manifest: Arc::clone(&manifest),
+        let state = RunState::new(
+            Arc::clone(&manifest),
             doors,
             applying,
-            taint: run.space_level,
-            reads: BTreeSet::new(),
-            log: Vec::new(),
-            proposals: Vec::new(),
-            now_ms: run.now_ms,
-            wasi,
-            table: ResourceTable::new(),
-            limits,
-        };
-        let mut store = Store::new(&self.engine, state);
-        store.limiter(|s| &mut s.limits);
-        let fuel = u64::from(quota.seconds) * FUEL_PER_SECOND;
-        let _ = store.set_fuel(fuel);
-        let ticks =
-            u64::from(quota.seconds) * (1000 / u64::try_from(TICK.as_millis()).unwrap_or(10));
-        store.set_epoch_deadline(ticks);
-        store.epoch_deadline_trap();
+            run.space_level,
+            run.now_ms,
+            run.seed,
+            quota.memory_mb,
+        );
+        let (mut store, fuel) = self.store(state, quota.seconds);
 
         let result = match bindings::Agent::instantiate(&mut store, &component, &self.linker) {
             Err(e) => Err(RunError::Refused(format!(
@@ -370,6 +427,49 @@ struct RunState {
 }
 
 impl RunState {
+    fn new(
+        manifest: Arc<Manifest>,
+        doors: Box<dyn Doors>,
+        applying: bool,
+        space_level: Level,
+        now_ms: i64,
+        seed: u64,
+        memory_mb: u32,
+    ) -> Self {
+        let limits = StoreLimitsBuilder::new()
+            .memory_size(usize::try_from(memory_mb).unwrap_or(16) << 20)
+            .instances(64)
+            .memories(16)
+            .tables(64)
+            .table_elements(1 << 20)
+            .trap_on_grow_failure(true)
+            .build();
+        let wasi = WasiCtxBuilder::new()
+            .wall_clock(FixedClock(now_ms))
+            .secure_random(wasmtime_wasi::Deterministic::new(seed_bytes(seed, 0)))
+            .insecure_random(wasmtime_wasi::Deterministic::new(seed_bytes(seed, 1)))
+            .insecure_random_seed(u128::from(seed))
+            .stdout(wasmtime_wasi::p2::pipe::SinkOutputStream)
+            .stderr(wasmtime_wasi::p2::pipe::SinkOutputStream)
+            .allow_tcp(false)
+            .allow_udp(false)
+            .allow_ip_name_lookup(false)
+            .build();
+        Self {
+            manifest,
+            doors,
+            applying,
+            taint: space_level,
+            reads: BTreeSet::new(),
+            log: Vec::new(),
+            proposals: Vec::new(),
+            now_ms,
+            wasi,
+            table: ResourceTable::new(),
+            limits,
+        }
+    }
+
     fn raise(&mut self, level: Level) {
         self.taint = self.taint.max(level);
     }
@@ -572,4 +672,46 @@ fn link_wasi(l: &mut Linker<RunState>) -> wasmtime::Result<()> {
     filesystem::preopens::add_to_linker::<RunState, WasiFilesystem>(l, RunState::filesystem)?;
     sync::filesystem::types::add_to_linker::<RunState, WasiFilesystem>(l, RunState::filesystem)?;
     Ok(())
+}
+
+/// Doors for a run that has none: the extractor.
+struct NoDoors;
+
+impl Doors for NoDoors {
+    fn query(&mut self, _filter: &wit::Filter) -> Vec<wit::Item> {
+        Vec::new()
+    }
+    fn get(&mut self, _id: &str) -> Option<wit::Item> {
+        None
+    }
+    fn blob_text(&mut self, _id: &str) -> Result<(String, Level), String> {
+        Err("no doors".into())
+    }
+    fn call_model(
+        &mut self,
+        _p: Purpose,
+        _m: Vec<wit::Message>,
+        _l: Level,
+    ) -> Result<String, String> {
+        Err("no doors".into())
+    }
+    fn execute(&mut self, _sql: &str, _params: Vec<wit::Value>) -> Result<u64, String> {
+        Err("no doors".into())
+    }
+    fn query_space(
+        &mut self,
+        _sql: &str,
+        _params: Vec<wit::Value>,
+    ) -> Result<Vec<Vec<wit::Value>>, String> {
+        Err("no doors".into())
+    }
+    fn propose(
+        &mut self,
+        _k: &str,
+        _c: wit::Card,
+        _p: String,
+        _l: Level,
+    ) -> Result<String, String> {
+        Err("no doors".into())
+    }
 }

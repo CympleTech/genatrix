@@ -3,142 +3,38 @@
 An AI that runs only on your device, understands your digital life, and acts
 only with your approval.
 
+![Genatrix, the Today page](screenshot.png)
+
 Your mail and messages are downloaded to your own computer, encrypted with
 your own key, and read there by a model running on the same machine. Nothing
-leaves without you knowing. Over time it comes to know who you talk to, what
-you owe people, and how you write, and it starts drafting on your behalf.
+leaves without you knowing.
 
-## What it does
+- **One timeline.** Gmail and Telegram in a single stream, searchable by words
+  and by meaning.
+- **Read on your machine.** A local model sorts, summarizes and drafts. The
+  cloud is off, and the records page shows how many bytes have left the device.
+- **Three levels of sensitivity.** Public, personal, secret. Rules you can read
+  set the floor, the model may raise it, only you may lower it.
+- **Nothing happens without you.** A reply, or anything else, is a draft until
+  you approve the exact version you read.
+- **Agents in a sandbox.** Install functional agents (tax, travel, your own):
+  they read only what their manifest names, reach no network, and propose
+  rather than act.
+- **Yours to leave.** Export everything as plain JSON, or delete everything, in
+  one step.
 
-**Brings everything into one timeline.** Mail and chat land in a single
-stream, not one app per source. Search once and find both. Your day did not
-happen in separate applications and neither should your record of it.
+No accounts, no servers, no telemetry.
 
-**Reads it on your machine.** A local model classifies, summarizes, and
-searches. Sensitive work never leaves the device, and nothing does unless you
-switch the cloud on.
+## Run it locally
 
-**Sorts by sensitivity, in three levels.** Public, personal, secret. Rules you
-can read and edit set the floor; the model may raise it; only you may lower
-it. Verification codes, card numbers, identity numbers and passwords are
-recognised with their checksums, so an order number is not mistaken for a
-credit card.
-
-**Never sends anything you have not seen.** Everything bound for a cloud model
-passes one gate, which redacts names and secrets, writes down the exact bytes
-before they go, and issues a single-use permission tied to those bytes. A
-second process checks that permission independently and refuses anything it
-cannot account for.
-
-**Keeps a ledger you can read.** Every model call, every run, every proposed
-action, in an append-only chain. Open it and the first line answers the
-question that matters: how many bytes left this device, and what were they.
-
-**Asks before acting.** A reply, a calendar entry, a note to memory: the agent
-proposes, you approve. Approval binds to the draft you read, so editing it
-voids the approval rather than quietly sending different words. Approvals are
-single-use and expire, so Monday's cannot fire on Friday.
-
-**Shows its reasoning before its words.** Every summary point cites the
-messages it came from. A claim with no source is marked as unsupported rather
-than mixed in.
-
-**Treats every message as untrusted input.** A mail that says "ignore your
-instructions" is put where instructions are not read, the model's output is
-constrained to shapes that cannot carry an attack, and nothing reaches the
-outside world without a person. The worst a successful injection achieves is a
-wrong summary.
-
-**Lets you leave.** Export is one button and produces plain JSON plus your
-files. The point of owning your data is being able to take it somewhere else.
-
-## What it does not do
-
-No accounts, no servers, no telemetry. No selling you a subscription to your
-own mail. It is one person's data on one person's computer, and everything
-else follows from that.
-
-## Status
-
-Milestone one, collecting mail, is built and in its soak. A Gmail account
-signs in once, its history arrives newest first, new mail appears within
-seconds, and it all runs from login as a background program with a menu bar
-icon. The connector runs in its own sandboxed process; the core starts it and
-stores what it brings. Storage, the ledger, the sensitivity rules, redaction,
-the egress gate, the local inference process, the gateway, the agent layer
-and a local web interface are in place underneath. With synthetic items in
-the store, the classification pipeline judges them on this machine and the
-records page reports that nothing left the device. Understanding the mail,
-milestone two, comes next; Telegram alongside it.
-
-There is no installer yet. What follows is how to run the pieces that exist,
-from a source checkout. When it ships, none of this will be necessary: design
-09 describes a signed app, seven screens, and no terminal.
-
-- [Design documents](docs/design/), written in Chinese. Start with
-  [00 Vision and Principles](docs/design/00-vision.md).
-- [Implementation plan](docs/plan/) and spike results, in English.
-
-## Requirements
-
-An Apple Silicon Mac with 16 GB of memory or more, running one of the last two
-macOS releases. Apple's Metal toolchain, which the local inference build needs:
+You need an Apple Silicon Mac with 16 GB of memory, about 20 GB free, Rust,
+and the Metal toolchain:
 
 ```sh
 xcodebuild -downloadComponent MetalToolchain
 ```
 
-Around 20 GB free: model weights, and a first build that compiles SQLCipher,
-OpenSSL and the MLX Swift package. That first build takes several minutes;
-later ones are quick.
-
-## Giving it to someone
-
-One command builds the app and a disk image:
-
-```sh
-packaging/package-macos.sh
-# dist/Genatrix.app and dist/Genatrix-<version>-<build>.dmg
-```
-
-Set these first for a build meant for other people:
-
-```sh
-export GENATRIX_TELEGRAM_API_ID=...        # Genatrix's own pair, compiled in
-export GENATRIX_TELEGRAM_API_HASH=...
-export GENATRIX_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
-export GENATRIX_NOTARY_PROFILE=genatrix    # xcrun notarytool store-credentials genatrix ...
-```
-
-Without the Telegram pair, Settings says Telegram is unavailable. Without an
-identity the app is signed ad hoc: it runs, but on another Mac the first open
-is refused once and has to be allowed in System Settings > Privacy &
-Security (or right-click, Open). With an identity and a notary profile the
-disk image is signed, notarized and stapled, and opens like any other app.
-
-What the person does: open the disk image, drag Genatrix into Applications,
-open it. It registers itself as a login item (macOS may ask them to allow
-it under Login Items), puts an icon in the menu bar and opens its window on
-the first-run wizard: the three things they are agreeing to, a check of the
-Mac, the models (about 5.1 GB, downloaded once and checked file by file),
-and the first account. Their data lives in `~/Library/Application
-Support/Genatrix`, with the master key in their login keychain; the log is
-at `~/Library/Logs/Genatrix/genatrix.log`. Settings exports everything to
-their Downloads folder and deletes everything in one step: the data, the
-keychain entries, the Telegram sessions and the login item, after which the
-app can go to the Bin.
-
-The app and the developer's service below use the same port, 7717; run one
-or the other on a machine, not both.
-
-## Running it
-
-This is the developer's path: a checkout, a terminal, and the pieces started
-by hand where the finished application (design 09) will do it for you. The
-end state is the same: a background program that starts at login, a menu bar
-icon, and a local page with your mail on it.
-
-**Build.**
+Build (the first build takes several minutes):
 
 ```sh
 cargo build --release --workspace
@@ -146,342 +42,69 @@ swift build -c release --package-path apps/menubar
 cp apps/menubar/.build/release/genatrix-menubar target/release/
 ```
 
-The first build compiles SQLCipher, OpenSSL and the MLX Swift package and
-takes several minutes; later ones are quick. It produces the core
-(`genatrix`), the mail connector it starts (`genatrix-imap`), the model
-gateway (`genatrix-llm`) and the inference process (`genatrix-infer`). The
-Swift build produces the menu bar shell (`genatrix-menubar`). The connector
-and the shell have to sit beside the core: the core starts what it finds
-next to itself.
-
-**Choose a data directory.** Everything Genatrix keeps lives under one
-directory. The default is `~/Library/Application Support/Genatrix`, and there
-the master key lives in the login keychain, so a copy of the directory is
-ciphertext without this account. Any other directory, named with
-`--data-dir`, is a development one: the master key stays in a file beside the
-data, and the core says so when it opens it. The examples below use a
-development directory; drop `--data-dir` for the real one.
+Start it, from now on at every login, with a menu bar icon:
 
 ```sh
-DEV=~/.genatrix-dev
-mkdir -p $DEV/run
+./target/release/genatrix service install
 ```
 
-**The gateway configuration writes itself.** The first run writes
-`$DEV/gateway.toml` from the built-in model catalog: the chat model, the
-small multilingual embedder, both served by one sandboxed inference process,
-sockets under `run/`. It is yours to edit afterwards; Genatrix never
-overwrites a file that is there. Socket paths have to be absolute and macOS
-caps them at 104 bytes, which the default data directory stays well under.
+Open <http://127.0.0.1:7717>. The first-run page walks you through the rest:
+download the models (about 5 GB), then add a mailbox (on Gmail, an
+[app password](https://myaccount.google.com/apppasswords)) and Telegram from
+**Settings**.
 
-**Or do all of this from the page.** Settings has what the next two steps
-do by hand. *Accounts*: add a mailbox (address and app password, checked
-against the server before it is kept, with Gmail's steps spelled out), sign
-in to Telegram (number, the code Telegram sends, the two-step password if
-there is one), and disconnect either; the connectors pick the change up
-without a restart. *Models*: what is installed, the size of what is not,
-whether the disk can take it, one button to download, progress while it
-runs, resumable, every file checked against a hash pinned in the catalog.
-All of it works only on the computer Genatrix runs on: a paired phone sees
-the accounts and the models but cannot type a password over the network.
-A build meant for other people carries Genatrix's Telegram application
-credentials: set `GENATRIX_TELEGRAM_API_ID` and `GENATRIX_TELEGRAM_API_HASH`
-when you compile it.
+To try it without starting at login, run `./target/release/genatrix serve`
+instead. `service uninstall` removes it again.
 
-**Initialise, and add your mailbox.**
+Telegram needs application credentials from
+[my.telegram.org](https://my.telegram.org), set when you build:
 
 ```sh
-./target/release/genatrix --data-dir $DEV init
-./target/release/genatrix --data-dir $DEV account --add you@gmail.com
+export GENATRIX_TELEGRAM_API_ID=...
+export GENATRIX_TELEGRAM_API_HASH=...
 ```
 
-`init` creates the keys, the two databases and the rules file. `account
---add` works out the server from the address for the common providers
-(`--imap-host` for the others), asks for the password without echoing it,
-tries it against the server, and only then keeps it, in the login keychain
-under "Genatrix mail". On Gmail that is an app password: turn on two-step
-verification, then create one under App passwords. A refused password is not
-stored. Run the same command again to sign in again after changing the
-password; `account --forget you@gmail.com` removes the account and its
-password and keeps what was fetched. Run it in a terminal on the machine
-itself, not over SSH: the login keychain refuses to add an item from a
-session that cannot show a dialog (`User interaction is not allowed`).
+### From your phone
 
-**Add Telegram, if you use it.** Telegram needs a pair of application
-credentials for the client (design 05); until a release build carries them,
-put yours from my.telegram.org in `~/.config/genatrix-dev/secrets.toml` under
-`[telegram]` as `api_id` and `api_hash`, or in `GENATRIX_TELEGRAM_API_ID` and
-`GENATRIX_TELEGRAM_API_HASH`. Then:
+Bind Genatrix to a private network (Tailscale, WireGuard, or a home network
+you trust), then pair the phone from **Settings → Paired devices**:
 
 ```sh
-./target/release/genatrix --data-dir $DEV account --add-telegram +64211234567
+./target/release/genatrix service install --bind 0.0.0.0
 ```
 
-It asks for the code Telegram sends and, if you use two-step verification,
-your password. Your phone will show a new device signed in; that is this.
-The session is kept in the encrypted store. Restart the service afterwards
-(`service install` again) so it picks the account up.
+### Agents
 
-**Run it.** For a look, in a terminal:
+Install an agent from **Settings → Agents**: before you agree, you see what
+it may read and propose, and a trial run on your recent mail. Agents are
+built in [`agents/`](agents/) against one contract,
+[`wit/genatrix-agent.wit`](wit/genatrix-agent.wit):
 
 ```sh
-./target/release/genatrix --data-dir $DEV serve
-# Genatrix is at http://127.0.0.1:7717
+rustup target add wasm32-wasip2
+agents/build.sh    # packages land in agents/target/packages/
 ```
 
-For good, as the background program design 09 describes:
+## Useful commands
 
 ```sh
-./target/release/genatrix --data-dir $DEV service install
+genatrix service status              # installed and running?
+genatrix agent list                  # installed agents
+genatrix purge telegram --dry-run    # what fetching Telegram again would remove
+genatrix export --to ~/genatrix-export
 ```
 
-That writes a launch agent for your user
-(`~/Library/LaunchAgents/xyz.dpt.genatrix.plist`) and starts it. From then on
-Genatrix starts when you log in. With the shell beside the core the agent
-runs the shell, which puts an icon in the menu bar and runs the core behind
-it; without the shell it runs `serve` alone. The icon has four looks, up to
-date, syncing, needs you, error; clicking it lists each account with what it
-is doing, opens the page in a window of its own (or in the browser), or quits. Quitting from the menu stops the core
-too and stays stopped until the next login; a crash is restarted. The log is
-at `$DEV/logs/genatrix.log`. `service status` says whether it is installed,
-`service uninstall` stops and removes it. After a rebuild, run `service
-install` again: it replaces the agent and restarts.
+Add `--data-dir <dir>` to any command to use a separate development directory.
 
-What happens once it runs: the core starts the mail connector in its own
-process under a macOS sandbox that allows outbound connections only on the
-ports the accounts were granted (993 for IMAP, 587 for submission), name
-resolution, and the core's own socket; the connector cannot read the data
-directory or the keychain files, and cannot start another program. The
-profile it runs under is written to `$DEV/run/imap.sb` for you to read. The
-connector walks the mailbox newest first, so this week's mail is on the page
-within minutes, and takes new mail as it arrives: within seconds on servers
-with IDLE, within a minute elsewhere. Progress and state per account are on
-the page and in the menu.
-
-**Open the interface.** Four places, one tap apart. **Today** is the day:
-the morning digest with its sources, what waits for your approval, and the
-promises found in your messages. **Approvals** is every draft waiting for
-your word. **Chats** is every conversation you have: a list ordered by the latest
-exchange, where a party is either a person, meaning what passed between the
-two of you by mail or one to one, or a group or channel, which is one entry
-however many people are in it. Someone you have only ever seen in a group
-is not a party of their own. Open a person and you get your conversation,
-theirs on the left and yours on the right, with the counts and the open
-promises above it; open a group and you get its conversation with each
-speaker named, and who speaks most. At the bottom a button drafts a reply
-as an approval card, to the person or to the group, never a message that
-goes out on its own. **Ask** takes a
-question about your own mail and messages. Behind "more" are the archive
-and the audit: the timeline of every item, searchable by words and by
-meaning, each one expanding to its full text, its summary and every
-judgement made about it; the records, which open with how many bytes have
-left the device; the review of the model's judgements; and Settings.
-
-**From a phone, or any other device.** Genatrix is one daemon; every
-device is a window on it. Bind it to a private network's address, the
-Tailscale or WireGuard address of this machine, and pair the phone:
+## Building the app
 
 ```sh
-./target/release/genatrix --data-dir $DEV serve --bind 100.101.102.103
-# or, installed:  genatrix --data-dir $DEV service install --bind 100.101.102.103
+packaging/package-macos.sh    # dist/Genatrix.app and a disk image
 ```
 
-On a home network you trust, `--bind 0.0.0.0` works as well and does not
-break when the router hands out a new address. Bound to one particular
-address, Genatrix also listens on 127.0.0.1, because the menu bar and pairing
-go through loopback. Then, on this machine, open Settings and press "Pair a device": a six-digit
-code and a QR code appear, good for five minutes and for one device. Open
-the address on the phone (scan the code, or type it in), enter the code,
-and the phone is paired: it carries its own credential from then on, and
-Settings lists it with a Revoke button. Add the page to the phone's home
-screen and it opens like an app. Loopback needs no pairing, because anyone
-who can reach it already has an account on the machine. There is no TLS in
-Genatrix: the tunnel is the encryption, which is why the address should be
-a private network's and not the wifi's. Everything on the page is your mail
-and messages.
-
-**The page is built from `web/`** with Svelte and Vite; the build output is
-committed under `crates/daemon/src/web/dist/` and compiled into the core, so
-a Rust toolchain alone builds Genatrix. After changing anything in `web/`,
-run `npm run build` there and commit `dist/` with it.
-
-**Reply.** Open a message and press "Draft a reply". The model writes one
-in your voice, from the conversation and your own earlier messages to that
-person, and puts it on the Approvals page: the evidence it read, why it
-thinks a reply is due, the draft to change in place, and one button that
-says what it does, "Approve and send". Declining asks why, in a word or
-two. Nothing is sent until you press that button. Then the connector sends
-it, once, through the submission host the account was granted when you
-added it (Gmail's on port 587, with the same app password), and the sent
-copy appears on the timeline as your own message. If the connection drops
-before the server's final answer, the action reads "possibly sent; waiting
-for sync to confirm", and the next sync settles it. Genatrix never sends a
-message twice on its own. An approval not yet taken by the connector can be
-withdrawn from the same card.
-
-**Ask.** The Ask page takes a question about your own mail and messages.
-The model works in steps, at most eight: it searches, reads a thread, looks
-someone up, checks the time, and then answers, citing the messages it read.
-Under each answer is what it did, as one line that opens into the run
-record, and where it was answered, which in this phase is always this
-device. If you ask it to reply to someone, the draft appears as a card in
-the conversation and on the Approvals page; nothing is sent until you
-approve it there. What you said in the conversation is kept by the page
-for the session only; it is not memory.
-
-**Read it all again.** When normalization improves, `genatrix reprocess`
-derives every item again from its stored raw record, in place; nothing is
-fetched.
-
-### The model side
-
-Sensitivity judgement, and everything after it, needs the local model. None
-of this is required for collecting and searching mail.
-
-**Get a model.** Any MLX model directory works; this is the one the local
-model spike measured, about 4.3 GB.
-
-```sh
-uvx --from huggingface_hub hf download mlx-community/Qwen3-8B-4bit \
-  --local-dir $DEV/models/qwen3-8b-4bit
-uvx --from huggingface_hub hf download intfloat/multilingual-e5-small \
-  --local-dir $DEV/models/multilingual-e5-small
-```
-
-The second is the embedder, about 470 MB, for searching by meaning in any
-language.
-
-(`uvx` runs it without installing anything. With the Hugging Face CLI already
-on your machine, `hf download` on its own does the same.)
-
-**That is all `serve` needs.** When the weights are at
-`$DEV/models/<model>`, with `<model>` the name `gateway.toml` gives the local
-model, the core starts the inference process under its no-network sandbox and
-the gateway with a fresh ticket key, restarts either when it stops, and
-judges new mail as it arrives. The status line on the page says `model
-ready`, or what is missing. `genatrix classify` from a terminal uses the
-same gateway while `serve` runs: the core leaves its key in
-`$DEV/run/ticket.key`, readable by you alone.
-
-The rest of this section runs the two processes by hand, for working on
-them.
-
-**Check the gateway configuration** before starting anything:
-
-```sh
-./target/release/genatrix-llm --config $DEV/gateway.toml --check
-```
-
-The check refuses a configuration that could not work, rather than letting it
-fail later with something cryptic: a socket path that is relative, too long,
-or in a directory that cannot be created; a purpose routed to a cloud model
-that may never serve it; a purpose with no local model to fall back to.
-
-**Start the inference process**, inside a sandbox that removes its network
-access. It prints the profile it wants; hand that to `sandbox-exec`.
-
-```sh
-./target/release/genatrix-infer \
-  --model-dir $DEV/models/qwen3-8b-4bit --model-name qwen3-8b-4bit \
-  --socket $DEV/run/infer.sock --print-sandbox-profile > $DEV/infer.sb
-
-sandbox-exec -f $DEV/infer.sb ./target/release/genatrix-infer \
-  --model-dir $DEV/models/qwen3-8b-4bit --model-name qwen3-8b-4bit \
-  --socket $DEV/run/infer.sock
-```
-
-It loads the model in a few seconds and logs `listening`. From inside that
-sandbox it can reach its own socket and nothing else: not the network, not
-another program's socket, and neither can anything it starts.
-
-**Start the gateway**, in another terminal. It needs a secret, which it shares
-with whatever mints tickets. It is read from the environment rather than the
-command line so it never appears in the process list, and the gateway will not
-start without one: with no key every request would be refused, so there would
-be nothing to serve.
-
-```sh
-export GENATRIX_TICKET_KEY=$(openssl rand -hex 32)
-./target/release/genatrix-llm --config $DEV/gateway.toml
-```
-
-**Try it.** The gateway answers only to a ticket that covers these exact
-bytes, so a request without one is refused:
-
-```sh
-curl --unix-socket $DEV/run/gateway.sock \
-  http://localhost/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -d '{"model":"local","messages":[{"role":"user","content":"hello"}]}'
-# {"error":{"type":"ticket_rejected", ...}}   401
-```
-
-To mint one by hand, there is a development example. In the finished system
-only the egress gate mints tickets, after it has judged the content, redacted
-it, and written the ledger entry.
-
-```sh
-cargo build --release -p genatrix-llm --example mint_ticket
-
-BODY='{"model":"local","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}'
-TICKET=$(printf '%s' "$BODY" | ./target/release/examples/mint_ticket \
-  --target local --purpose summarize --level personal)
-
-curl --unix-socket $DEV/run/gateway.sock \
-  http://localhost/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -H "x-genatrix-ticket: $TICKET" \
-  -d "$BODY"
-```
-
-Change one byte of the body and the same ticket stops working. Send the same
-ticket twice and the second is refused. Ask a cloud model for something marked
-secret and it never leaves.
-
-**Judge what you collected.** With the gateway and the inference process
-running, whether by `serve` or by hand (in which case the same key has to be
-in this terminal):
-
-```sh
-./target/release/genatrix --data-dir $DEV classify    # judge them, on this machine
-./target/release/genatrix --data-dir $DEV timeline
-./target/release/genatrix --data-dir $DEV ledger
-```
-
-`classify` reports how many items the rules settled on their own and how many
-needed the model. `ledger` opens with the line design 06 asks for:
-
-```text
-0 bytes have left this device.
-```
-
-`genatrix seed` puts synthetic mail and chat in, for working on the pipeline
-before an account exists.
-
-## Configuring it
-
-**`gateway.toml`** lists the models and where each one runs. `local_socket` is
-the sandboxed process on this machine; `openai` and `anthropic` are cloud
-endpoints, which this build accepts in configuration but has no transport for:
-the cloud opens in phase two, and an untested path out of the machine is the
-one thing this gateway exists to prevent.
-
-**`GENATRIX_TICKET_KEY`** is the secret the gate and the gateway share, 64 hex
-characters. Generate a fresh one per run. It authenticates permission to send,
-not data at rest.
-
-**The sensitivity rules** live in
-[`crates/gate/rules/default.toml`](crates/gate/rules/default.toml), and that
-file is worth reading: it is where "what counts as private" is written down in
-a form you can argue with. Rules that say *secret* escalate and nothing can
-take that back; rules that say *public* or *personal* classify, and later ones
-override earlier ones. An item no rule matches is personal. Content patterns
-are built in, because a card number needs a checksum and a regex you can break
-by accident is a poor place to keep a guarantee, but every one of them can be
-switched off in that file.
-
-**Nothing configures the cloud on.** There is no switch yet, and when there is
-one it will be off by default.
+Set `GENATRIX_SIGN_IDENTITY` and `GENATRIX_NOTARY_PROFILE` for a signed,
+notarized build. The app and `service install` use the same port; run one or
+the other on a machine.
 
 ## Development
 
@@ -489,9 +112,12 @@ one it will be off by default.
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cd web && npm ci && npm run check && npm run build   # when web/ changes
 ```
 
-All three should be clean.
+- [Design documents](docs/design/), in Chinese. Start with
+  [00 Vision and Principles](docs/design/00-vision.md).
+- [Implementation plan](docs/plan/), in English.
 
 ## License
 

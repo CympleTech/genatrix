@@ -19,6 +19,7 @@ mod conversation;
 mod download;
 mod erase;
 mod ingest;
+mod junk;
 mod keychain;
 mod keys;
 mod models;

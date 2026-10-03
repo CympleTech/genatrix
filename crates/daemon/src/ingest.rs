@@ -26,6 +26,53 @@ pub enum Ingested {
     Added(ItemId),
     /// It was already here, byte for byte.
     AlreadyHad,
+    /// It is from, or only to, something the user marked as junk, and is
+    /// dropped before it is stored (design 01, "垃圾").
+    Ignored,
+}
+
+/// Whether a mail is from junk, or sent only to junk.
+fn junk_mail(store: &Store, mail: &genatrix_connector_imap::Mail) -> anyhow::Result<bool> {
+    use genatrix_model::HandleKind;
+    if let Some(from) = &mail.from
+        && store.is_junk_handle(HandleKind::Email, &from.address)?
+    {
+        return Ok(true);
+    }
+    let me = store.self_person()?.map(|p| p.id);
+    let mut to_others = false;
+    for mailbox in mail.to.iter().chain(&mail.cc) {
+        let mine = me.is_some()
+            && store
+                .find_handle(HandleKind::Email, &mailbox.address)?
+                .is_some_and(|h| Some(h.person_id) == me);
+        if mine {
+            continue;
+        }
+        if !store.is_junk_handle(HandleKind::Email, &mailbox.address)? {
+            return Ok(false);
+        }
+        to_others = true;
+    }
+    Ok(to_others)
+}
+
+/// Whether a chat message is in a junk group or channel, or in a direct
+/// chat with junk.
+fn junk_chat(
+    store: &Store,
+    account: &str,
+    message: &genatrix_connector::protocol::ChatMessage,
+) -> anyhow::Result<bool> {
+    use genatrix_model::HandleKind;
+    let thread = Source::new(Connector::Telegram, account, message.thread_key.clone());
+    if store.is_junk_thread(&thread)? {
+        return Ok(true);
+    }
+    match message.thread_key.strip_prefix("chat:") {
+        Some(id) if !id.starts_with('-') => Ok(store.is_junk_handle(HandleKind::TelegramId, id)?),
+        _ => Ok(false),
+    }
 }
 
 /// Turn one fetched message into an item, unless it is already here.
@@ -55,6 +102,9 @@ pub fn mail(
             .is_some()
     {
         return Ok(Ingested::AlreadyHad);
+    }
+    if junk_mail(store, &incoming.mail)? {
+        return Ok(Ingested::Ignored);
     }
     let raw = Raw::describe(source.clone(), "message/rfc822", &incoming.raw);
     if !store.insert_raw(&raw)? {
@@ -86,6 +136,9 @@ pub fn chat(
 ) -> anyhow::Result<Ingested> {
     use genatrix_model::PersonId;
 
+    if junk_chat(store, account, message)? {
+        return Ok(Ingested::Ignored);
+    }
     let source = Source::new(Connector::Telegram, account, message.external_id.clone());
     let raw = Raw::describe(
         source.clone(),
@@ -562,6 +615,88 @@ Friday?\r\n";
             Reprocessed::Updated(_)
         ));
         assert_eq!(store.all_items().unwrap().len(), 1);
+    }
+
+    /// Design 01, "垃圾": marking removes what is there and keeps out what
+    /// comes later, for a person and for a group; unmarking lets new ones in.
+    #[test]
+    fn junk_is_removed_and_kept_out() {
+        use genatrix_connector::protocol::{ChatMessage, ChatSender};
+        use genatrix_model::HandleKind;
+        let (_dir, system) = crate::system::test_system();
+        let msg = |n: u32, thread: &str, kind: &str, who: (i64, &str)| ChatMessage {
+            external_id: format!("{thread}/msg:{n}"),
+            thread_key: thread.to_owned(),
+            thread_kind: kind.to_owned(),
+            thread_title: "Friends".to_owned(),
+            sender: Some(ChatSender {
+                id: who.0,
+                username: None,
+                name: who.1.to_owned(),
+            }),
+            outgoing: false,
+            date: format!("2026-09-2{n}T10:00:00+00:00"),
+            text: format!("message {n}"),
+            raw: format!("raw-{thread}-{n}").into_bytes(),
+            ..ChatMessage::default()
+        };
+        let ann = (11, "Ann");
+        let store = |m: &ChatMessage| chat(&system.store, &system.raw_files, "+100", m).unwrap();
+        store(&msg(1, "chat:11", "direct", ann));
+        store(&msg(2, "chat:-100", "group", ann));
+        store(&msg(3, "chat:-100", "group", (22, "Bob")));
+
+        let person = system
+            .store
+            .find_handle(HandleKind::TelegramId, "11")
+            .unwrap()
+            .unwrap()
+            .person_id;
+        assert_eq!(crate::junk::count_person(&system, person).unwrap(), 1);
+        let done = crate::junk::mark_person(&system, person).unwrap();
+        assert_eq!(done.items, 1);
+        assert_eq!(done.raw_files.len(), 1);
+        // What she said in the group stays with the group.
+        assert_eq!(system.store.all_items().unwrap().len(), 2);
+        assert_eq!(store(&msg(4, "chat:11", "direct", ann)), Ingested::Ignored);
+        assert_eq!(system.store.all_items().unwrap().len(), 2);
+
+        let group = system.store.all_items().unwrap()[0].thread_id;
+        assert_eq!(crate::junk::mark_thread(&system, group).unwrap().items, 2);
+        assert_eq!(
+            store(&msg(5, "chat:-100", "group", (22, "Bob"))),
+            Ingested::Ignored
+        );
+        assert!(system.store.all_items().unwrap().is_empty());
+        assert_eq!(system.store.junk().unwrap().len(), 2);
+
+        // Unmarked, new messages come in again; the old ones do not.
+        crate::junk::restore(&system, "person", &person.to_string()).unwrap();
+        assert!(matches!(
+            store(&msg(6, "chat:11", "direct", ann)),
+            Ingested::Added(_)
+        ));
+        assert_eq!(system.store.all_items().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn mail_from_junk_is_not_stored() {
+        use genatrix_model::HandleKind;
+        let (_dir, store, raw_files, blob_files) = stores();
+        let ann = store
+            .person_for_handle(HandleKind::Email, "ann@example.com", "Ann")
+            .unwrap();
+        store
+            .set_person_junk(ann, Some("2026-10-03T00:00:00Z"))
+            .unwrap();
+        assert_eq!(
+            mail(&store, &raw_files, &blob_files, &incoming("Friday?")).unwrap(),
+            Ingested::Ignored
+        );
+        assert!(
+            store.all_raw().unwrap().is_empty(),
+            "not even the raw record"
+        );
     }
 
     /// Design 06 v0.6: a group is one party; someone who has only ever

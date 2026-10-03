@@ -34,6 +34,15 @@
       .then((p) => { parties = p; cached = p; })
       .catch((e) => { if (!parties) { error = e.message; parties = []; } });
   });
+  // A party marked as junk leaves the list at once (design 06, "标为垃圾").
+  $effect(() => {
+    const gone = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (parties) { parties = parties.filter((p) => p.id !== id); cached = parties; }
+    };
+    window.addEventListener('genatrix:party-gone', gone);
+    return () => window.removeEventListener('genatrix:party-gone', gone);
+  });
   // Put the list back where it was: on arrival, and on a phone each time a
   // conversation closes, because a hidden element forgets its scroll.
   $effect(() => {

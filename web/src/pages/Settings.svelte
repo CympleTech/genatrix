@@ -8,6 +8,7 @@
   import AccountsPanel from '../components/AccountsPanel.svelte';
   import ModelsPanel from '../components/ModelsPanel.svelte';
   import AgentsPanel from '../components/AgentsPanel.svelte';
+  import JunkPanel from '../components/JunkPanel.svelte';
 
   let devices = $state<Device[] | null>(null);
   let error = $state('');
@@ -77,6 +78,7 @@
   <AccountsPanel />
   <ModelsPanel />
   <AgentsPanel />
+  <JunkPanel />
 
   <div class="section">
   <h2 class="group-title">{t('settings.devices')}</h2>

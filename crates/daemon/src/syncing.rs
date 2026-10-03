@@ -61,7 +61,7 @@ impl StoreSink {
                 chat,
             ) {
                 Ok(Ingested::Added(_)) => new += 1,
-                Ok(Ingested::AlreadyHad) => {}
+                Ok(Ingested::AlreadyHad | Ingested::Ignored) => {}
                 Err(e) => return Err(self.fault("could not store a message", e)),
             }
         }
@@ -137,7 +137,7 @@ impl Sink for StoreSink {
                     new += 1;
                     self.maybe_confirm_sent(incoming, id);
                 }
-                Ok(Ingested::AlreadyHad) => {}
+                Ok(Ingested::AlreadyHad | Ingested::Ignored) => {}
                 Err(e) => return Err(self.fault("could not store a message", e)),
             }
         }

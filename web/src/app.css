@@ -339,6 +339,9 @@
   .card-fields dd { @apply m-0 break-words; }
   .card-fields dd.money { font-variant-numeric: tabular-nums; }
 
+  /* ---- junk (design 06) ---- */
+  .junk-row { @apply mt-4 border-t border-line pt-3; }
+  .choose.danger { background: var(--accent-ink); border-color: var(--accent-ink); color: var(--bg); }
   /* ---- agents (design 11) ---- */
   .avatar.agent { color: var(--ink); }
   .linkish { @apply p-0 text-left; background: none; border: 0; cursor: pointer; }

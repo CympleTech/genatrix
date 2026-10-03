@@ -174,11 +174,42 @@
     const prev = messages[i - 1];
     return !prev || prev.mine || prev.author !== m.author || prev.day !== m.day;
   }
+  // Design 06, "标为垃圾": say what will go before anything goes.
+  let junkCount = $state<number | null>(null);
+  let junking = $state(false);
+  async function askJunk() {
+    error = '';
+    try { junkCount = (await get<{ items: number }>(`${base}/junk`)).items; }
+    catch (e: any) { error = e.message; }
+  }
+  async function markJunk() {
+    junking = true;
+    try {
+      await post(`${base}/junk`, {});
+      window.dispatchEvent(new CustomEvent('genatrix:party-gone', { detail: id }));
+      go('/chats');
+    } catch (e: any) { error = e.message; junking = false; }
+  }
+
   function bars(months: number[]) {
     const max = Math.max(1, ...months);
     return months.map((n) => Math.max(2, Math.round((n / max) * 28)));
   }
 </script>
+
+{#snippet junkRow()}
+  <div class="junk-row">
+    {#if junkCount === null}
+      <button type="button" class="choose lowers" onclick={askJunk}>{t('junk.mark')}</button>
+    {:else}
+      <p class="note">{t(kind === 'group' ? 'junk.confirm.group' : 'junk.confirm.person', { n: junkCount, name })}</p>
+      <div class="chooser">
+        <button type="button" class="choose primary danger" disabled={junking} onclick={markJunk}>{t('junk.yes')}</button>
+        <button type="button" class="choose lowers" onclick={() => (junkCount = null)}>{t('agents.cancel')}</button>
+      </div>
+    {/if}
+  </div>
+{/snippet}
 
 <div class="conversation" bind:this={panel}>
   <header class="conv-head">
@@ -248,6 +279,7 @@
           <textarea class="notes" bind:value={notes} onblur={save} placeholder={t('people.notes.hint')}></textarea>
         </div>
       </div>
+      {@render junkRow()}
     </div>
   {:else if expanded && group}
     <div class="conv-details">
@@ -262,6 +294,7 @@
           </li>
         {/each}
       </ol>
+      {@render junkRow()}
     </div>
   {/if}
 

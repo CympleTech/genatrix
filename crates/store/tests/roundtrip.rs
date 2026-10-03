@@ -499,3 +499,86 @@ fn purging_a_connector_takes_its_items_and_leaves_the_rest() {
     // People stay, so the same people come back.
     assert!(f.store.get_person(f.alice).unwrap().is_some());
 }
+
+#[test]
+fn junk_takes_one_conversation_and_keeps_the_mark() {
+    let f = fixture();
+    let bob = f
+        .store
+        .person_for_handle(HandleKind::TelegramId, "3", "Bob")
+        .unwrap();
+    let from_alice = message(
+        &f,
+        "2:20",
+        f.alice,
+        f.me,
+        "2026-09-01T10:00:00Z",
+        "spam one",
+    );
+    let to_alice = message(&f, "2:21", f.me, f.alice, "2026-09-01T11:00:00Z", "stop it");
+    // Something sent to Alice and Bob at once is not Alice's alone.
+    let mut both = to_alice.clone();
+    both.recipients = vec![f.alice, bob];
+    // In a group, Alice's words stay with the group.
+    let group = f
+        .store
+        .upsert_thread(&Thread {
+            id: ThreadId::new(),
+            kind: ThreadKind::GroupChat,
+            source: Source::new(Connector::Telegram, "me", "chat:-100"),
+            title: Some("Club".into()),
+            members: vec![],
+            first_at: None,
+            last_at: None,
+        })
+        .unwrap();
+    let source = Source::new(Connector::Telegram, "me", "-100:1");
+    let raw = Raw::describe(source.clone(), "application/json", b"group words");
+    f.store.insert_raw(&raw).unwrap();
+    let mut in_group = from_alice.clone();
+    in_group.id = ItemId::new();
+    in_group.source = source;
+    in_group.raw_id = raw.id;
+    in_group.thread_id = group;
+    in_group.text = "group words".into();
+    f.store.insert_item(&in_group).unwrap();
+    let multi_source = Source::new(Connector::Telegram, "me", "2:23");
+    let multi_raw = Raw::describe(multi_source.clone(), "application/json", b"to both, stored");
+    f.store.insert_raw(&multi_raw).unwrap();
+    both.id = ItemId::new();
+    both.source = multi_source;
+    both.raw_id = multi_raw.id;
+    f.store.insert_item(&both).unwrap();
+
+    let ids = f.store.person_conversation_items(f.alice).unwrap();
+    let expected: std::collections::HashSet<String> =
+        [from_alice.id.to_string(), to_alice.id.to_string()].into();
+    assert_eq!(ids, expected);
+
+    let done = f.store.remove_items(&ids).unwrap();
+    assert_eq!(done.items, 2);
+    assert_eq!(done.raws, 2);
+    assert!(f.store.search_items("spam one", 10).unwrap().is_empty());
+    assert!(f.store.get_item(in_group.id).unwrap().is_some());
+    assert!(f.store.get_item(both.id).unwrap().is_some());
+
+    f.store
+        .set_person_junk(f.alice, Some("2026-10-03T00:00:00Z"))
+        .unwrap();
+    assert!(f.store.is_junk_handle(HandleKind::TelegramId, "2").unwrap());
+    assert!(!f.store.is_junk_handle(HandleKind::TelegramId, "3").unwrap());
+    f.store
+        .set_thread_junk(group, Some("2026-10-03T00:00:01Z"))
+        .unwrap();
+    assert!(
+        f.store
+            .is_junk_thread(&Source::new(Connector::Telegram, "me", "chat:-100"))
+            .unwrap()
+    );
+    let junk = f.store.junk().unwrap();
+    assert_eq!(junk.len(), 2);
+    assert_eq!(junk[0].kind, "thread");
+    assert_eq!(junk[1].name, "Alice");
+    f.store.set_person_junk(f.alice, None).unwrap();
+    assert!(!f.store.is_junk_handle(HandleKind::TelegramId, "2").unwrap());
+}

@@ -141,6 +141,7 @@ mod tests {
             .merge(super::super::devices::routes())
             .merge(super::super::setup::routes())
             .merge(super::super::agents::routes())
+            .merge(super::super::junk::routes())
             .fallback(axum::routing::get(|| async { "page" }))
             .layer(axum::middleware::from_fn_with_state(
                 Arc::clone(system),

@@ -45,6 +45,7 @@ export interface SourceRef { id: string; at: string; connector: string; who: str
 export interface Row {
   id: string; at: string; connector: string; direction: string; author: string;
   thread: string; level: string; level_reason: string; preview: string; has_more: boolean;
+  category?: CategoryName;
 }
 export interface Judgement { by: string; detail: string; level: string; at: string }
 export interface Detail {
@@ -85,7 +86,13 @@ export interface Stats {
   from_them: number; to_them: number; first_at: string | null; last_at: string | null;
   months: number[]; reply_hours: number | null; language: string; connectors: [string, number][];
 }
-export interface PersonDetail { card: PersonCard; stats: Stats; notes: string; recent: Row[]; commitments: Commitment[] }
+export type CategoryName = 'personal' | 'transactional' | 'newsletter' | 'promotion';
+export interface PersonDetail {
+  card: PersonCard; stats: Stats; notes: string; recent: Row[]; commitments: Commitment[];
+  category: CategoryName | null; category_by_you: boolean;
+}
+export interface QuietSender { id: string; name: string; items: number; last_at: string | null; category: CategoryName }
+export interface Quiet { total: number; senders: QuietSender[] }
 export interface ReviewRow { row: Row; subject: string | null; text: string; model_level: string }
 export interface Review { items: ReviewRow[]; tally: { judged: number; reviewed: number; agreed: number } }
 export interface AccountState { address: string; sync: { state: string; [k: string]: unknown }; text: string }
@@ -117,7 +124,7 @@ export interface ChatMessage {
 export interface ChatPage { messages: ChatMessage[]; earlier: boolean }
 
 export interface Party {
-  kind: 'person' | 'group' | 'channel' | 'agent'; id: string; name: string;
+  kind: 'person' | 'group' | 'channel' | 'agent' | 'quiet'; id: string; name: string;
   last_at: string | null; last_ms: number; last_text: string | null; last_author: string | null;
   roles: string[]; messages: number;
 }

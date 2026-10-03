@@ -8,13 +8,15 @@
   let q = $state('');
   let level = $state('');
   let connector = $state('');
+  // Newsletters and promotions are hidden unless asked for (design 06).
+  let quiet = $state(false);
   let rows = $state<Row[] | null>(null);
   let error = $state('');
   let typing: ReturnType<typeof setTimeout> | undefined;
   let knownItems: number | null = null;
 
   async function load() {
-    const params = new URLSearchParams({ q: q.trim(), level, connector });
+    const params = new URLSearchParams({ q: q.trim(), level, connector, quiet: String(quiet) });
     try { rows = await get<Row[]>('/api/timeline?' + params); error = ''; }
     catch (e: any) { error = e.message; rows = []; }
   }
@@ -42,6 +44,7 @@
       <option value="personal">{t('level.personal')}</option>
       <option value="secret">{t('level.secret')}</option>
     </select>
+    <label class="quiet-toggle"><input type="checkbox" bind:checked={quiet} onchange={load} />{t('timeline.quiet')}</label>
   </form>
   {#if error}<Empty text={error} error />
   {:else if !rows}<Empty text={t('loading')} />

@@ -2,6 +2,7 @@
 //!
 //! Design: `docs/design/03-agent-layer.md`.
 
+pub mod categorize;
 pub mod classify;
 pub mod commitments;
 pub mod digest;

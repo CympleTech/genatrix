@@ -690,10 +690,28 @@ async fn settle_actions(system: &std::sync::Arc<System>) {
     }
 }
 
+/// Sort new items into their categories (design 01, "分类"). Rules, not
+/// the model, and the passes after it skip what is quiet, so it goes first
+/// and does not wait for the model side.
+fn sort_items(system: &System) {
+    match pipeline::categorize::run(&system.store) {
+        Ok(r) if r.judged > 0 => {
+            tracing::info!(judged = r.judged, quiet = r.quiet, "items sorted");
+            *system
+                .people
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "could not sort items"),
+    }
+}
+
 async fn pipelines_as_mail_arrives(system: std::sync::Arc<System>) {
     let mut judged_at_count: Option<u64> = None;
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+        sort_items(&system);
         if !system.model_state.borrow().is_ready() {
             continue;
         }

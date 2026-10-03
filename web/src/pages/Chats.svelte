@@ -13,6 +13,7 @@
   import { initials } from '../lib/format';
   import { go } from '../lib/router';
   import AgentChat from '../components/AgentChat.svelte';
+  import QuietList from '../components/QuietList.svelte';
   import Conversation from '../components/Conversation.svelte';
   import Empty from '../components/Empty.svelte';
   import Icon from '../components/Icon.svelte';
@@ -21,7 +22,7 @@
   // (what passed one to one) or a group or channel (the container is one
   // party; its members are not listed one by one). An installed agent is one
   // more kind of party in the same list (design 11).
-  let { kind = 'person', id = null }: { kind?: 'person' | 'group' | 'agent'; id?: string | null } = $props();
+  let { kind = 'person', id = null }: { kind?: 'person' | 'group' | 'agent' | 'quiet'; id?: string | null } = $props();
   let parties = $state<Party[] | null>(cached);
   let error = $state('');
   let filter = $state('');
@@ -57,7 +58,8 @@
   });
   const current = $derived(parties?.find((p) => p.id === id) ?? null);
   const href = (p: Party) =>
-    p.kind === 'person' ? `/chats/${p.id}` : p.kind === 'agent' ? `/chats/a/${p.id}` : `/chats/g/${p.id}`;
+    p.kind === 'person' ? `/chats/${p.id}` : p.kind === 'agent' ? `/chats/a/${p.id}`
+      : p.kind === 'quiet' ? '/chats/quiet' : `/chats/g/${p.id}`;
 </script>
 
 <section class="pane chats-pane" class:has-detail={!!id}>
@@ -75,15 +77,16 @@
         <li>
           <button type="button" class="party" class:is-on={p.id === id} onclick={() => go(href(p))}>
             <span class="avatar" class:multi={p.kind !== 'person'} class:agent={p.kind === 'agent'}>
-              {#if p.kind === 'person'}{initials(p.name)}{:else}<Icon name={p.kind} size={18} />{/if}
+              {#if p.kind === 'person'}{initials(p.name)}{:else}<Icon name={p.kind === 'quiet' ? 'mail' : p.kind} size={18} />{/if}
             </span>
             <span class="party-body">
               <span class="party-top">
-                <span class="party-name">{p.name}</span>
+                <span class="party-name">{p.kind === 'quiet' ? t('quiet.title') : p.name}</span>
                 {#if p.last_at}<span class="party-when">{p.last_at.slice(5)}</span>{/if}
               </span>
               <span class="party-last">
-                {#if p.last_author}<b>{p.last_author}:</b> {/if}{p.last_text || ''}
+                {#if p.kind === 'quiet'}{t('quiet.line', { n: p.messages, who: p.last_text ?? '' })}
+                {:else}{#if p.last_author}<b>{p.last_author}:</b> {/if}{p.last_text || ''}{/if}
               </span>
               {#if p.roles.length}
                 <span class="party-roles">{#each p.roles as r}<span class="role">{r}</span>{/each}</span>
@@ -99,6 +102,8 @@
     {#key kind + id}
       {#if kind === 'agent'}
         <AgentChat {id} name={current?.name ?? ''} />
+      {:else if kind === 'quiet'}
+        <QuietList />
       {:else}
         <Conversation {kind} {id} name={current?.name ?? ''} />
       {/if}

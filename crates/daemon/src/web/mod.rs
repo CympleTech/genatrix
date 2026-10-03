@@ -18,6 +18,7 @@ mod agents;
 mod api;
 mod devices;
 mod junk;
+mod quiet;
 mod setup;
 
 use std::future::IntoFuture as _;
@@ -60,6 +61,7 @@ pub async fn serve(system: Arc<System>, serving: &Serving) -> anyhow::Result<()>
         .merge(setup::routes())
         .merge(agents::routes())
         .merge(junk::routes())
+        .merge(quiet::routes())
         // Every other path is the page: the app routes on the client side,
         // so a link to /approvals or /pair?code=... opens on the right screen.
         .fallback(get(index))

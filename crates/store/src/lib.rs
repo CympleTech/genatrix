@@ -19,6 +19,7 @@ mod action;
 mod agent;
 mod annotation;
 mod blob;
+mod category;
 mod commitment;
 mod cursor;
 mod device;
@@ -41,6 +42,7 @@ mod vector;
 
 pub use action::{ActionColumns, StoredAction};
 pub use agent::{AgentRun, AgentState, StoredAgent};
+pub use category::{QUIET, QuietSender};
 pub use cursor::StoredCursor;
 pub use device::Device;
 pub use error::{Error, Result};

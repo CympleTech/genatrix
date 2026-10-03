@@ -69,6 +69,87 @@ pub enum AnnotationKind {
         /// What is suggested.
         text: String,
     },
+    /// Where an item belongs (design 01, "分类"). The item's `category`
+    /// column caches the effective result of these.
+    Category {
+        /// The judged category.
+        category: Category,
+        /// Short reason: the rule that decided, or "you said so".
+        reason: String,
+    },
+}
+
+/// Where an item belongs, and so where it is shown (design 01, "分类").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Category {
+    /// Between people. The default.
+    #[default]
+    Personal,
+    /// Receipts, bills, invoices, bank and delivery notices, codes.
+    Transactional,
+    /// Newsletters and other things subscribed to.
+    Newsletter,
+    /// Selling something.
+    Promotion,
+}
+
+impl Category {
+    /// Stable lowercase name, used in storage and the interface.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Personal => "personal",
+            Self::Transactional => "transactional",
+            Self::Newsletter => "newsletter",
+            Self::Promotion => "promotion",
+        }
+    }
+
+    /// From its stored name.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "personal" => Self::Personal,
+            "transactional" => Self::Transactional,
+            "newsletter" => Self::Newsletter,
+            "promotion" => Self::Promotion,
+            _ => return None,
+        })
+    }
+
+    /// Hidden by default: kept and searchable, not shown or worked on.
+    #[must_use]
+    pub const fn is_quiet(self) -> bool {
+        matches!(self, Self::Newsletter | Self::Promotion)
+    }
+}
+
+/// The category an item's annotations come to: the user's latest word if
+/// there is one, otherwise the latest machine judgement, otherwise personal.
+pub fn effective_category<'a, I>(judgements: I) -> Category
+where
+    I: IntoIterator<Item = &'a Annotation>,
+{
+    let mut user: Option<(DateTime<Utc>, Category)> = None;
+    let mut machine: Option<(DateTime<Utc>, Category)> = None;
+    for a in judgements {
+        let AnnotationKind::Category { category, .. } = &a.kind else {
+            continue;
+        };
+        if a.superseded_by.is_some() {
+            continue;
+        }
+        let slot = if a.producer == Producer::User {
+            &mut user
+        } else {
+            &mut machine
+        };
+        if slot.is_none_or(|(t, _)| a.created_at >= t) {
+            *slot = Some((a.created_at, *category));
+        }
+    }
+    user.or(machine).map(|(_, c)| c).unwrap_or_default()
 }
 
 /// A machine-derived fact about an item.
@@ -175,6 +256,34 @@ mod tests {
             },
             level,
         )
+    }
+
+    fn categorise(producer: Producer, category: Category) -> Annotation {
+        Annotation::new(
+            ItemId::new(),
+            producer,
+            AnnotationKind::Category {
+                category,
+                reason: "test".into(),
+            },
+        )
+    }
+
+    #[test]
+    fn the_user_decides_the_category_and_machines_the_rest() {
+        let rule = categorise(
+            Producer::Rule {
+                rule: "r".into(),
+                version: "1".into(),
+            },
+            Category::Promotion,
+        );
+        assert_eq!(effective_category([]), Category::Personal);
+        assert_eq!(effective_category([&rule]), Category::Promotion);
+        let user = categorise(Producer::User, Category::Personal);
+        assert_eq!(effective_category([&rule, &user]), Category::Personal);
+        assert!(Category::Newsletter.is_quiet() && !Category::Transactional.is_quiet());
+        assert_eq!(Category::parse("promotion"), Some(Category::Promotion));
     }
 
     #[test]

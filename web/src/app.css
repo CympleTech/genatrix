@@ -339,6 +339,11 @@
   .card-fields dd { @apply m-0 break-words; }
   .card-fields dd.money { font-variant-numeric: tabular-nums; }
 
+  /* ---- categories (design 06) ---- */
+  .quiet-toggle { @apply flex items-center gap-1.5 text-[13px] text-muted; white-space: nowrap; }
+  .quiet-note { @apply mx-5 mb-0 mt-2; }
+  .quiet-senders { @apply px-5; }
+  .category-chooser .choose { @apply px-3 py-1 text-[13px]; }
   /* ---- junk (design 06) ---- */
   .junk-row { @apply mt-4 border-t border-line pt-3; }
   /* ---- agents (design 11) ---- */

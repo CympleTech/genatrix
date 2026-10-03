@@ -110,6 +110,10 @@ pub enum ItemVersion {
 /// A timeline query. Every field is optional; the result is ordered by
 /// `occurred_at` descending. Ingestion time never affects order.
 #[derive(Clone, Debug, Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent filters, each on or off"
+)]
 pub struct ItemQuery {
     /// Only items at or after this instant.
     pub since: Option<DateTime<Utc>>,
@@ -139,6 +143,8 @@ pub struct ItemQuery {
     /// Only items whose text contains this phrase. Under three characters
     /// matches nothing, as in [`Store::search_items`].
     pub text: Option<String>,
+    /// Leave out newsletters and promotions (design 01, "分类").
+    pub hide_quiet: bool,
     /// Only items that carry this attachment, by its hash.
     pub with_blob: Option<String>,
     /// Only items stored after this row, as [`Store::item_row`] numbers
@@ -264,6 +270,9 @@ impl ItemQuery {
                     "i.rowid IN (SELECT rowid FROM item_fts WHERE item_fts MATCH {p})"
                 ));
             }
+        }
+        if self.hide_quiet {
+            where_.push(format!("i.category NOT IN {}", crate::QUIET));
         }
         if let Some(hash) = &self.with_blob {
             let p = arg(Box::new(hash.clone()));

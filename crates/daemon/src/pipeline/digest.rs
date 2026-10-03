@@ -73,6 +73,8 @@ pub async fn run<C: ModelCaller>(
             until: Some(now),
             version: ItemVersion::Current,
             limit: 2000,
+            // Newsletters and promotions are not news (design 01, "分类").
+            hide_quiet: true,
             ..Default::default()
         })
         .map_err(|e| RunError::Ledger(store_error(&e)))?;

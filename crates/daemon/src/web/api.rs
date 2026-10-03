@@ -233,6 +233,9 @@ struct PersonDetail {
     card: PersonCard,
     stats: StatsView,
     notes: String,
+    /// Where most of what they send belongs, and whether the user said so.
+    category: Option<&'static str>,
+    category_by_you: bool,
     recent: Vec<Row>,
     commitments: Vec<CommitmentView>,
 }
@@ -492,6 +495,48 @@ fn day_of_ms(ms: i64) -> Option<String> {
 }
 
 /// Every conversation, people and groups together, most recent first.
+/// The parties that are not people or groups: the one entry for quiet mail
+/// (design 06, "订阅与广告") and the installed agents (design 11).
+fn more_parties(system: &System) -> Result<Vec<Party>, ApiError> {
+    let flat = |t: String| t.replace('\n', " ").trim().to_owned();
+    let mut out = Vec::new();
+    // Newsletters and promotions are one entry, not a party per sender
+    // (design 06, "订阅与广告").
+    let (senders, quiet) = system.store.quiet_senders(1)?;
+    if let Some(newest) = senders.first() {
+        out.push(Party {
+            kind: "quiet",
+            id: "quiet".into(),
+            name: String::new(),
+            last_at: day_of_ms(newest.last_ms),
+            last_ms: newest.last_ms,
+            last_text: Some(newest.name.clone()),
+            last_author: None,
+            roles: Vec::new(),
+            messages: quiet,
+        });
+    }
+    // Installed agents are parties too (design 06 v0.5, design 11): the
+    // same list, ordered by when each last said something.
+    for agent in system.store.all_agents()? {
+        let Ok(c) = super::agents::card(system, &agent) else {
+            continue;
+        };
+        out.push(Party {
+            kind: "agent",
+            id: c.id,
+            name: c.name,
+            last_at: day_of_ms(c.last_ms),
+            last_ms: c.last_ms,
+            last_text: c.last_text.map(flat),
+            last_author: None,
+            roles: Vec::new(),
+            messages: c.runs,
+        });
+    }
+    Ok(out)
+}
+
 async fn chats(State(system): Shared) -> Result<Json<Vec<Party>>, ApiError> {
     const SHOWN: usize = 300;
     let people = people_overview(&system).await?;
@@ -526,7 +571,7 @@ async fn chats(State(system): Shared) -> Result<Json<Vec<Party>>, ApiError> {
     let mut group_words = system.store.group_last_words(&thread_ids)?;
     let flat = |t: String| t.replace('\n', " ").trim().to_owned();
 
-    let out = parties
+    let mut out = parties
         .into_iter()
         .map(|(ms, is_person, i)| {
             if is_person {
@@ -566,25 +611,7 @@ async fn chats(State(system): Shared) -> Result<Json<Vec<Party>>, ApiError> {
             }
         })
         .collect::<Vec<_>>();
-    // Installed agents are parties too (design 06 v0.5, design 11): the
-    // same list, ordered by when each last said something.
-    let mut out = out;
-    for agent in system.store.all_agents()? {
-        let Ok(c) = super::agents::card(&system, &agent) else {
-            continue;
-        };
-        out.push(Party {
-            kind: "agent",
-            id: c.id,
-            name: c.name,
-            last_at: day_of_ms(c.last_ms),
-            last_ms: c.last_ms,
-            last_text: c.last_text.map(flat),
-            last_author: None,
-            roles: Vec::new(),
-            messages: c.runs,
-        });
-    }
+    out.extend(more_parties(&system)?);
     out.sort_by_key(|p| std::cmp::Reverse(p.last_ms));
     Ok(Json(out))
 }
@@ -793,7 +820,13 @@ async fn person(State(system): Shared, Path(id): Path<String>) -> Result<Respons
                 .collect(),
         })
         .collect();
+    let said = system.store.person_category(id)?;
+    let category = said
+        .or(system.store.sender_category(id)?)
+        .map(genatrix_model::Category::as_str);
     Ok(Json(PersonDetail {
+        category,
+        category_by_you: said.is_some(),
         card: card(&system, &overview)?,
         stats: StatsView {
             from_them: stats.from_them,
@@ -1450,6 +1483,9 @@ struct TimelineQuery {
     connector: String,
     #[serde(default = "default_limit")]
     limit: u32,
+    /// Show newsletters and promotions too (design 06, "时间线").
+    #[serde(default)]
+    quiet: bool,
 }
 
 const fn default_limit() -> u32 {
@@ -1470,6 +1506,8 @@ struct Row {
     level_reason: String,
     preview: String,
     has_more: bool,
+    /// Where it belongs (design 01, "分类").
+    category: &'static str,
 }
 
 async fn timeline(
@@ -1480,9 +1518,12 @@ async fn timeline(
         system.store.query_items(&ItemQuery {
             limit: query.limit,
             version: ItemVersion::Current,
+            hide_quiet: !query.quiet,
             ..Default::default()
         })?
     } else {
+        // A search finds quiet mail too: kept and searchable is the point
+        // of hiding rather than deleting (design 01, "分类").
         let mut items = system.store.search_items(&query.q, query.limit)?;
         // By meaning as well as by words (design 06: full text and vectors,
         // one timeline). Only while the model side answers; a search never
@@ -1918,6 +1959,7 @@ fn row(system: &System, item: &Item) -> Result<Row, ApiError> {
         level_reason: level_reason(system, item),
         has_more: item.text.chars().count() > 160,
         preview,
+        category: system.store.item_category(item.id)?.as_str(),
     })
 }
 

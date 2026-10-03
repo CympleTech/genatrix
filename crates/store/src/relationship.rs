@@ -101,6 +101,7 @@ impl Store {
         let mut by_author = conn.prepare(&format!(
             "SELECT author, count(*), max(occurred_ms)
                  FROM item WHERE tombstoned = 0 AND author IS NOT NULL AND {ONE_TO_ONE}
+                   AND category NOT IN ('newsletter', 'promotion')
                  GROUP BY author"
         ))?;
         for row in by_author.query_map([], |r| {

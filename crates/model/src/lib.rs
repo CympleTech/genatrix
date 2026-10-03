@@ -21,7 +21,7 @@ pub mod sensitivity;
 pub mod source;
 pub mod thread;
 
-pub use annotation::{Annotation, AnnotationKind, Producer};
+pub use annotation::{Annotation, AnnotationKind, Category, Producer};
 pub use blob::{Blob, ContentHash};
 pub use commitment::{Commitment, CommitmentStatus, Standing};
 pub use digest::{Digest, DigestGroup, DigestPoint};

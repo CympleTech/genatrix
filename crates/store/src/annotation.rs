@@ -16,6 +16,7 @@ fn kind_discriminator(k: &AnnotationKind) -> &'static str {
         AnnotationKind::Sensitivity { .. } => "sensitivity",
         AnnotationKind::Label { .. } => "label",
         AnnotationKind::Suggestion { .. } => "suggestion",
+        AnnotationKind::Category { .. } => "category",
     }
 }
 
@@ -99,6 +100,7 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT i.* FROM item i
              WHERE i.tombstoned = 0 AND length(i.text) >= ?1
+               AND i.category NOT IN ('newsletter', 'promotion')
                AND NOT EXISTS (SELECT 1 FROM item n WHERE n.supersedes = i.id)
                AND NOT EXISTS (SELECT 1 FROM annotation a WHERE a.item_id = i.id
                                AND a.kind = 'summary' AND a.superseded_by IS NULL)

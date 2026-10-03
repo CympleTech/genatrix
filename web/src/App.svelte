@@ -104,7 +104,7 @@
       <!-- One instance for every chats route: a person and a group are
            arguments to the same page, so opening one never rebuilds the list. -->
       <Chats
-        kind={$route.parts[1] === 'g' ? 'group' : $route.parts[1] === 'a' ? 'agent' : 'person'}
+        kind={$route.parts[1] === 'g' ? 'group' : $route.parts[1] === 'a' ? 'agent' : $route.parts[1] === 'quiet' ? 'quiet' : 'person'}
         id={($route.parts[1] === 'g' || $route.parts[1] === 'a' ? $route.parts[2] : $route.parts[1]) ?? null}
       />
     {:else if section === 'review'}<Review />

@@ -174,6 +174,16 @@
     const prev = messages[i - 1];
     return !prev || prev.mine || prev.author !== m.author || prev.day !== m.day;
   }
+  // Design 01 and 06, "分类": where this sender's mail belongs, and the
+  // user's word about it.
+  const CATEGORIES = ['personal', 'transactional', 'newsletter', 'promotion'] as const;
+  async function setCategory(c: string) {
+    try {
+      await post(`/api/person/${id}/category`, { category: c });
+      if (person) person = { ...person, category: c as any, category_by_you: true };
+    } catch (e: any) { error = e.message; }
+  }
+
   // Design 06, "标为垃圾": say what will go before anything goes.
   let junkCount = $state<number | null>(null);
   let junking = $state(false);
@@ -271,6 +281,15 @@
             {#each roles as r}<button type="button" class="role removable" onclick={() => removeRole(r)}>{r}</button>{/each}
             <input class="role-input" bind:value={newRole} placeholder={t('people.addrole')} onkeydown={(e) => { if (e.key === 'Enter') addRole(); }} />
           </div>
+          {#if person.category}
+            <h3 class="group-title">{t('category.title')}</h3>
+            <div class="chooser category-chooser">
+              {#each CATEGORIES as c}
+                <button type="button" class="choose" class:is-on={person.category === c} onclick={() => setCategory(c)}>{t(`category.${c}`)}</button>
+              {/each}
+            </div>
+            <p class="note">{person.category_by_you ? t('category.byyou') : t('category.byrules')}</p>
+          {/if}
           <h3 class="group-title">{t('chat.handles')}</h3>
           <div class="handles">{#each person.card.handles as h}<span class="handle" class:inferred={h.inferred}>{h.value}</span>{/each}</div>
         </div>

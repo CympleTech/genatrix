@@ -204,7 +204,7 @@
     {:else}
       <p class="note">{t(kind === 'group' ? 'junk.confirm.group' : 'junk.confirm.person', { n: junkCount, name })}</p>
       <div class="chooser">
-        <button type="button" class="choose primary danger" disabled={junking} onclick={markJunk}>{t('junk.yes')}</button>
+        <button type="button" class="choose danger" disabled={junking} onclick={markJunk}>{t('junk.yes')}</button>
         <button type="button" class="choose lowers" onclick={() => (junkCount = null)}>{t('agents.cancel')}</button>
       </div>
     {/if}

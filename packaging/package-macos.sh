@@ -86,8 +86,7 @@ PLIST
 
 say "drawing the icon"
 ICONWORK="$(mktemp -d)"
-qlmanage -t -s 1024 -o "$ICONWORK" "$ROOT/web/public/icon.svg" >/dev/null 2>&1 || true
-PNG="$ICONWORK/icon.svg.png"
+PNG="$ROOT/assets/brand/genatrix-icon-1024.png"
 if [ -f "$PNG" ]; then
   mkdir -p "$ICONWORK/Genatrix.iconset"
   for size in 16 32 64 128 256 512; do

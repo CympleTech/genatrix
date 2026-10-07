@@ -1,6 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Ink ground, a ring of rice paper, and the seal. -->
-  <rect width="64" height="64" rx="14" fill="#2B2B2B"/>
-  <circle cx="32" cy="32" r="14" fill="none" stroke="#F7F0E8" stroke-width="4"/>
-  <rect x="27.5" y="27.5" width="9" height="9" rx="1.5" fill="#C83C3C"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#F7F0E8"/><g transform="translate(256 256) scale(0.78) translate(-256 -256)"><circle cx="134" cy="256" r="66" fill="#C83C3C"/><rect x="244" y="128" width="200" height="64" rx="32" fill="#2B2B2B"/><rect x="244" y="224" width="140" height="64" rx="32" fill="#2B2B2B"/><rect x="244" y="320" width="80" height="64" rx="32" fill="#2B2B2B"/></g></svg>

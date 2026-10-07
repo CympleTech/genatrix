@@ -43,6 +43,10 @@ agents, and test probes. `agents/build.sh` builds and packs them and refreshes
 attachment reader), which are committed so the root workspace builds and tests
 without the wasm target.
 
+`assets/brand/` holds the logo and its renderings; `assets/brand/README.md`
+says which file goes where. The page's icons in `web/public/` and the app
+icon in packaging are copies of these.
+
 `web/` is the interface (design 06): Svelte and Vite, phone first. Its build
 lands in `crates/daemon/src/web/dist/` under fixed names and is compiled into
 the core; the built files are committed, so changing `web/` means running

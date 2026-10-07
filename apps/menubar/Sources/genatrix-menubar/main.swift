@@ -73,10 +73,11 @@ struct AccountsReply: Decodable {
 enum Look {
     case normal, syncing, needsYou, error
 
-    var symbol: String {
+    /// The SF Symbol for the looks that are a warning; the calm looks draw
+    /// the mark itself.
+    var symbol: String? {
         switch self {
-        case .normal: return "circle"
-        case .syncing: return "arrow.triangle.2.circlepath"
+        case .normal, .syncing: return nil
         case .needsYou: return "exclamationmark.circle"
         case .error: return "xmark.circle"
         }
@@ -406,10 +407,38 @@ final class Shell: NSObject, NSApplicationDelegate {
 
     private func show(_ look: Look) {
         guard let button = item.button else { return }
-        let image = NSImage(systemSymbolName: look.symbol, accessibilityDescription: "Genatrix: \(look.word)")
+        let image = look.symbol.map {
+            NSImage(systemSymbolName: $0, accessibilityDescription: "Genatrix: \(look.word)")
+        } ?? mark(hollow: look == .syncing)
         image?.isTemplate = true
         button.image = image
         button.toolTip = "Genatrix: \(look.word)"
+    }
+
+    /// The brand mark (assets/brand/genatrix-menubar.svg): the dot that reads
+    /// and the three bars it sorts into. While syncing the dot is a ring.
+    private func mark(hollow: Bool) -> NSImage {
+        // The mark spans x 68...444 and y 128...384 of a 512 square.
+        let unit: CGFloat = 14 / 256
+        let image = NSImage(size: NSSize(width: 376 * unit + 2, height: 16), flipped: true) { _ in
+            NSColor.black.set()
+            let at = { (v: CGFloat, o: CGFloat) in (v - o) * unit + 1 }
+            let dot = NSRect(x: at(68, 68), y: at(190, 128), width: 132 * unit, height: 132 * unit)
+            if hollow {
+                let ring = NSBezierPath(ovalIn: dot.insetBy(dx: 0.75, dy: 0.75))
+                ring.lineWidth = 1.5
+                ring.stroke()
+            } else {
+                NSBezierPath(ovalIn: dot).fill()
+            }
+            for (y, width) in [(128.0, 200.0), (224.0, 140.0), (320.0, 80.0)] as [(CGFloat, CGFloat)] {
+                let bar = NSRect(x: at(244, 68), y: at(y, 128), width: width * unit, height: 64 * unit)
+                NSBezierPath(roundedRect: bar, xRadius: 32 * unit, yRadius: 32 * unit).fill()
+            }
+            return true
+        }
+        image.accessibilityDescription = "Genatrix"
+        return image
     }
 
     private func poll() {

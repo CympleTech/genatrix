@@ -1,11 +1,4 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/genatrix-mark-dark.svg">
-    <img src="assets/brand/genatrix-mark.svg" alt="Genatrix" width="120">
-  </picture>
-</p>
-
-# Genatrix
+# <img src="assets/brand/genatrix-icon.svg" alt="" width="40" align="top"> Genatrix
 
 An AI that runs only on your device, understands your digital life, and acts
 only with your approval.

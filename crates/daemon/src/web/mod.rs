@@ -38,7 +38,8 @@ const INDEX_HTML: &str = include_str!("dist/index.html");
 const APP_JS: &str = include_str!("dist/app.js");
 const APP_CSS: &str = include_str!("dist/app.css");
 const MANIFEST: &str = include_str!("dist/manifest.webmanifest");
-const ICON_SVG: &str = include_str!("dist/icon.svg");
+const ICON_SVG: &str = include_str!("dist/favicon.svg");
+const ICON_32: &[u8] = include_bytes!("dist/favicon-32.png");
 const ICON_180: &[u8] = include_bytes!("dist/icon-180.png");
 const ICON_512: &[u8] = include_bytes!("dist/icon-512.png");
 
@@ -57,7 +58,8 @@ pub async fn serve(system: Arc<System>, serving: &Serving) -> anyhow::Result<()>
         .route("/app.js", get(script))
         .route("/app.css", get(style))
         .route("/manifest.webmanifest", get(manifest))
-        .route("/icon.svg", get(icon))
+        .route("/favicon.svg", get(icon))
+        .route("/favicon.ico", get(icon_32))
         .route("/icon-180.png", get(icon_180))
         .route("/icon-512.png", get(icon_512))
         .merge(api::routes())
@@ -231,6 +233,12 @@ async fn manifest() -> impl IntoResponse {
 
 async fn icon() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "image/svg+xml")], ICON_SVG)
+}
+
+/// For browsers that ask for `/favicon.ico` on their own. A PNG under that
+/// name is read the same.
+async fn icon_32() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "image/png")], ICON_32)
 }
 
 /// For a phone's home screen, which wants a picture, not a drawing.

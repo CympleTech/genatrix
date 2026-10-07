@@ -170,8 +170,11 @@
     -webkit-backdrop-filter: saturate(1.6) blur(16px);
     border-bottom: 1px solid var(--line-warm);
   }
-  .top h1 { @apply m-0 flex items-baseline gap-2.5 text-[18px] font-semibold tracking-[-0.02em]; }
-  .brand { @apply font-semibold text-accent-ink; }
+  .top h1 { @apply m-0 flex items-center gap-2.5 text-[18px] font-semibold tracking-[-0.02em]; }
+  .brand { @apply inline-flex items-center gap-2 font-semibold text-ink; }
+  /* The mark (assets/brand): only the dot is loud. */
+  .mark { @apply h-[14px] w-auto shrink-0; fill: var(--ink); }
+  .mark .dot { fill: var(--accent); }
   .page-title { @apply font-medium text-muted; }
   .status { @apply m-0 truncate text-[13px] text-faint; }
 

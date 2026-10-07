@@ -73,7 +73,7 @@
 
 <div class="shell" class:more-open={more}>
   <header class="top">
-    <h1><span class="brand">Genatrix</span><span class="page-title">{title}</span></h1>
+    <h1><span class="brand"><svg class="mark" viewBox="68 128 376 256" aria-hidden="true"><circle cx="134" cy="256" r="66" class="dot"/><rect x="244" y="128" width="200" height="64" rx="32"/><rect x="244" y="224" width="140" height="64" rx="32"/><rect x="244" y="320" width="80" height="64" rx="32"/></svg>Genatrix</span><span class="page-title">{title}</span></h1>
     <p class="status" class:error={!!$statusError}>{statusLine}</p>
   </header>
 

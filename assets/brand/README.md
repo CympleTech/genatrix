@@ -25,9 +25,9 @@ for text on paper) and `#151312` (dark background).
 | `genatrix-icon.svg`, `genatrix-icon-dark.svg` | the app icon, a rounded paper tile |
 | `genatrix-icon-1024.png`, `genatrix-icon-dark-1024.png` | the same, rendered; `packaging/package-macos.sh` builds `Genatrix.icns` from the light one |
 | `genatrix-small.svg`, `genatrix-small-dark.svg` | the mark drawn heavier for 32px and below |
-| `genatrix-favicon.svg` | the page's icon, copied to `web/public/icon.svg` |
+| `genatrix-favicon.svg` | the page's icon, copied to `web/public/favicon.svg` |
 | `genatrix-touch.svg`, `genatrix-touch-180.png`, `genatrix-touch-512.png` | home screen and PWA icons, copied to `web/public/icon-180.png` and `icon-512.png` |
-| `favicon-16.png`, `favicon-32.png` | the favicon for places that do not take SVG |
+| `favicon-16.png`, `favicon-32.png` | the favicon for places that do not take SVG; the 32 is copied to `web/public/favicon-32.png` and served as `/favicon.ico` |
 | `genatrix-menubar.svg`, `menubar-template*.png` | the one-colour template; the menu bar shell draws the same shape in code |
 
 PNGs are rendered from the SVGs with headless Chrome:

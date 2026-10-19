@@ -16,6 +16,7 @@
 | 09 | [安装、恢复与迁移](09-install-recover-migrate.md) | v0.2 · 已通过 |
 | 10 | [路线图](10-roadmap.md) | v0.4 · 已通过 |
 | 11 | [功能型 Agent](11-agents.md) | v0.1 · 已通过 |
+| 12 | [演化](12-evolution.md) | v0.1 · 草稿，待讨论 |
 
 评审记录：[REVIEW.md](REVIEW.md)（2026-09-13）。v0.2 是对它的回应，四条 P0 全部吸收。
 

@@ -55,7 +55,31 @@ struct Options {
         }
         return options
     }
+
+    /// The core's data directory: the one passed, or the default the core
+    /// itself uses.
+    var dataDirectory: URL {
+        if let dir = dataDir { return URL(fileURLWithPath: (dir as NSString).expandingTildeInPath) }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Genatrix", isDirectory: true)
+    }
+
+    /// The key that makes a request this machine's (design 02, invariant 11,
+    /// as revised by design 13). The core writes it, readable by this user
+    /// only; a request from 127.0.0.1 without it is nobody. Read each time,
+    /// since the core makes it on its first start and again after an erase.
+    var localKey: String? {
+        let file = dataDirectory.appendingPathComponent("run/local.key")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        let key = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return key.isEmpty ? nil : key
+    }
 }
+
+/// The header the core reads the local key from.
+let localHeader = "x-genatrix-local"
+/// The cookie a web view on this machine carries the local key in.
+let localCookie = "genatrix_local"
 
 // MARK: - What the core says
 
@@ -148,10 +172,11 @@ enum Installation {
 }
 
 /// Whether a core already answers on the port.
-func coreAnswers(port: Int) -> Bool {
+func coreAnswers(port: Int, key: String?) -> Bool {
     guard let url = URL(string: "http://127.0.0.1:\(port)/api/accounts") else { return false }
     var request = URLRequest(url: url)
     request.timeoutInterval = 1.5
+    if let key = key { request.setValue(key, forHTTPHeaderField: localHeader) }
     let done = DispatchSemaphore(value: 0)
     var ok = false
     URLSession.shared.dataTask(with: request) { data, response, _ in
@@ -231,18 +256,32 @@ final class Page: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate
     private var web: WKWebView?
     private var failed = false
 
-    func open(_ url: URL) {
-        if window == nil { build(url) }
+    /// Show the page. The web view is given the local key as a cookie first,
+    /// so the page it loads is this machine's; the cookie is set again on
+    /// every open, since the key is new after an erase.
+    func open(_ url: URL, key: String?) {
+        if window == nil { build() }
         guard let window = window, let web = web else { return }
-        if failed || web.url == nil {
-            failed = false
-            web.load(URLRequest(url: url))
+        let show = {
+            if self.failed || web.url == nil {
+                self.failed = false
+                web.load(URLRequest(url: url))
+            }
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
         }
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        guard let key = key, let host = url.host,
+              let cookie = HTTPCookie(properties: [
+                  .domain: host, .path: "/", .name: localCookie, .value: key,
+                  .init("HttpOnly"): "TRUE", .sameSitePolicy: HTTPCookieStringPolicy.sameSiteStrict,
+              ]) else {
+            show()
+            return
+        }
+        web.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) { show() }
     }
 
-    private func build(_ url: URL) {
+    private func build() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1080, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -258,7 +297,6 @@ final class Page: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate
         web.navigationDelegate = self
         web.uiDelegate = self
         window.contentView?.addSubview(web)
-        web.load(URLRequest(url: url))
         self.window = window
         self.web = web
     }
@@ -370,13 +408,13 @@ final class Shell: NSObject, NSApplicationDelegate {
     /// register it, run here meanwhile, and say so in the menu.
     private func install() -> Bool {
         if Installation.startedBySystem {
-            if coreAnswers(port: options.port) {
+            if coreAnswers(port: options.port, key: options.localKey) {
                 NSApp.terminate(nil)
                 return false
             }
             return true
         }
-        if coreAnswers(port: options.port) {
+        if coreAnswers(port: options.port, key: options.localKey) {
             DistributedNotificationCenter.default().postNotificationName(
                 Installation.openNotice, object: nil, userInfo: nil, deliverImmediately: true)
             NSApp.terminate(nil)
@@ -445,6 +483,7 @@ final class Shell: NSObject, NSApplicationDelegate {
         guard let url = URL(string: "http://127.0.0.1:\(options.port)/api/accounts") else { return }
         var request = URLRequest(url: url)
         request.timeoutInterval = 3
+        if let key = options.localKey { request.setValue(key, forHTTPHeaderField: localHeader) }
         URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
             let reply = data.flatMap { try? JSONDecoder().decode(AccountsReply.self, from: $0) }
             DispatchQueue.main.async {
@@ -500,7 +539,7 @@ final class Shell: NSObject, NSApplicationDelegate {
 
     @objc func openInterface() {
         if let url = URL(string: "http://127.0.0.1:\(options.port)/") {
-            page.open(url)
+            page.open(url, key: options.localKey)
         }
     }
 
@@ -508,10 +547,27 @@ final class Shell: NSObject, NSApplicationDelegate {
         SMAppService.openSystemSettingsLoginItems()
     }
 
+    /// The browser is not this machine by its address alone: ask the core
+    /// for a one-time link that hands it the key, the way `genatrix open`
+    /// does, and open that.
     @objc private func openInBrowser() {
-        if let url = URL(string: "http://127.0.0.1:\(options.port)/") {
-            NSWorkspace.shared.open(url)
+        let port = options.port
+        guard let plain = URL(string: "http://127.0.0.1:\(port)/"),
+              let make = URL(string: "http://127.0.0.1:\(port)/api/local/link"),
+              let key = options.localKey else {
+            if let url = URL(string: "http://127.0.0.1:\(port)/") { NSWorkspace.shared.open(url) }
+            return
         }
+        var request = URLRequest(url: make)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 3
+        request.setValue(key, forHTTPHeaderField: localHeader)
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            struct Link: Decodable { let token: String }
+            let link = data.flatMap { try? JSONDecoder().decode(Link.self, from: $0) }
+            let target = link.flatMap { URL(string: "http://127.0.0.1:\(port)/local/\($0.token)") } ?? plain
+            DispatchQueue.main.async { NSWorkspace.shared.open(target) }
+        }.resume()
     }
 
     @objc private func quitAll() {

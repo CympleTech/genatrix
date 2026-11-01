@@ -1,0 +1,8 @@
+name = "review-only"
+title = "Review the current state of the base branch against a question"
+
+[[step]]
+id = "review"
+role = "test"
+executor = "codex"
+produces = "notes"

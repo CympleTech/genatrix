@@ -50,6 +50,10 @@ pub enum Purpose {
     SearchRewrite,
     /// Planning inside a conversation.
     Plan,
+    /// Handing a task to an executor such as a coding agent (design 13).
+    /// Never served by a model: the gateway refuses it at every location,
+    /// and only the executor host admits it.
+    Delegate,
 }
 
 impl Purpose {
@@ -66,6 +70,7 @@ impl Purpose {
             Self::Translate => "translate",
             Self::SearchRewrite => "search_rewrite",
             Self::Plan => "plan",
+            Self::Delegate => "delegate",
         }
     }
 
@@ -76,10 +81,20 @@ impl Purpose {
     pub const fn may_use_cloud(self) -> bool {
         match self {
             Self::Classify | Self::Extract | Self::Embed | Self::IdentitySuggestion => false,
-            Self::Summarize | Self::Draft | Self::Translate | Self::SearchRewrite | Self::Plan => {
-                true
-            }
+            Self::Summarize
+            | Self::Draft
+            | Self::Translate
+            | Self::SearchRewrite
+            | Self::Plan
+            | Self::Delegate => true,
         }
+    }
+
+    /// Whether a model serves this purpose. Everything but `Delegate`,
+    /// whose bytes go to an executor, not to the gateway (design 13).
+    #[must_use]
+    pub const fn is_for_models(self) -> bool {
+        !matches!(self, Self::Delegate)
     }
 }
 

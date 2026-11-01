@@ -1962,6 +1962,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "genatrix-connector-github"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "ureq",
+]
+
+[[package]]
 name = "genatrix-connector-imap"
 version = "0.0.1"
 dependencies = [
@@ -2021,8 +2034,11 @@ dependencies = [
  "clap",
  "genatrix-agent",
  "genatrix-connector",
+ "genatrix-connector-github",
  "genatrix-connector-imap",
  "genatrix-connector-telegram",
+ "genatrix-dispatch",
+ "genatrix-exec",
  "genatrix-gate",
  "genatrix-host",
  "genatrix-keys",
@@ -2045,6 +2061,34 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+]
+
+[[package]]
+name = "genatrix-dispatch"
+version = "0.0.1"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "genatrix-exec"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "genatrix-dispatch",
+ "genatrix-keys",
+ "genatrix-llm",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

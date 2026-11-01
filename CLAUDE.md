@@ -43,6 +43,13 @@ agents, and test probes. `agents/build.sh` builds and packs them and refreshes
 attachment reader), which are committed so the root workspace builds and tests
 without the wasm target.
 
+Executors (design 13): `crates/dispatch` decides (projects, roles, recipes,
+the step machine, the permission scope) and touches nothing; `crates/exec`
+is the executor host, `genatrix-exec`, which drives Claude Code or Codex
+over ACP as the system user `_genatrix_exec`; `crates/connector-github` is
+`genatrix-github`, one sandboxed process per approved push or pull request.
+The core's side is `crates/daemon/src/executors/`.
+
 `assets/brand/` holds the logo and its renderings; `assets/brand/README.md`
 says which file goes where. The page's icons in `web/public/` and the app
 icon in packaging are copies of these.

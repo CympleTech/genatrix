@@ -12,6 +12,7 @@
   import Settings from './pages/Settings.svelte';
   import Pair from './pages/Pair.svelte';
   import Welcome from './pages/Welcome.svelte';
+  import Work from './pages/Work.svelte';
   import { get as fetchJson } from './lib/api';
   import Icon from './components/Icon.svelte';
 
@@ -41,6 +42,7 @@
     { path: '/ask', key: 'ask' },
   ];
   const secondary = [
+    { path: '/work', key: 'work' },
     { path: '/timeline', key: 'timeline' },
     { path: '/records', key: 'records' },
     { path: '/review', key: 'review' },
@@ -107,6 +109,7 @@
         kind={$route.parts[1] === 'g' ? 'group' : $route.parts[1] === 'a' ? 'agent' : $route.parts[1] === 'quiet' ? 'quiet' : 'person'}
         id={($route.parts[1] === 'g' || $route.parts[1] === 'a' ? $route.parts[2] : $route.parts[1]) ?? null}
       />
+    {:else if section === 'work'}<Work id={$route.parts[1] ?? null} />
     {:else if section === 'review'}<Review />
     {:else if section === 'records'}<Records />
     {:else if section === 'settings'}<Settings />

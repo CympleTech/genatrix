@@ -1,0 +1,11 @@
+name = "implement"
+title = "Implement, then propose a pull request"
+
+[[step]]
+id = "implement"
+role = "backend"
+executor = "claude-code"
+produces = "commits"
+
+[finish]
+propose = ["push_branch", "open_pull_request"]

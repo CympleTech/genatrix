@@ -46,6 +46,11 @@ pub struct System {
     pub agents: crate::agents::Agents,
     /// The live pairing code, if any (design 06, "形态").
     pub pairing: crate::web::Pairing,
+    /// The key that makes a request this machine's (design 02, invariant 11).
+    pub local: crate::web::Local,
+    /// Executors: their configuration, the host, the running dispatches
+    /// (design 13).
+    pub exec: crate::executors::Exec,
     /// The key the gateway checks tickets with, kept so the model side can be
     /// started later in the life of the process, after a download.
     pub ticket_key: TicketKey,
@@ -184,6 +189,9 @@ impl System {
             StoreNames::new(store.clone()),
         );
 
+        let local_key = config.local_key_path();
+        let exec = crate::executors::Exec::load(&config)?;
+        crate::executors::seed(&store)?;
         Ok(Self {
             config,
             store,
@@ -201,6 +209,8 @@ impl System {
             actions: crate::actions::Actions::default(),
             agents: crate::agents::Agents::new(agents_dir, master.clone()),
             pairing: crate::web::Pairing::default(),
+            local: crate::web::Local::load_or_create(&local_key)?,
+            exec,
             ticket_key,
             connector_tasks: std::sync::Mutex::new(Vec::new()),
             logins: tokio::sync::Mutex::new(std::collections::HashMap::new()),

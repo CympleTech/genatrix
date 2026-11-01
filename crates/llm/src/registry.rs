@@ -109,6 +109,14 @@ pub enum RegistryError {
     /// A purpose has no model at all.
     #[error("purpose `{0}` has no model")]
     NoModel(&'static str),
+    /// A model claims a purpose no model serves.
+    #[error("model `{model}` claims purpose `{purpose}`, which goes to executors, not models")]
+    NotForModels {
+        /// Offending entry.
+        model: String,
+        /// Offending purpose.
+        purpose: &'static str,
+    },
     /// A purpose that must stay local has no local model to fall back to.
     #[error("purpose `{0}` has no local model, so a refused cloud request could not fall back")]
     NoLocalFallback(&'static str),
@@ -131,6 +139,12 @@ impl Registry {
         for m in &self.models {
             if !seen.insert(m.name.clone()) {
                 return Err(RegistryError::DuplicateName(m.name.clone()));
+            }
+            if let Some(p) = m.purposes.iter().find(|p| !p.is_for_models()) {
+                return Err(RegistryError::NotForModels {
+                    model: m.name.clone(),
+                    purpose: p.as_str(),
+                });
             }
             if m.location() == Location::Cloud
                 && let Some(p) = m.purposes.iter().find(|p| !p.may_use_cloud())

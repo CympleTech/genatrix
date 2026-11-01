@@ -18,8 +18,10 @@ mod agents;
 mod api;
 mod devices;
 mod junk;
+pub mod local;
 mod quiet;
 mod setup;
+mod work;
 
 use std::future::IntoFuture as _;
 use std::net::{IpAddr, SocketAddr};
@@ -31,6 +33,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 
 pub use devices::Pairing;
+pub use local::Local;
 
 use crate::system::System;
 
@@ -68,6 +71,8 @@ pub async fn serve(system: Arc<System>, serving: &Serving) -> anyhow::Result<()>
         .merge(agents::routes())
         .merge(junk::routes())
         .merge(quiet::routes())
+        .merge(local::routes())
+        .merge(work::routes())
         // Every other path is the page: the app routes on the client side,
         // so a link to /approvals or /pair?code=... opens on the right screen.
         .fallback(get(index))
@@ -116,7 +121,8 @@ fn needs_loopback_too(bind: IpAddr) -> bool {
 fn announce(serving: &Serving) {
     if serving.bind.is_loopback() {
         println!("Genatrix is at http://127.0.0.1:{}", serving.port);
-        println!("Only this machine can reach it.");
+        println!("Only this machine can reach it. Open it from the menu bar, or run");
+        println!("`genatrix open`: an address in a browser alone is not enough.");
         return;
     }
     let host = if serving.bind.is_unspecified() {

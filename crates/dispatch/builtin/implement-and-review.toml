@@ -1,0 +1,28 @@
+name = "implement-and-review"
+title = "Implement, review, fix, then propose a pull request"
+
+[[step]]
+id = "implement"
+role = "backend"
+executor = "claude-code"
+produces = "commits"
+
+[[step]]
+id = "review"
+role = "test"
+executor = "codex"
+produces = "verdict"
+
+[[step]]
+id = "fix"
+role = "backend"
+executor = "claude-code"
+produces = "commits"
+inputs = ["review"]
+
+[loop]
+between = ["review", "fix"]
+max = 2
+
+[finish]
+propose = ["push_branch", "open_pull_request"]

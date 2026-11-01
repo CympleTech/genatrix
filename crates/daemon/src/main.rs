@@ -18,12 +18,14 @@ mod connectors;
 mod conversation;
 mod download;
 mod erase;
+mod executors;
 mod ingest;
 mod junk;
 mod keychain;
 mod keys;
 mod models;
 mod names;
+mod open;
 mod pipeline;
 mod purge;
 mod running;
@@ -136,6 +138,48 @@ enum Command {
         #[command(subcommand)]
         action: agents::terminal::AgentAction,
     },
+    /// Executors: set up the system user they run as, check, sign in
+    /// (design 13).
+    Exec {
+        #[command(subcommand)]
+        action: executors::terminal::ExecAction,
+    },
+    /// Projects executors may work on.
+    Project {
+        #[command(subcommand)]
+        action: executors::terminal::DefinitionAction,
+    },
+    /// Recipes: the steps of a piece of work.
+    Recipe {
+        #[command(subcommand)]
+        action: executors::terminal::DefinitionAction,
+    },
+    /// Roles: a prompt and what an executor in it may do.
+    Role {
+        #[command(subcommand)]
+        action: executors::terminal::DefinitionAction,
+    },
+    /// Work handed to executors: draft, list, show.
+    Work {
+        #[command(subcommand)]
+        action: executors::terminal::WorkAction,
+    },
+    /// The GitHub token pushes and pull requests use.
+    Github {
+        #[command(subcommand)]
+        action: executors::terminal::GithubAction,
+    },
+    /// Open the page in the browser on this machine, signed in as this
+    /// machine. A browser on 127.0.0.1 is not this machine by its address
+    /// alone (design 02, invariant 11).
+    Open {
+        /// The port the core listens on.
+        #[arg(long, default_value_t = 7717)]
+        port: u16,
+        /// Print the one-time link instead of opening it.
+        #[arg(long)]
+        print: bool,
+    },
     /// Serve the interface.
     Serve {
         /// Address to listen on. Loopback by default, which only this machine
@@ -228,6 +272,31 @@ async fn main() -> anyhow::Result<()> {
             let system = System::open(config.clone(), ticket_key(&config, false)?)?;
             agents::terminal::command(std::sync::Arc::new(system), action).await
         }
+        Command::Exec { action } => {
+            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
+            executors::terminal::exec(&system, action)
+        }
+        Command::Project { action } => {
+            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
+            executors::terminal::definitions(&system, "project", action)
+        }
+        Command::Recipe { action } => {
+            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
+            executors::terminal::definitions(&system, "recipe", action)
+        }
+        Command::Role { action } => {
+            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
+            executors::terminal::definitions(&system, "role", action)
+        }
+        Command::Work { action } => {
+            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
+            executors::terminal::work(&system, action)
+        }
+        Command::Github { action } => {
+            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
+            executors::terminal::github(std::sync::Arc::new(system), action).await
+        }
+        Command::Open { port, print } => open::open(&config.local_key_path(), port, print).await,
         Command::Serve { bind, port } => serve(&config, &web::Serving { bind, port }).await,
     }
 }
@@ -543,6 +612,7 @@ fn service(config: &Config, action: &ServiceAction) -> anyhow::Result<()> {
                 println!("serving    port {port} on {shown}");
                 println!("           other devices need pairing: Settings, on this machine");
             }
+            println!("open       the menu bar, or `genatrix open`");
             println!(
                 "log        {}",
                 config.data_dir.join("logs/genatrix.log").display()
@@ -687,6 +757,25 @@ async fn settle_actions(system: &std::sync::Arc<System>) {
         Ok(0) => {}
         Ok(n) => tracing::info!(n, "agent run(s)"),
         Err(e) => tracing::warn!(error = %e, "could not wake agents"),
+    }
+}
+
+/// Work for executors the user approved, and the pushes and pull requests
+/// that came of it (design 13). Its own loop: none of it waits for the
+/// local model, and an approval should not wait for the mail.
+async fn work_as_approved(system: std::sync::Arc<System>) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        match executors::run::start_approved(&system) {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(n, "dispatch(es) started"),
+            Err(e) => tracing::warn!(error = %e, "could not start dispatches"),
+        }
+        match executors::github::execute_approved(&system).await {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(n, "GitHub action(s) carried out"),
+            Err(e) => tracing::warn!(error = %e, "could not carry out GitHub actions"),
+        }
     }
 }
 
@@ -909,8 +998,17 @@ async fn serve(config: &Config, serving: &web::Serving) -> anyhow::Result<()> {
     leave_ticket_key(config, &key)?;
     models::start(system.clone(), &key)?;
     tokio::spawn(pipelines_as_mail_arrives(system.clone()));
+    tokio::spawn(work_as_approved(system.clone()));
 
     running::start(&system)?;
+    match executors::recover(&system) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(
+            n,
+            "dispatch(es) left running by the last core marked failed"
+        ),
+        Err(e) => tracing::warn!(error = %e, "could not look for dispatches left running"),
+    }
 
     web::serve(system, serving).await
 }

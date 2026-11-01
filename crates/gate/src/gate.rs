@@ -56,6 +56,13 @@ pub enum Initiator {
         /// Which one.
         name: String,
     },
+    /// A step of a dispatch to an executor (design 13).
+    Dispatch {
+        /// The dispatch: the id of the approved action.
+        dispatch: String,
+        /// The recipe step.
+        step: String,
+    },
 }
 
 /// One message in the prompt.
@@ -125,6 +132,9 @@ pub enum Decision {
     /// This is the case the interface surfaces as "answered on this device,
     /// because the content is secret".
     FallbackLocal,
+    /// Refused outright: nothing was sent, and nothing can be sent in its
+    /// place. Only delegation ends this way; a model call falls back.
+    Refused,
 }
 
 /// How a call ended.
@@ -216,6 +226,50 @@ pub enum GateError {
     /// The ticket could not be minted.
     #[error("minting the ticket failed: {0}")]
     Ticket(#[from] std::io::Error),
+    /// A delegation may not leave at this level (design 13, "派单就是出境").
+    #[error("{reason}")]
+    DelegationRefused {
+        /// The level of the content.
+        level: &'static str,
+        /// Why, in words for the card.
+        reason: String,
+    },
+}
+
+/// Text for an executor, before the gate has looked at it (design 13).
+#[derive(Clone, Debug)]
+pub struct Delegation {
+    /// Registry name of the executor.
+    pub executor: String,
+    /// Whose service it is: the executor sends what it is given there.
+    pub vendor: String,
+    /// Who asked.
+    pub initiator: Initiator,
+    /// Items the text was made from, for the record.
+    pub items: Vec<ItemId>,
+    /// The highest level of everything the text was made from. The user's
+    /// own words are personal unless the user marked them public.
+    pub level: Level,
+    /// Whether this project lets personal content go, redacted (design 13,
+    /// ruling 11: the switch is per project, for this purpose only).
+    pub personal_allowed: bool,
+    /// Who to pseudonymize when redacting.
+    pub identities: Vec<Identity>,
+    /// The text.
+    pub text: String,
+}
+
+/// A delegation the gate let through: the bytes and the ticket for them.
+#[derive(Debug)]
+pub struct PreparedDelegation {
+    /// Identifier of the ledger record.
+    pub egress_id: String,
+    /// The exact bytes the executor host may send.
+    pub body: Bytes,
+    /// The ticket, signed with the delegation key.
+    pub ticket: String,
+    /// What the gate decided.
+    pub decision: Decision,
 }
 
 /// The gate.
@@ -224,6 +278,7 @@ pub struct EgressGate {
     registry: Registry,
     ledger: std::sync::Arc<Ledger>,
     key: TicketKey,
+    delegation_key: TicketKey,
     cloud_enabled: bool,
 }
 
@@ -248,13 +303,107 @@ impl EgressGate {
         ledger: std::sync::Arc<Ledger>,
         key: TicketKey,
     ) -> Self {
+        // A key of its own for delegation tickets, made fresh for each run
+        // of the core: the executor host needs it to check them, and the
+        // gateway's key does not leave the core and the gateway.
+        let delegation_key = TicketKey::generate().unwrap_or_else(|_| key.clone());
         Self {
             rules,
             registry,
             ledger,
             key,
+            delegation_key,
             cloud_enabled: false,
         }
+    }
+
+    /// The key delegation tickets are signed with, for the executor host.
+    #[must_use]
+    pub const fn delegation_key(&self) -> &TicketKey {
+        &self.delegation_key
+    }
+
+    /// Rule on text for an executor, redact it if it may go redacted, write
+    /// the record, and sign a ticket for the exact bytes (design 13, "派单
+    /// 就是出境").
+    ///
+    /// An executor is a cloud target, always: what it is given, its vendor
+    /// sees. So the policy matrix of design 02 applies as it does to a cloud
+    /// model, with two differences. There is no local model to fall back to,
+    /// so a refusal is final. And the switch that opens personal content is
+    /// the project's, for this purpose only, not the global one (design 13,
+    /// ruling 11). A refusal is written down like a send.
+    pub fn prepare_delegation(
+        &self,
+        request: &Delegation,
+    ) -> Result<PreparedDelegation, GateError> {
+        // The caller states the level: the highest of what the text was made
+        // from, and the user's words count as personal unless the user marked
+        // them public. Lowering is the user's alone (design 02); what the gate
+        // adds is the one judgement it can make on bytes, a secret pattern.
+        let level = if self.level_of_typed_text(&request.text) == Level::Secret {
+            Level::Secret
+        } else {
+            request.level
+        };
+        let refusal = match level {
+            Level::Secret => {
+                Some("this text is secret, and secret content never leaves this machine".to_owned())
+            }
+            Level::Personal if !request.personal_allowed => Some(
+                "this text is personal, and this project does not let personal content go to \
+                 executors; edit it, or mark it public if it is"
+                    .to_owned(),
+            ),
+            _ => None,
+        };
+        let (text, ticket_level, decision) = match (&refusal, level) {
+            (Some(_), _) => (request.text.clone(), TicketLevel::Secret, Decision::Refused),
+            (None, Level::Personal) => (
+                redact(&request.text, &request.identities).text,
+                TicketLevel::Redacted,
+                Decision::AllowedRedacted,
+            ),
+            (None, _) => (request.text.clone(), TicketLevel::Public, Decision::Allowed),
+        };
+        let body = Bytes::from(text.into_bytes());
+        let payload_hash = hex::encode(Sha256::digest(&body));
+        let egress_id = Ulid::new().to_string();
+        let record = EgressRecord {
+            initiator: request.initiator.clone(),
+            purpose: Purpose::Delegate.as_str().to_owned(),
+            items: request.items.iter().map(ToString::to_string).collect(),
+            level: level.as_str().to_owned(),
+            target: request.executor.clone(),
+            location: "cloud".to_owned(),
+            decision,
+            payload_hash,
+            payload: refusal
+                .is_none()
+                .then(|| String::from_utf8_lossy(&body).into_owned()),
+        };
+        self.ledger.append(kind::EGRESS, &egress_id, &record)?;
+        if let Some(reason) = refusal {
+            return Err(GateError::DelegationRefused {
+                level: level.as_str(),
+                reason,
+            });
+        }
+        let ticket = Ticket::issue(
+            &body,
+            request.executor.clone(),
+            request.vendor.clone(),
+            Purpose::Delegate,
+            ticket_level,
+            caller_of(&request.initiator),
+        )?
+        .encode(&self.delegation_key);
+        Ok(PreparedDelegation {
+            egress_id,
+            body,
+            ticket,
+            decision,
+        })
     }
 
     /// Switch the cloud on or off.
@@ -428,6 +577,7 @@ fn caller_of(initiator: &Initiator) -> String {
         Initiator::Agent { run } => format!("agent:{run}"),
         Initiator::Installed { agent, run, .. } => format!("installed:{agent}:{run}"),
         Initiator::Rule { name } => format!("rule:{name}"),
+        Initiator::Dispatch { dispatch, step } => format!("dispatch:{dispatch}:{step}"),
     }
 }
 

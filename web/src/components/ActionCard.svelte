@@ -82,6 +82,18 @@
     } catch (e: any) { error = e.message; busy = false; }
   }
   const editable = $derived(current.status === 'pending' && !settled);
+  // A dispatch's task is personal unless the user says otherwise; saying so
+  // is a new version, so an earlier approval does not carry over (design 13).
+  async function setPublic(e: Event) {
+    const on = (e.target as HTMLInputElement).checked;
+    busy = true; error = '';
+    try {
+      await saveEditIfAny();
+      current = await post<Action>(`/api/action/${action.id}/level`, { public: on });
+      draft = current.draft;
+    } catch (err: any) { error = err.message; (e.target as HTMLInputElement).checked = !on; }
+    busy = false;
+  }
 </script>
 
 <!-- Design 06: the one screen where principle five is kept. Evidence before
@@ -112,9 +124,24 @@
     </dl>
     <p class="note">{t('action.by_agent')}</p>
   {:else}
+    {#if current.facts?.length}
+      <!-- Work for executors: where the words and the code go, in one fixed
+           layout, above the words themselves (design 13). -->
+      <dl class="card-fields">
+        {#each current.facts as f}<dt>{f.label}</dt><dd>{f.value}</dd>{/each}
+      </dl>
+    {/if}
     <h4 class="card-label">{t('action.draft')}{current.versions > 1 ? ' · ' + t('action.version', { v: current.version }) : ''}</h4>
     <textarea class="draft" bind:value={draft} readonly={!editable || !current.editable}></textarea>
-    <p class="note">{t('action.drafted', { where: current.drafted, account: current.account })}</p>
+    {#if current.kind === 'dispatch'}
+      <label class="quiet-toggle">
+        <input type="checkbox" checked={current.level === 'public'} disabled={!editable || busy} onchange={setPublic} />
+        {t('work.public')}
+      </label>
+      <p class="note">{t('work.card_note')}</p>
+    {:else}
+      <p class="note">{t('action.drafted', { where: current.drafted, account: current.account })}</p>
+    {/if}
   {/if}
   {#if current.result}
     <h4 class="card-label">{t('action.sent')}</h4>

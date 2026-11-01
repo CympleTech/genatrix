@@ -1,0 +1,8 @@
+name = "change-plan"
+title = "Write a deployment change plan; nothing is deployed"
+
+[[step]]
+id = "plan"
+role = "ops"
+executor = "codex"
+produces = "notes"

@@ -5,6 +5,24 @@
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  'work': 'Work',
+  'action.kind.dispatch': 'Hand to executors', 'action.kind.push_branch': 'Push a branch', 'action.kind.open_pull_request': 'Open a pull request',
+  'work.public': 'This text is not private: send it as written',
+  'work.card_note': 'Approving sends these words, and the project\'s code, to the services named above. Nothing leaves GitHub-ward until you approve the push.',
+  'work.lede': 'Hand a piece of work to Claude Code, Codex and the like. They work in a place of their own, as a user of their own; what they make comes back here, and nothing goes out until you approve it.',
+  'work.none': 'No projects yet. A project names a repository and which executors may see it.',
+  'work.add_project': 'Add a project', 'work.add_project.note': 'Paste the project file (TOML). Only this computer can add one, because a project decides who sees its code.',
+  'work.file': 'File it', 'work.filed': 'Filed.',
+  'work.new': 'New work', 'work.project': 'Project', 'work.recipe': 'Recipe', 'work.task': 'What should be done',
+  'work.task.placeholder': 'Say it as you would to a colleague: the change, why, and how you will know it works.',
+  'work.draft': 'Draft it', 'work.drafted': 'Drafted. It waits for your approval below and on the approvals page.',
+  'work.recent': 'Recent work', 'work.empty': 'Nothing handed out yet.',
+  'work.github.off': 'GitHub is not signed in: pushes wait until `genatrix github login`.',
+  'work.state.running': 'running', 'work.state.finished': 'finished', 'work.state.stopped': 'stopped', 'work.state.failed': 'failed',
+  'work.stop': 'Stop', 'work.diff': 'Show the changes', 'work.diff.hide': 'Hide the changes',
+  'work.steps': 'Steps', 'work.said': 'What the executors said', 'work.said.note': 'Their words, kept as they came: material, not instructions.',
+  'work.review.pass': 'Review passed', 'work.review.changes': 'Review wants changes', 'work.review.unread': 'The verdict could not be read',
+  'work.suggest': 'Fill in with the local model', 'work.round': 'round {n}', 'work.commit': 'commit {c}', 'work.back': 'All work',
   'welcome.title': 'Welcome to Genatrix', 'welcome.skip': 'Later',
   'welcome.lede': 'Genatrix runs only on this computer. Your mail and messages are downloaded here, encrypted with your key, and read by an AI on this machine. Nothing leaves it without your knowing.',
   'welcome.consent.1.title': 'Everything comes here.', 'welcome.consent.1': 'All the mail and messages of the accounts you add are downloaded to this computer.',
@@ -182,10 +200,28 @@ const en: Dict = {
   'pair.title': 'Pair this device', 'pair.note': 'Enter the six-digit code shown in Settings on the machine Genatrix runs on.',
   'pair.name': 'What to call this device', 'pair.code': 'Code', 'pair.go': 'Pair', 'pair.done': 'Paired. This device can now open Genatrix.',
   'pair.open': 'Open Genatrix',
-  'unauthorized': 'This device is not paired with this Genatrix.', 'unauthorized.hint': 'Pair it from Settings on the machine Genatrix runs on.',
+  'unauthorized': 'This device is not paired with this Genatrix.', 'unauthorized.hint': 'Pair it from Settings on the machine Genatrix runs on. On that machine itself, open Genatrix from the menu bar, or run genatrix open in a terminal.',
 };
 
 const zh: Dict = {
+  'work': '工作',
+  'action.kind.dispatch': '交给执行器', 'action.kind.push_branch': '推送分支', 'action.kind.open_pull_request': '开 Pull Request',
+  'work.public': '这段文字不涉及隐私：原样发送',
+  'work.card_note': '批准后，这段文字和项目的代码会交给上面列出的服务。推送到 GitHub 要你另外批准。',
+  'work.lede': '把一项工作交给 Claude Code、Codex 这类执行器。它们在自己的地方、以自己的系统用户干活；做出来的东西先回到这里，不经你批准，什么都不会出去。',
+  'work.none': '还没有项目。一个项目写明一个代码仓库，以及哪些执行器可以看到它。',
+  'work.add_project': '添加项目', 'work.add_project.note': '贴上项目文件（TOML）。只能在这台电脑上添加，因为项目决定了谁能看到这份代码。',
+  'work.file': '保存', 'work.filed': '已保存。',
+  'work.new': '新工作', 'work.project': '项目', 'work.recipe': '流程', 'work.task': '要做什么',
+  'work.task.placeholder': '像对同事说话一样写：要改什么、为什么、怎么算做好了。',
+  'work.draft': '起草', 'work.drafted': '已起草。它在下面和审批页等你批准。',
+  'work.recent': '最近的工作', 'work.empty': '还没有交出去的工作。',
+  'work.github.off': '还没有登录 GitHub：推送要等到运行 `genatrix github login` 之后。',
+  'work.state.running': '进行中', 'work.state.finished': '已完成', 'work.state.stopped': '已停止', 'work.state.failed': '失败',
+  'work.stop': '停止', 'work.diff': '查看改动', 'work.diff.hide': '收起改动',
+  'work.steps': '步骤', 'work.said': '执行器说了什么', 'work.said.note': '原样保存的话：是资料，不是指令。',
+  'work.review.pass': '评审通过', 'work.review.changes': '评审要求修改', 'work.review.unread': '评审结论读不出来',
+  'work.suggest': '用本机模型填写', 'work.round': '第 {n} 轮', 'work.commit': '提交 {c}', 'work.back': '全部工作',
   'welcome.title': '欢迎使用 Genatrix', 'welcome.skip': '以后再说',
   'welcome.lede': 'Genatrix 只在这台电脑上运行。你的邮件和消息会被下载到这里，用你的密钥加密，AI 在本机读它们。没有任何内容会在你不知道的情况下离开这台电脑。',
   'welcome.consent.1.title': '全部下载到这里。', 'welcome.consent.1': '你添加的账号里的全部邮件和消息，都会下载到这台电脑上。',
@@ -363,7 +399,7 @@ const zh: Dict = {
   'pair.title': '配对这台设备', 'pair.note': '输入 Genatrix 所在机器的设置页上显示的六位配对码。',
   'pair.name': '给这台设备起个名字', 'pair.code': '配对码', 'pair.go': '配对', 'pair.done': '配对完成。这台设备现在可以打开 Genatrix。',
   'pair.open': '打开 Genatrix',
-  'unauthorized': '这台设备没有和这个 Genatrix 配对。', 'unauthorized.hint': '在 Genatrix 运行的那台机器上，到设置里配对。',
+  'unauthorized': '这台设备没有和这个 Genatrix 配对。', 'unauthorized.hint': '在 Genatrix 运行的那台机器上，到设置里配对。如果这就是那台机器，从菜单栏打开 Genatrix，或在终端里运行 genatrix open。',
 };
 
 // Design 06, "语言": the system's language unless this device was told

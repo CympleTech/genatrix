@@ -17,6 +17,12 @@ pub enum PolicyError {
         /// The level on the ticket.
         level: &'static str,
     },
+    /// The purpose is not one any model serves (design 13: `delegate`).
+    #[error("purpose `{purpose}` is not served by a model")]
+    NotForModels {
+        /// The purpose.
+        purpose: &'static str,
+    },
     /// This kind of work never leaves the device.
     #[error("purpose `{purpose}` is always local")]
     PurposeIsLocalOnly {
@@ -30,6 +36,11 @@ pub enum PolicyError {
 /// Local providers accept anything: nothing leaves the machine, so there is
 /// nothing to refuse. Cloud providers must pass both checks.
 pub fn check_request(location: Location, ticket: &Ticket) -> Result<(), PolicyError> {
+    if !ticket.purpose.is_for_models() {
+        return Err(PolicyError::NotForModels {
+            purpose: ticket.purpose.as_str(),
+        });
+    }
     if location == Location::Local {
         return Ok(());
     }
@@ -52,7 +63,7 @@ pub fn check_request(location: Location, ticket: &Ticket) -> Result<(), PolicyEr
 /// place.
 #[must_use]
 pub fn cloud_is_possible(purpose: Purpose, level: TicketLevel) -> bool {
-    purpose.may_use_cloud() && level.may_leave_device()
+    purpose.is_for_models() && purpose.may_use_cloud() && level.may_leave_device()
 }
 
 #[cfg(test)]
@@ -71,6 +82,19 @@ mod tests {
             nonce: [0; 16],
             expires_at: Utc::now() + Duration::seconds(30),
         }
+    }
+
+    /// Design 13: a delegation ticket is for an executor; no model, local
+    /// or cloud, is ever sent its bytes through the gateway.
+    #[test]
+    fn the_gateway_refuses_delegation_everywhere() {
+        for location in [Location::Local, Location::Cloud] {
+            for level in [TicketLevel::Public, TicketLevel::Redacted] {
+                let err = check_request(location, &ticket(Purpose::Delegate, level)).unwrap_err();
+                assert!(matches!(err, PolicyError::NotForModels { .. }), "{err:?}");
+            }
+        }
+        assert!(!cloud_is_possible(Purpose::Delegate, TicketLevel::Public));
     }
 
     #[test]

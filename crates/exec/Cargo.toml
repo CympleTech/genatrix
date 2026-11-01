@@ -1,0 +1,35 @@
+[package]
+name = "genatrix-exec"
+description = "The executor host: drives an executor over ACP inside an approved scope (design 13)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "genatrix-exec"
+path = "src/main.rs"
+
+# A stand-in executor that speaks ACP, for the tests. Never installed.
+[[bin]]
+name = "genatrix-exec-fake-agent"
+path = "src/bin/fake_agent.rs"
+
+[dependencies]
+genatrix-dispatch.workspace = true
+genatrix-keys.workspace = true
+genatrix-llm.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

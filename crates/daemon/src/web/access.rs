@@ -1,20 +1,22 @@
 //! Who may reach the interface.
 //!
 //! Design: `docs/design/06-interface.md`, "形态"; `docs/design/08-storage.md`,
-//! the network boundary; `docs/design/02-trust-boundary.md`, invariant 11.
+//! the network boundary; `docs/design/02-trust-boundary.md`, invariants 11
+//! and 12, as revised by `docs/design/13-executors.md` (ruling 4).
 //!
-//! On loopback, everyone who can open a socket to it is already someone with
-//! an account on this machine, and design 08 puts an attacker with that
-//! outside the threat model. So loopback asks for nothing.
+//! This machine is a request from loopback that carries the local key (see
+//! [`super::local`]). Loopback alone is not: another program on this machine,
+//! or a web page that rebinds its name to 127.0.0.1, is not the user.
 //!
-//! Any other address is a paired device or nobody. A device is paired once,
+//! Anything else is a paired device or nobody. A device is paired once,
 //! from this machine: the settings page asks for a code, the phone opens the
 //! page with the code, and the page trades it for a long-lived secret kept in
 //! a cookie. The core keeps a hash of the secret, never the secret. A
-//! revoked device is refused like a stranger. The page itself, and the one
-//! endpoint that trades a code for a secret, are open to everyone, because a
-//! phone has to be able to load the page to pair; every `/api/` route besides
-//! that is behind the check.
+//! revoked device is refused like a stranger. The page itself, the one
+//! endpoint that trades a code for a secret, and the one-time link that signs
+//! a browser on this machine in are open to everyone, because a phone has to
+//! be able to load the page to pair; every `/api/` route besides that is
+//! behind the check.
 //!
 //! What this does not do, said plainly: TLS. The daemon is meant to be bound
 //! to a private network's address, where the tunnel encrypts and identifies;
@@ -24,7 +26,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::extract::{ConnectInfo, Request, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use sha2::{Digest, Sha256};
@@ -38,7 +40,7 @@ pub const COOKIE: &str = "genatrix_device";
 /// Where a request came from, as far as access is concerned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Caller {
-    /// This machine.
+    /// This machine: loopback, carrying the local key.
     Local,
     /// A paired device, by id.
     Device(String),
@@ -51,13 +53,15 @@ pub async fn guard(
     mut request: Request,
     next: Next,
 ) -> Response {
-    if peer.ip().is_loopback() {
+    let loopback = peer.ip().is_loopback();
+    if loopback && system.local.presented(&request) {
         request.extensions_mut().insert(Caller::Local);
         return next.run(request).await;
     }
     let path = request.uri().path();
-    // The page and its assets, and the pairing exchange: open, so that a
-    // phone with a code can get as far as using it. Nothing in them is data.
+    // The page and its assets, the pairing exchange, and the one-time link
+    // that signs a browser on this machine in: open, so that a phone with a
+    // code can get as far as using it. Nothing in them is data.
     if !path.starts_with("/api/") || path == "/api/pair" {
         return next.run(request).await;
     }
@@ -66,14 +70,14 @@ pub async fn guard(
             request.extensions_mut().insert(Caller::Device(id));
             next.run(request).await
         }
-        None => refused(),
+        None => refused(loopback),
     }
 }
 
 /// The paired device a request comes from, if its cookie names one that is
 /// still active and the secret matches.
 pub fn device_of(system: &System, request: &Request) -> Option<String> {
-    let cookie = cookie_value(request, COOKIE)?;
+    let cookie = cookie_value(request.headers(), COOKIE)?;
     let (id, secret) = cookie.split_once('.')?;
     let device = system.store.get_device(id).ok().flatten()?;
     if !device.is_active() {
@@ -100,18 +104,23 @@ pub fn hash_secret(secret: &str) -> String {
     hex::encode(Sha256::digest(secret.as_bytes()))
 }
 
-fn refused() -> Response {
+fn refused(loopback: bool) -> Response {
+    let body = if loopback {
+        r#"{"error":"open Genatrix from the menu bar, or run `genatrix open` in a terminal on this machine"}"#
+    } else {
+        r#"{"error":"this device is not paired with this Genatrix; pair it from the settings page on the machine it runs on"}"#
+    };
     (
         StatusCode::UNAUTHORIZED,
         [(header::CONTENT_TYPE, "application/json")],
-        r#"{"error":"this device is not paired with this Genatrix; pair it from the settings page on the machine it runs on"}"#,
+        body,
     )
         .into_response()
 }
 
-fn cookie_value(request: &Request, name: &str) -> Option<String> {
-    request
-        .headers()
+/// One cookie's value from a request's headers.
+pub(super) fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
         .get(header::COOKIE)?
         .to_str()
         .ok()?
@@ -133,16 +142,27 @@ mod tests {
 
     const LAN: SocketAddr =
         SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)), 50000);
+    /// This machine: loopback, and `call` adds the local key.
     const HERE: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), 50000);
+    /// Loopback without the key: another program on this machine, or a page
+    /// in the browser that rebinds its name to 127.0.0.1.
+    const BARE: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), 50001);
 
-    fn app(system: &Arc<System>) -> axum::Router {
-        axum::Router::new()
+    struct Client {
+        router: axum::Router,
+        key: String,
+    }
+
+    fn app(system: &Arc<System>) -> Client {
+        let router = axum::Router::new()
             .merge(super::super::api::routes())
             .merge(super::super::devices::routes())
             .merge(super::super::setup::routes())
             .merge(super::super::agents::routes())
             .merge(super::super::junk::routes())
             .merge(super::super::quiet::routes())
+            .merge(super::super::local::routes())
+            .merge(super::super::work::routes())
             .fallback(axum::routing::get(|| async { "page" }))
             .layer(axum::middleware::from_fn_with_state(
                 Arc::clone(system),
@@ -152,11 +172,15 @@ mod tests {
                 bind: std::net::IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 port: 7717,
             }))
-            .with_state(Arc::clone(system))
+            .with_state(Arc::clone(system));
+        Client {
+            router,
+            key: system.local.key().to_owned(),
+        }
     }
 
     async fn call(
-        app: &axum::Router,
+        app: &Client,
         from: SocketAddr,
         method: &str,
         path: &str,
@@ -164,6 +188,9 @@ mod tests {
         body: Option<serde_json::Value>,
     ) -> axum::response::Response {
         let mut request = HttpRequest::builder().method(method).uri(path);
+        if from == HERE {
+            request = request.header(super::super::local::HEADER, &app.key);
+        }
         if let Some(c) = cookie {
             request = request.header(header::COOKIE, c);
         }
@@ -176,7 +203,7 @@ mod tests {
         };
         let mut request = request;
         request.extensions_mut().insert(ConnectInfo(from));
-        app.clone().oneshot(request).await.unwrap()
+        app.router.clone().oneshot(request).await.unwrap()
     }
 
     async fn json(response: axum::response::Response) -> serde_json::Value {
@@ -219,7 +246,7 @@ mod tests {
                 .await
                 .status(),
             StatusCode::OK,
-            "loopback asks for nothing"
+            "this machine, with its key"
         );
     }
 
@@ -343,7 +370,7 @@ mod tests {
         assert!(devices[0]["revoked_at"].is_string());
     }
 
-    async fn paired_cookie(app: &axum::Router) -> String {
+    async fn paired_cookie(app: &Client) -> String {
         let started = json(call(app, HERE, "POST", "/api/pair/start", None, None).await).await;
         let code = started["code"].as_str().unwrap().to_owned();
         let paired = call(
@@ -494,5 +521,145 @@ mod tests {
         assert!(system.config.data_dir.exists());
         let models = json(call(&app, HERE, "GET", "/api/model", None, None).await).await;
         assert_eq!(models["models"].as_array().unwrap().len(), 2);
+    }
+
+    /// Design 02, invariants 11 and 12 as revised by design 13: loopback
+    /// without the local key is nobody. This is the program on this machine
+    /// that is not the user, and the page that rebinds its name to 127.0.0.1.
+    #[tokio::test]
+    async fn loopback_without_the_key_is_a_stranger() {
+        let (_dir, system) = crate::system::test_system();
+        let app = app(&system);
+        assert_eq!(
+            call(&app, BARE, "GET", "/", None, None).await.status(),
+            StatusCode::OK,
+            "the page itself is open"
+        );
+        for (method, path, body) in [
+            ("GET", "/api/status", None),
+            ("GET", "/api/actions", None),
+            (
+                "POST",
+                "/api/action/x/approve",
+                Some(serde_json::json!({"version": 1, "hash": "h", "nonce": "n"})),
+            ),
+            ("POST", "/api/pair/start", None),
+            (
+                "POST",
+                "/api/agents/install",
+                Some(serde_json::json!({"hash": "x"})),
+            ),
+            ("POST", "/api/local/link", None),
+        ] {
+            let r = call(&app, BARE, method, path, None, body).await;
+            assert_eq!(r.status(), StatusCode::UNAUTHORIZED, "{method} {path}");
+        }
+        let said = json(call(&app, BARE, "GET", "/api/status", None, None).await).await;
+        assert!(said["error"].as_str().unwrap().contains("genatrix open"));
+    }
+
+    /// The key is only worth anything from loopback: from another address
+    /// it is a leak, not this machine.
+    #[tokio::test]
+    async fn the_key_from_another_address_is_not_this_machine() {
+        let (_dir, system) = crate::system::test_system();
+        let app = app(&system);
+        let request = HttpRequest::builder()
+            .method("POST")
+            .uri("/api/pair/start")
+            .header(super::super::local::HEADER, system.local.key())
+            .body(Body::empty())
+            .unwrap();
+        let mut request = request;
+        request.extensions_mut().insert(ConnectInfo(LAN));
+        let r = app.router.clone().oneshot(request).await.unwrap();
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// A browser on this machine is signed in by a one-time link that
+    /// `genatrix open` makes; the cookie it gets is the key, and holds.
+    #[tokio::test]
+    async fn a_one_time_link_signs_a_browser_on_this_machine_in() {
+        let (_dir, system) = crate::system::test_system();
+        let app = app(&system);
+        let made = json(call(&app, HERE, "POST", "/api/local/link", None, None).await).await;
+        let token = made["token"].as_str().unwrap().to_owned();
+
+        // Not from another machine, and that try does not spend it.
+        let away = call(&app, LAN, "GET", &format!("/local/{token}"), None, None).await;
+        assert_eq!(away.status(), StatusCode::UNAUTHORIZED);
+
+        let followed = call(&app, BARE, "GET", &format!("/local/{token}"), None, None).await;
+        assert_eq!(followed.status(), StatusCode::SEE_OTHER);
+        let set = followed
+            .headers()
+            .get(header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(set.contains("SameSite=Strict") && set.contains("HttpOnly"));
+        let cookie = set.split(';').next().unwrap().to_owned();
+        assert_eq!(
+            cookie,
+            format!("{}={}", super::super::local::COOKIE, system.local.key())
+        );
+
+        // Once only.
+        let again = call(&app, BARE, "GET", &format!("/local/{token}"), None, None).await;
+        assert_eq!(again.status(), StatusCode::UNAUTHORIZED);
+
+        // The cookie makes that browser this machine: it can start a pairing.
+        let r = call(&app, BARE, "POST", "/api/pair/start", Some(&cookie), None).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        // The same cookie from another address is nothing.
+        let r = call(&app, LAN, "GET", "/api/status", Some(&cookie), None).await;
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+
+        // A paired phone cannot make such a link.
+        let phone = paired_cookie(&app).await;
+        let r = call(&app, LAN, "POST", "/api/local/link", Some(&phone), None).await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// Design 13: a project decides which vendors see a repository, so only
+    /// this machine files one; a paired phone may look and draft.
+    #[tokio::test]
+    async fn projects_are_filed_from_this_machine_only() {
+        let (_dir, system) = crate::system::test_system();
+        let app = app(&system);
+        let phone = paired_cookie(&app).await;
+        let project = serde_json::json!({
+            "kind": "project",
+            "text": "name = \"p\"\nrepo = \"/tmp/p\"\nexecutors = [\"codex\"]\n"
+        });
+        let r = call(
+            &app,
+            LAN,
+            "POST",
+            "/api/work/define",
+            Some(&phone),
+            Some(project.clone()),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        let r = call(&app, HERE, "POST", "/api/work/define", None, Some(project)).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let r = call(&app, LAN, "GET", "/api/work", Some(&phone), None).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let r = call(
+            &app,
+            LAN,
+            "POST",
+            "/api/work/draft",
+            Some(&phone),
+            Some(serde_json::json!({"project": "p", "recipe": "nope", "task": "x"})),
+        )
+        .await;
+        assert_eq!(
+            r.status(),
+            StatusCode::BAD_REQUEST,
+            "refused on its merits, not its origin"
+        );
     }
 }

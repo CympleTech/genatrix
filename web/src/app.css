@@ -342,6 +342,23 @@
   .card-fields dd { @apply m-0 break-words; }
   .card-fields dd.money { font-variant-numeric: tabular-nums; }
 
+  /* ---- work for executors (design 13) ---- */
+  .work-form { @apply flex flex-col gap-2.5; }
+  .work-form label { @apply flex flex-col gap-1 text-[13px] text-muted; }
+  .work-form label.quiet-toggle { @apply flex-row; }
+  .work-form select { @apply min-h-[38px] rounded-control border border-line bg-surface px-3 py-2 text-[15px] text-ink; }
+  .work .state.running { color: var(--accent-ink); }
+  .work .state.failed { color: var(--secret); }
+  .work .diff, .work .said {
+    @apply m-0 mt-2 max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-[12px] border border-line px-3.5 py-2.5 text-[12px] leading-[1.5];
+    background: var(--surface-2);
+  }
+  .work .said { @apply list-none text-[13px]; }
+  .work .said li { @apply border-b border-line py-1; }
+  .work .said li:last-child { border-bottom: 0; }
+  .work .said-thought { color: var(--muted); }
+  .work .said-asked { color: var(--muted); font-style: italic; }
+
   /* ---- categories (design 06) ---- */
   .quiet-toggle { @apply flex items-center gap-1.5 text-[13px] text-muted; white-space: nowrap; }
   .quiet-note { @apply mx-5 mb-0 mt-2; }

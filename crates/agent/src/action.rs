@@ -93,6 +93,57 @@ pub enum Effect {
         /// What the approval page shows.
         card: Card,
     },
+    /// Hand a piece of work to executors (design 13). The payload is the
+    /// task in the user's words; approving it approves those words going to
+    /// the recipe's executors, at this level, for this project's repository.
+    /// Executed by the core, which runs the recipe.
+    Dispatch {
+        /// The project's name.
+        project: String,
+        /// The project's hash when this was drafted.
+        project_hash: String,
+        /// The recipe's name.
+        recipe: String,
+        /// The recipe's hash: the steps that will run, fixed now.
+        recipe_hash: String,
+        /// Each role the recipe uses, with its hash: the prompts, fixed now.
+        roles: Vec<(String, String)>,
+        /// `public` or `personal`: the level the task is sent at. Only the
+        /// user lowers it.
+        level: String,
+        /// Each executor the recipe hands the work to, with its vendor.
+        executors: Vec<(String, String)>,
+    },
+    /// Push a dispatch's commits to a branch of their own (design 13).
+    /// Approval binds to the tip commit: later commits need a new approval.
+    PushBranch {
+        /// `github:<owner>/<name>`: which connector account pushes.
+        account: String,
+        /// The project.
+        project: String,
+        /// The dispatch the work came from.
+        dispatch: String,
+        /// The branch to push to.
+        branch: String,
+        /// The commit the work started from.
+        base: String,
+        /// The newest commit, as approved.
+        tip: String,
+    },
+    /// Open a pull request from a pushed branch (design 13). The payload is
+    /// the title on its first line and the description after it.
+    OpenPullRequest {
+        /// `github:<owner>/<name>`.
+        account: String,
+        /// The project.
+        project: String,
+        /// The dispatch the work came from.
+        dispatch: String,
+        /// The branch with the work.
+        branch: String,
+        /// The branch it is to be merged into.
+        base: String,
+    },
 }
 
 /// What the approval page shows for an agent's proposal: data only, drawn
@@ -147,6 +198,9 @@ impl Effect {
             Self::CreateEvent { .. } => "create_event",
             Self::WriteMemory { .. } => "write_memory",
             Self::Agent { .. } => "agent",
+            Self::Dispatch { .. } => "dispatch",
+            Self::PushBranch { .. } => "push_branch",
+            Self::OpenPullRequest { .. } => "open_pull_request",
         }
     }
 
@@ -157,15 +211,20 @@ impl Effect {
         match self {
             Self::SendMail { account, .. }
             | Self::SendMessage { account, .. }
-            | Self::CreateEvent { account } => Some(account),
-            Self::WriteMemory { .. } | Self::Agent { .. } => None,
+            | Self::CreateEvent { account }
+            | Self::PushBranch { account, .. }
+            | Self::OpenPullRequest { account, .. } => Some(account),
+            Self::WriteMemory { .. } | Self::Agent { .. } | Self::Dispatch { .. } => None,
         }
     }
 
     /// Whether a connector may execute this, as opposed to the core.
     #[must_use]
     pub const fn runs_in_a_connector(&self) -> bool {
-        !matches!(self, Self::WriteMemory { .. } | Self::Agent { .. })
+        !matches!(
+            self,
+            Self::WriteMemory { .. } | Self::Agent { .. } | Self::Dispatch { .. }
+        )
     }
 
     /// Whether the user may edit the payload. An agent's payload is what
@@ -173,7 +232,7 @@ impl Effect {
     /// nothing the card does not show.
     #[must_use]
     pub const fn editable(&self) -> bool {
-        !matches!(self, Self::Agent { .. })
+        !matches!(self, Self::Agent { .. } | Self::PushBranch { .. })
     }
 }
 
@@ -825,6 +884,38 @@ mod tests {
         };
         assert!(!effect.runs_in_a_connector());
         assert_eq!(effect.account(), None);
+    }
+
+    /// Design 13: a dispatch runs in the core; a push is approved as it is,
+    /// bound to its tip, and goes through the account that pushes.
+    #[test]
+    fn executor_effects_go_where_they_belong() {
+        let dispatch = Effect::Dispatch {
+            project: "p".into(),
+            project_hash: "h".into(),
+            recipe: "implement".into(),
+            recipe_hash: "r".into(),
+            roles: vec![("backend".into(), "b".into())],
+            level: "public".into(),
+            executors: vec![("claude-code".into(), "anthropic".into())],
+        };
+        assert!(!dispatch.runs_in_a_connector());
+        assert!(
+            dispatch.editable(),
+            "the task is the user's words to change"
+        );
+        assert_eq!(dispatch.account(), None);
+        let push = Effect::PushBranch {
+            account: "github:o/r".into(),
+            project: "p".into(),
+            dispatch: "d".into(),
+            branch: "genatrix/d".into(),
+            base: "a".into(),
+            tip: "b".into(),
+        };
+        assert!(push.runs_in_a_connector());
+        assert!(!push.editable());
+        assert_eq!(push.account(), Some("github:o/r"));
     }
 
     #[test]

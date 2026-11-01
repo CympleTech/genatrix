@@ -350,3 +350,139 @@ fn a_pasted_verification_code_makes_the_users_own_words_secret() {
         Level::Personal
     );
 }
+
+fn delegation(level: Level, personal_allowed: bool, text: &str) -> genatrix_gate::gate::Delegation {
+    genatrix_gate::gate::Delegation {
+        executor: "claude-code".into(),
+        vendor: "anthropic".into(),
+        initiator: Initiator::Dispatch {
+            dispatch: "d1".into(),
+            step: "implement".into(),
+        },
+        items: vec![],
+        level,
+        personal_allowed,
+        identities: vec![Identity {
+            key: "p1".into(),
+            names: vec!["Alice Chen".into()],
+        }],
+        text: text.into(),
+    }
+}
+
+/// Design 13, proposed invariant 22: text for an executor is gated like a
+/// cloud call, and the ticket is for exactly the bytes the gate wrote down.
+#[test]
+fn delegation_is_written_down_then_ticketed_for_the_exact_bytes() {
+    let f = fixture(false);
+    let p = f
+        .gate
+        .prepare_delegation(&delegation(
+            Level::Public,
+            false,
+            "Add a --json flag to the export command.",
+        ))
+        .unwrap();
+    assert_eq!(p.decision, Decision::Allowed);
+    let records = egress_records(&f.ledger);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].purpose, "delegate");
+    assert_eq!(records[0].location, "cloud");
+    assert_eq!(records[0].target, "claude-code");
+    assert_eq!(
+        records[0].payload.as_deref(),
+        Some("Add a --json flag to the export command.")
+    );
+
+    // The host's check: the delegation key, these bytes, this executor.
+    let store = TicketStore::new();
+    let key = f.gate.delegation_key();
+    let t = store
+        .admit(Some(&p.ticket), &p.body, "claude-code", key)
+        .unwrap();
+    assert_eq!(t.purpose, Purpose::Delegate);
+    assert_eq!(t.level, TicketLevel::Public);
+    // Other bytes, another executor, the gateway's key, a second use: no.
+    let again = f
+        .gate
+        .prepare_delegation(&delegation(Level::Public, false, "x"))
+        .unwrap();
+    assert!(
+        store
+            .admit(Some(&again.ticket), b"y", "claude-code", key)
+            .is_err()
+    );
+    assert!(
+        store
+            .admit(Some(&again.ticket), b"x", "codex", key)
+            .is_err()
+    );
+    assert!(
+        store
+            .admit(Some(&again.ticket), b"x", "claude-code", &ticket_key())
+            .is_err()
+    );
+    assert!(
+        store
+            .admit(Some(&p.ticket), &p.body, "claude-code", key)
+            .is_err()
+    );
+}
+
+/// Design 02's matrix for an executor, with no local fallback: secret never
+/// goes; personal goes redacted only where the project allows it; and a
+/// refusal is recorded like a send.
+#[test]
+fn delegation_follows_the_matrix_and_refuses_rather_than_falls_back() {
+    let f = fixture(true);
+    let secret = f
+        .gate
+        .prepare_delegation(&delegation(Level::Secret, true, "fix the tax bug"));
+    assert!(matches!(secret, Err(GateError::DelegationRefused { .. })));
+    // A verification code in the user's own words is secret too.
+    let typed = f.gate.prepare_delegation(&delegation(
+        Level::Public,
+        true,
+        "here is the code: 482913, log in and check",
+    ));
+    assert!(matches!(typed, Err(GateError::DelegationRefused { .. })));
+
+    let closed = f.gate.prepare_delegation(&delegation(
+        Level::Personal,
+        false,
+        "Alice Chen reported the export breaks",
+    ));
+    assert!(
+        matches!(closed, Err(GateError::DelegationRefused { .. })),
+        "the global cloud switch does not open delegation"
+    );
+
+    let open = f
+        .gate
+        .prepare_delegation(&delegation(
+            Level::Personal,
+            true,
+            "Alice Chen reported the export breaks",
+        ))
+        .unwrap();
+    assert_eq!(open.decision, Decision::AllowedRedacted);
+    let sent = String::from_utf8(open.body.to_vec()).unwrap();
+    assert!(!sent.contains("Alice Chen"), "{sent}");
+
+    let records = egress_records(&f.ledger);
+    assert_eq!(records.len(), 4);
+    assert_eq!(
+        records
+            .iter()
+            .filter(|r| r.decision == Decision::Refused)
+            .count(),
+        3
+    );
+    assert!(
+        records
+            .iter()
+            .filter(|r| r.decision == Decision::Refused)
+            .all(|r| r.payload.is_none()),
+        "nothing refused is kept as if it had been sent"
+    );
+}

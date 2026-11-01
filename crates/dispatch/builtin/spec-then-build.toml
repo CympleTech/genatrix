@@ -1,0 +1,36 @@
+name = "spec-then-build"
+title = "Write the specification, build it, review, then propose a pull request"
+
+[[step]]
+id = "spec"
+role = "product"
+executor = "claude-code"
+produces = "notes"
+
+[[step]]
+id = "implement"
+role = "backend"
+executor = "claude-code"
+produces = "commits"
+inputs = ["spec"]
+
+[[step]]
+id = "review"
+role = "test"
+executor = "codex"
+produces = "verdict"
+inputs = ["spec"]
+
+[[step]]
+id = "fix"
+role = "backend"
+executor = "claude-code"
+produces = "commits"
+inputs = ["spec", "review"]
+
+[loop]
+between = ["review", "fix"]
+max = 2
+
+[finish]
+propose = ["push_branch", "open_pull_request"]

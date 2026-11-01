@@ -168,6 +168,73 @@ impl Actions {
     }
 
     /// One action, if it exists.
+    /// File a proposal the user wrote themselves, such as a dispatch's task
+    /// (design 13): the same as [`Self::propose`], with the user as author.
+    pub fn propose_by_user(
+        &self,
+        store: &Store,
+        ledger: &Ledger,
+        run_id: &str,
+        effect: Effect,
+        payload: String,
+        rationale: String,
+    ) -> anyhow::Result<Action> {
+        let mut action = Action::propose(run_id, effect, payload, rationale, Vec::new());
+        if let Some(v) = action.versions.first_mut() {
+            v.author = genatrix_agent::action::Author::User;
+        }
+        Self::save(store, &action)?;
+        Self::record(ledger, &action, "proposed", "user", "")?;
+        Ok(action)
+    }
+
+    /// Write an action the core changed outside the usual transitions, such
+    /// as a dispatch the user marked public, which made a new version.
+    pub fn save_changed(
+        &self,
+        store: &Store,
+        ledger: &Ledger,
+        action: &Action,
+        detail: &str,
+    ) -> anyhow::Result<()> {
+        Self::save(store, action)?;
+        Self::record(ledger, action, "edited", "user", detail)
+    }
+
+    /// Hand over one approved action for execution: the token is spent and
+    /// the action is in the executor's hands. `None` if it is not approved
+    /// or its token is gone.
+    pub fn take(
+        &self,
+        store: &Store,
+        ledger: &Ledger,
+        id: &str,
+        by: &str,
+    ) -> anyhow::Result<Option<(Action, Version, ExecutionToken)>> {
+        let Some(mut action) = self.get(store, id)? else {
+            return Ok(None);
+        };
+        let Some(token) = action.token_for_execution() else {
+            return Ok(None);
+        };
+        match action.begin_execution(&token, Utc::now()) {
+            Ok(version) => {
+                Self::save(store, &action)?;
+                Self::record(ledger, &action, "executing", "core", by)?;
+                self.handed
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(action.id.clone(), token.expose().to_owned());
+                Ok(Some((action, version, token)))
+            }
+            Err(e) => {
+                Self::save(store, &action)?;
+                Self::record(ledger, &action, "refused", "core", e.to_string())?;
+                Ok(None)
+            }
+        }
+    }
+
     pub fn get(&self, store: &Store, id: &str) -> anyhow::Result<Option<Action>> {
         let Some(stored) = store.get_action(id)? else {
             return Ok(None);

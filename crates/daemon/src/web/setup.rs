@@ -69,6 +69,8 @@ struct SetupView {
     telegram: bool,
 }
 
+// A handler's refusal is the response itself; boxing it buys nothing.
+#[allow(clippy::result_large_err)]
 async fn view(
     State(system): State<Arc<System>>,
     Extension(caller): Extension<Caller>,

@@ -3,7 +3,8 @@
 //! Design: `docs/design/06-interface.md`, "形态". A code is made on this
 //! machine and lives a few minutes; a phone that presents it gets a device
 //! secret in a cookie and is a paired device from then on. Codes are made
-//! only from loopback, used once, and there is only ever one live code, so
+//! only by this machine (loopback with the local key, see [`super::local`]),
+//! used once, and there is only ever one live code, so
 //! guessing is a six-digit lottery with one ticket per five minutes.
 
 use std::sync::{Arc, Mutex};

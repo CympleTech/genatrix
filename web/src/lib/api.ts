@@ -70,7 +70,37 @@ export interface Action {
   editable: boolean;
   /** An agent's proposal: data for the one fixed template (design 11). */
   card: Card | null;
+  /** Work for executors: where it goes and who sees what (design 13). */
+  facts: { label: string; value: string }[];
+  /** A dispatch's level: `public` or `personal`. */
+  level: string | null;
 }
+export interface WorkProject {
+  name: string; github: string | null; base: string; executors: string[];
+  commands: string[]; network: boolean; delegate_personal: boolean;
+}
+export interface WorkRecipe {
+  name: string; title: string; rounds: number | null;
+  steps: { id: string; role: string; executor: string; produces: string }[];
+}
+export interface Dispatch {
+  id: string; project: string; recipe: string; state: string; level: string; branch: string;
+  base: string | null; tip: string | null; review_passed: boolean | null; detail: string | null;
+  started_ms: number; ended_ms: number | null;
+}
+export interface WorkOverview {
+  projects: WorkProject[]; recipes: WorkRecipe[];
+  roles: { name: string; title: string; may: string[] }[];
+  executors: { name: string; vendor: string }[];
+  dispatches: Dispatch[]; github: boolean; local: boolean;
+}
+export interface WorkStep {
+  seq: number; step: string; round: number; role: string; executor: string; state: string;
+  stop: string | null; answer: string | null; verdict: { pass: boolean; notes: string } | null;
+  commit_id: string | null; error: string | null; started_ms: number; ended_ms: number | null;
+}
+export interface WorkEvent { seq: number; n: number; at_ms: number; kind: string; text: string }
+export interface WorkDetail { dispatch: Dispatch; steps: WorkStep[]; events: WorkEvent[] }
 export type CardValue =
   | { type: 'text'; text: string }
   | { type: 'money'; cents: number; currency: string }

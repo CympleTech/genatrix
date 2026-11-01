@@ -99,6 +99,19 @@ impl Config {
         self.data_dir.join("run").join("ticket.key")
     }
 
+    /// Which executors there are and where their directories are (design 13).
+    #[must_use]
+    pub fn executors_path(&self) -> PathBuf {
+        self.data_dir.join("executors.toml")
+    }
+
+    /// The key that makes a request from this machine the user's: readable
+    /// by this user only (design 02, invariant 11).
+    #[must_use]
+    pub fn local_key_path(&self) -> PathBuf {
+        self.data_dir.join("run").join("local.key")
+    }
+
     /// Create the directories this layout needs.
     pub fn create_dirs(&self) -> std::io::Result<()> {
         for dir in [

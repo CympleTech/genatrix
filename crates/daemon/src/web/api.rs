@@ -910,8 +910,14 @@ pub(super) struct ActionView {
     editable: bool,
     /// For an agent's proposal: what the fixed template shows.
     card: Option<genatrix_agent::Card>,
+    /// For work handed to executors: where it goes and who sees what,
+    /// shown above the draft (design 13, "第一层：派单").
+    facts: Vec<crate::executors::draft::Fact>,
+    /// For a dispatch: the level its task goes at, `public` or `personal`.
+    level: Option<String>,
 }
 
+#[allow(clippy::too_many_lines)] // one view of every kind of action
 pub(super) fn action_view(
     system: &System,
     a: &genatrix_agent::Action,
@@ -944,6 +950,32 @@ pub(super) fn action_view(
         genatrix_agent::Effect::Agent { name, label, .. } => {
             (format!("{name} · {label}"), String::new())
         }
+        genatrix_agent::Effect::Dispatch {
+            project, recipe, ..
+        } => (format!("{project} · {recipe}"), String::new()),
+        genatrix_agent::Effect::PushBranch {
+            account, branch, ..
+        } => (
+            format!("{} · {branch}", account.trim_start_matches("github:")),
+            account.clone(),
+        ),
+        genatrix_agent::Effect::OpenPullRequest {
+            account,
+            branch,
+            base,
+            ..
+        } => (
+            format!(
+                "{} · {branch} → {base}",
+                account.trim_start_matches("github:")
+            ),
+            account.clone(),
+        ),
+    };
+    let facts = crate::executors::draft::facts(system, &a.effect);
+    let level = match &a.effect {
+        genatrix_agent::Effect::Dispatch { level, .. } => Some(level.clone()),
+        _ => None,
     };
     let card = match &a.effect {
         genatrix_agent::Effect::Agent { card, .. } => Some(card.clone()),
@@ -989,6 +1021,8 @@ pub(super) fn action_view(
         result,
         editable: a.effect.editable(),
         card,
+        facts,
+        level,
     }
 }
 

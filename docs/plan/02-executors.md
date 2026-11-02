@@ -13,7 +13,7 @@ crates/dispatch            projects, roles, recipes (closed schemas), the built-
                            the permission scope, prompt envelopes; pure, no I/O
 crates/exec                genatrix-exec: the executor host; a small ACP client, the ticket check,
                            the git work (mirror, workspace, commit, bundle); a fake ACP agent for tests
-crates/connector-github    genatrix-github: one-shot, sandboxed; pushes with git, opens pull requests
+crates/connectors/github   genatrix-github: one-shot, sandboxed; pushes with git, opens pull requests
 crates/daemon/src/executors  config, definitions, drafts, the runner, the GitHub runner, the terminal,
                            model-filled drafts
 crates/daemon/src/web/work.rs  the page's API;  web/src/pages/Work.svelte  the page

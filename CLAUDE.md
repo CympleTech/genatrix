@@ -22,7 +22,9 @@ Each crate's root doc comment names the design document it implements.
 
 Dependencies point downward only: daemon → agent → gate → ledger/store → model,
 with `keys` at the bottom. The gate also depends on `llm` for the egress ticket
-type. Connectors depend only on `model` and the connector protocol crate.
+type. Connectors live under `crates/connectors/`: `protocol` is the connector
+protocol crate, beside one directory per connector. They depend only on `model`
+and the protocol crate.
 
 `vendor/crabllm/` is a pinned third-party tree with its own `CLAUDE.md` and
 style rules. Those apply to that code, not to Genatrix. Local changes to it are
@@ -46,7 +48,7 @@ without the wasm target.
 Executors (design 13): `crates/dispatch` decides (projects, roles, recipes,
 the step machine, the permission scope) and touches nothing; `crates/exec`
 is the executor host, `genatrix-exec`, which drives Claude Code or Codex
-over ACP as the system user `_genatrix_exec`; `crates/connector-github` is
+over ACP as the system user `_genatrix_exec`; `crates/connectors/github` is
 `genatrix-github`, one sandboxed process per approved push or pull request.
 The core's side is `crates/daemon/src/executors/`.
 

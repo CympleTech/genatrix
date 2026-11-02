@@ -1,6 +1,25 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = [
+    "crates/agent",
+    "crates/connectors/github",
+    "crates/connectors/imap",
+    "crates/connectors/protocol",
+    "crates/connectors/telegram",
+    "crates/daemon",
+    "crates/dispatch",
+    "crates/exec",
+    "crates/gate",
+    "crates/host",
+    "crates/infer",
+    "crates/keys",
+    "crates/ledger",
+    "crates/llm",
+    "crates/model",
+    "crates/profile",
+    "crates/store",
+    "crates/vec",
+]
 exclude = ["vendor"]
 
 [workspace.package]
@@ -21,13 +40,13 @@ genatrix-gate = { path = "crates/gate" }
 genatrix-agent = { path = "crates/agent" }
 genatrix-profile = { path = "crates/profile" }
 genatrix-llm = { path = "crates/llm" }
-genatrix-connector = { path = "crates/connector" }
-genatrix-connector-imap = { path = "crates/connector-imap" }
-genatrix-connector-telegram = { path = "crates/connector-telegram" }
+genatrix-connector = { path = "crates/connectors/protocol" }
+genatrix-connector-imap = { path = "crates/connectors/imap" }
+genatrix-connector-telegram = { path = "crates/connectors/telegram" }
 genatrix-host = { path = "crates/host" }
 genatrix-dispatch = { path = "crates/dispatch" }
 genatrix-exec = { path = "crates/exec" }
-genatrix-connector-github = { path = "crates/connector-github" }
+genatrix-connector-github = { path = "crates/connectors/github" }
 
 # vendored crabllm (see vendor/crabllm/GENATRIX-VENDOR.md)
 crabllm-core = { path = "vendor/crabllm/crates/core" }

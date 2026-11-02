@@ -130,6 +130,66 @@ fn a_rolled_back_database_is_caught_by_the_head_file() {
     }
 }
 
+/// Put the head file back to what it said after `entries` appends, as a
+/// failed head write after a successful append leaves it.
+fn head_left_behind(path: &std::path::Path, seq: i64, hash: &[u8; 32]) {
+    std::fs::write(
+        format!("{}.head", path.display()),
+        format!("{seq} {}\n", hex::encode(hash)),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_head_left_behind_by_a_failed_write_is_caught_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ledger.db");
+    let l = Ledger::open(&path, &key()).unwrap();
+    let first = l.append(kind::RUN, "r-1", &"start").unwrap();
+    l.append(kind::RUN_END, "r-1", &"ok").unwrap();
+    l.append(kind::RUN, "r-2", &"start").unwrap();
+    drop(l);
+    head_left_behind(&path, first.seq, &first.hash);
+
+    let l = Ledger::open(&path, &key()).unwrap();
+    assert_eq!(l.verify().unwrap().entries, 3);
+    assert_eq!(l.append(kind::RUN_END, "r-2", &"ok").unwrap().seq, 4);
+}
+
+#[test]
+fn a_head_at_the_root_is_caught_up_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ledger.db");
+    let l = Ledger::open(&path, &key()).unwrap();
+    l.append(kind::RUN, "r-1", &"start").unwrap();
+    drop(l);
+    head_left_behind(&path, 0, &[0; 32]);
+    assert_eq!(
+        Ledger::open(&path, &key())
+            .unwrap()
+            .verify()
+            .unwrap()
+            .entries,
+        1
+    );
+}
+
+#[test]
+fn a_head_behind_a_database_that_does_not_run_on_from_it_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ledger.db");
+    let l = Ledger::open(&path, &key()).unwrap();
+    l.append(kind::RUN, "r-1", &"start").unwrap();
+    l.append(kind::RUN_END, "r-1", &"ok").unwrap();
+    drop(l);
+    // The head names entry 1 with a hash the database does not have.
+    head_left_behind(&path, 1, &[7; 32]);
+    match Ledger::open(&path, &key()) {
+        Err(Error::HeadMismatch(_)) => {}
+        other => panic!("expected HeadMismatch, got {:?}", other.map(|_| ())),
+    }
+}
+
 #[test]
 fn reopen_continues_the_chain() {
     let dir = tempfile::tempdir().unwrap();

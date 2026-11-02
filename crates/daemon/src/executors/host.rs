@@ -77,7 +77,14 @@ async fn run(
     loop {
         match wire::read::<_, FromHost>(&mut stdout).await? {
             Some(FromHost::End(end)) => {
-                let _ = child.wait().await;
+                // The host exits once it has said this. Should it not, it
+                // is not waited on for ever: it has nothing left to say.
+                let waited =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await;
+                if waited.is_err() {
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
+                }
                 return Ok(end);
             }
             Some(frame) => {

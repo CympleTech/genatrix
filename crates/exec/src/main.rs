@@ -9,7 +9,21 @@ use genatrix_exec::wire::{self, FromHost, ToHost};
 use tokio::sync::{mpsc, oneshot};
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
+    // Exit as soon as the last word is written. Returning would wait for
+    // the reader of standard input, which the core keeps open, and the
+    // core waits for this process to end: neither would move.
+    let code = match serve().await {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("genatrix-exec: {e:#}");
+            1
+        }
+    };
+    std::process::exit(code);
+}
+
+async fn serve() -> anyhow::Result<()> {
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     let start = match wire::read::<_, ToHost>(&mut stdin).await? {
@@ -31,5 +45,6 @@ async fn main() -> anyhow::Result<()> {
     }
     let end = session.await?;
     wire::write(&mut stdout, &FromHost::End(end)).await?;
+    tokio::io::AsyncWriteExt::flush(&mut stdout).await?;
     Ok(())
 }

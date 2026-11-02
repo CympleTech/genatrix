@@ -40,6 +40,7 @@ pub fn routes() -> axum::Router<Arc<System>> {
         .route("/api/work/{id}", get(one))
         .route("/api/work/{id}/diff", get(diff))
         .route("/api/work/{id}/stop", post(stop))
+        .route("/api/work/{id}/push-again", post(push_again))
         .route("/api/action/{id}/level", post(level))
 }
 
@@ -320,7 +321,9 @@ async fn one(
         Ok(e) => e,
         Err(e) => return broke(&e),
     };
+    let push_again = crate::executors::github::can_push_again(&system, &id);
     Json(serde_json::json!({
+        "push_again": push_again,
         "dispatch": DispatchView::from(row),
         "steps": steps.into_iter().map(|s| StepRecord {
             verdict: s.verdict.as_deref().and_then(|v| serde_json::from_str(v).ok()),
@@ -359,6 +362,18 @@ async fn stop(State(system): Shared, Path(id): Path<String>) -> Response {
         Json(serde_json::json!({"stopping": true})).into_response()
     } else {
         refuse(StatusCode::CONFLICT, "this work is not running")
+    }
+}
+
+/// Offer a failed push again (design 13): a new action, approved like any.
+async fn push_again(State(system): Shared, Path(id): Path<String>) -> Response {
+    match crate::executors::github::push_again(&system, &id) {
+        Ok(Ok(a)) => {
+            let nonce = Some(system.actions.nonce_for(&a.id));
+            Json(action_view(&system, &a, nonce)).into_response()
+        }
+        Ok(Err(why)) => refuse(StatusCode::CONFLICT, why),
+        Err(e) => broke(&e),
     }
 }
 

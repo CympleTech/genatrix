@@ -54,6 +54,13 @@ pub struct ExecutorEntry {
     /// The search path it runs with.
     #[serde(default = "default_path")]
     pub path: String,
+    /// The environment variable a sign-in token is given in, for an
+    /// executor whose own login cannot work as a user with no desktop: no
+    /// browser, no keychain. `genatrix exec login` then asks for the token
+    /// and leaves it in the executor's user's home, where the host reads it
+    /// when it starts the executor. Genatrix keeps no copy.
+    #[serde(default)]
+    pub token_env: Option<String>,
 }
 
 fn default_path() -> String {
@@ -94,8 +101,17 @@ fn default_executors() -> Vec<ExecutorEntry> {
                 "-y".into(),
                 "@zed-industries/claude-agent-acp".into(),
             ],
-            login: vec!["claude".into(), "/login".into()],
+            // The executor's user cannot see a `claude` installed in your
+            // home, so its own copy is fetched the way the adapter is.
+            login: vec![
+                "npx".into(),
+                "-y".into(),
+                "@anthropic-ai/claude-code".into(),
+                "/login".into(),
+            ],
             path: default_path(),
+            // Made with `claude setup-token`, as yourself.
+            token_env: Some("CLAUDE_CODE_OAUTH_TOKEN".into()),
         },
         ExecutorEntry {
             name: "codex".into(),
@@ -105,8 +121,14 @@ fn default_executors() -> Vec<ExecutorEntry> {
                 "-y".into(),
                 "@zed-industries/codex-acp".into(),
             ],
-            login: vec!["codex".into(), "login".into()],
+            login: vec![
+                "npx".into(),
+                "-y".into(),
+                "@openai/codex".into(),
+                "login".into(),
+            ],
             path: default_path(),
+            token_env: None,
         },
     ]
 }
@@ -333,7 +355,11 @@ pub fn file_definition(
     text: &str,
 ) -> anyhow::Result<(String, String)> {
     let name = match kind {
-        "project" => Project::parse(text)?.name,
+        "project" => {
+            let project = Project::parse(text)?;
+            check_repo(&project)?;
+            project.name
+        }
         "role" => Role::parse(text)?.name,
         "recipe" => Recipe::parse(text)?.name,
         other => anyhow::bail!("`{other}` is not a kind of definition"),
@@ -347,6 +373,43 @@ pub fn file_definition(
         chrono::Utc::now().timestamp_millis(),
     )?;
     Ok((name, hash))
+}
+
+/// A project's repository must be there, be a git repository, and have
+/// its base branch with a commit on it: work is cloned from that branch.
+/// Said when the project is filed, not when the first dispatch fails.
+pub fn check_repo(project: &Project) -> anyhow::Result<()> {
+    let repo = repo_path(project);
+    if !repo.is_dir() {
+        anyhow::bail!("`{}` does not exist on this computer", repo.display());
+    }
+    let is_repo = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["rev-parse", "--git-dir"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !is_repo {
+        anyhow::bail!(
+            "`{}` is not a git repository; clone the project there first",
+            repo.display()
+        );
+    }
+    let has_base = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["rev-parse", "--verify", "--quiet"])
+        .arg(format!("refs/heads/{}^{{commit}}", project.base))
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !has_base {
+        anyhow::bail!(
+            "`{}` has no branch `{}` with a commit on it; work starts from that branch",
+            repo.display(),
+            project.base
+        );
+    }
+    Ok(())
 }
 
 /// Mark dispatches that were running when the core stopped: they cannot be

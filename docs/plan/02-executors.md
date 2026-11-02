@@ -48,7 +48,7 @@ crates/daemon/src/web/work.rs  the page's API;  web/src/pages/Work.svelte  the p
 | E5 | Core: store, `Delegate` and the gate's delegation path, `Dispatch`, the runner | gate tests (matrix, refusals recorded, ticket bound to bytes); the whole recipe end to end with a scripted host; a recipe changed after approval does not change the work (26); executor words start nothing and are not items (27); stop; drafts refuse what could not be sent |
 | E6 | `genatrix-github`, `genatrix github login` | only the approved, still-filed commit is pushed, checked before the network (24); the sandbox profile |
 | E7 | The Work page; approval cards with facts and the public switch | type check and build; access: a paired phone may draft and watch, only this machine files a project |
-| E8 | `implement-and-review` end to end | with the scripted host, on a real git repository; not yet with real executors |
+| E8 | `implement-and-review` end to end | with the scripted host, on a real git repository. `implement` with the real Claude Code, through to a pushed branch and a merged pull request on a side repository; Codex and the review loop not yet run for real |
 | E9 | Drafts filled in by the local model (`Plan`) | the form is filled; nothing is drafted until the user presses draft |
 
 ## For the author, at the machine
@@ -64,7 +64,9 @@ In this order. Each line is one command or one look.
 7. On the Work page: a small task with `implement`, then `implement-and-review`. Watch the steps and what the executors say; read the diff; approve the push, then the pull request.
 8. Check the egress records page: every text sent to an executor is there, with its target.
 
-## Spike 05 (not yet run)
+## Spike 05 (partly run)
+
+First real run, `@zed-industries/claude-agent-acp` 0.23.1 as `_genatrix_exec`: `initialize` and `session/new` complete with `crates/exec/src/acp.rs` as written. Without a login, the adapter opens the session and refuses at `session/prompt` with `-32000`; the host now names `genatrix exec login` there too. The login commands fetch `@anthropic-ai/claude-code` and `@openai/codex` through `npx`, because a `claude` or `codex` installed in the author's home is not visible to the executor's user.
 
 One day, no code kept.
 

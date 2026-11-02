@@ -208,10 +208,65 @@ impl Ledger {
         match head.read()? {
             None => head.write(db_seq, &db_hash),
             Some((seq, hash)) if seq == db_seq && hash == db_hash => Ok(()),
+            // Appended to the database, then the head could not be written
+            // (a full disk, a killed process): the chain runs on from the
+            // head, unbroken. Catch the head up. Design 08, "链头".
+            Some((seq, hash)) if seq < db_seq && self.runs_on_from(seq, &hash)? => {
+                tracing::warn!(
+                    head = seq,
+                    database = db_seq,
+                    "the ledger's head file was behind; the chain runs on from it unbroken, \
+                     so the head was caught up"
+                );
+                head.write(db_seq, &db_hash)
+            }
             Some((seq, _)) => Err(Error::HeadMismatch(format!(
                 "head file says seq {seq}, database says seq {db_seq}"
             ))),
         }
+    }
+
+    /// Whether the entry at `seq` has `hash` and every entry after it links
+    /// to the one before and hashes to what it stores. `seq` 0 is the root.
+    fn runs_on_from(&self, seq: i64, hash: &Hash) -> Result<bool> {
+        let conn = self.conn();
+        let mut prev = if seq == 0 {
+            GENESIS
+        } else {
+            let at: Option<Vec<u8>> = conn
+                .query_row("SELECT hash FROM entry WHERE seq = ?1", [seq], |r| r.get(0))
+                .optional()?;
+            match at {
+                Some(h) => blob32("hash", h)?,
+                None => return Ok(false),
+            }
+        };
+        if prev != *hash {
+            return Ok(false);
+        }
+        let mut stmt = conn.prepare(
+            "SELECT seq, at, kind, subject, body, prev_hash, hash FROM entry
+             WHERE seq > ?1 ORDER BY seq",
+        )?;
+        let mut rows = stmt.query([seq])?;
+        let mut expected = seq + 1;
+        while let Some(r) = rows.next()? {
+            let at: String = r.get(1)?;
+            let kind: String = r.get(2)?;
+            let subject: String = r.get(3)?;
+            let body: String = r.get(4)?;
+            let prev_hash = blob32("prev_hash", r.get(5)?)?;
+            let stored = blob32("hash", r.get(6)?)?;
+            if r.get::<_, i64>(0)? != expected
+                || prev_hash != prev
+                || hash_entry(expected, &prev_hash, &at, &kind, &subject, &body) != stored
+            {
+                return Ok(false);
+            }
+            prev = stored;
+            expected += 1;
+        }
+        Ok(true)
     }
 
     fn conn(&self) -> MutexGuard<'_, Connection> {

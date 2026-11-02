@@ -29,7 +29,8 @@ pub enum ExecAction {
     },
     /// Say whether everything an executor needs is in place.
     Status,
-    /// Sign an executor in, as the executor's user, with its own login.
+    /// Sign an executor in, as the executor's user. Claude Code takes a
+    /// token you make with `claude setup-token`; Codex runs its own login.
     Login {
         /// The executor, as named in executors.toml.
         executor: String,
@@ -72,6 +73,12 @@ pub enum WorkAction {
     List,
     /// One dispatch: its steps and what the executors said.
     Show {
+        /// The dispatch's id.
+        id: String,
+    },
+    /// Offer a failed push again: the same commit to the same branch, as a
+    /// new action that waits for your approval.
+    PushAgain {
         /// The dispatch's id.
         id: String,
     },
@@ -206,10 +213,11 @@ pub fn user_exists_named(name: &str) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-/// Carry out `genatrix exec`.
+/// Carry out `genatrix exec`. Needs only the executor settings: setting up
+/// the executor's user neither opens the store nor asks for the master key.
 #[allow(clippy::too_many_lines)] // three commands, each read top to bottom
-pub fn exec(system: &System, action: ExecAction) -> anyhow::Result<()> {
-    let config = system.exec.config();
+pub fn exec(exec: &super::Exec, action: ExecAction) -> anyhow::Result<()> {
+    let config = exec.config();
     match action {
         ExecAction::Setup { print } => {
             let me = me()?;
@@ -334,6 +342,20 @@ pub fn exec(system: &System, action: ExecAction) -> anyhow::Result<()> {
                     "install it where the executor's user finds it, such as `brew install node`",
                 );
             }
+            for e in config.executors.iter().filter(|e| e.token_env.is_some()) {
+                let file = format!("$HOME/.genatrix/{}.env", e.name);
+                let has = sudo_ok
+                    && Command::new("/usr/bin/sudo")
+                        .args(["-n", "-H", "-u", EXEC_USER, "--", "/bin/sh", "-c"])
+                        .arg(format!("test -s \"{file}\""))
+                        .output()
+                        .is_ok_and(|o| o.status.success());
+                line(
+                    has,
+                    &format!("a sign-in token for {}", e.name),
+                    &format!("genatrix exec login {}", e.name),
+                );
+            }
             line(
                 super::github::token().is_some(),
                 "a GitHub token",
@@ -358,6 +380,9 @@ pub fn exec(system: &System, action: ExecAction) -> anyhow::Result<()> {
             let Some(e) = config.executor(&executor) else {
                 anyhow::bail!("no executor `{executor}` in executors.toml");
             };
+            if let Some(var) = &e.token_env {
+                return login_with_token(&e.name, var);
+            }
             if e.login.is_empty() {
                 anyhow::bail!("executors.toml gives no login command for `{executor}`");
             }
@@ -381,6 +406,52 @@ pub fn exec(system: &System, action: ExecAction) -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+/// Whether a token can be written into a shell assignment as it is: the
+/// file holding it is read by the executor's shell, so nothing in it may
+/// be shell text.
+fn token_is_plain(token: &str) -> bool {
+    !token.is_empty()
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+}
+
+/// Ask for a sign-in token and leave it in the executor's user's home,
+/// readable by that user only. It goes to `sudo` on standard input, never
+/// on a command line.
+fn login_with_token(name: &str, var: &str) -> anyhow::Result<()> {
+    println!("{name} signs in with a long-lived token, made as yourself:");
+    println!();
+    println!("  claude setup-token");
+    println!();
+    println!("Run that in another terminal, finish in the browser, and paste the token here.");
+    println!("It is kept in {EXEC_USER}'s home only; Genatrix keeps no copy.");
+    let token = rpassword::prompt_password("Token: ")?;
+    let token = token.trim();
+    if !token_is_plain(token) {
+        anyhow::bail!("that does not look like a token; nothing was stored");
+    }
+    let mut child = Command::new("/usr/bin/sudo")
+        .args(["-n", "-H", "-u", EXEC_USER, "--", "/bin/sh", "-c"])
+        .arg(
+            "umask 077 && mkdir -p \"$HOME/.genatrix\" && cat > \"$HOME/.genatrix/$0.env.tmp\" \
+             && mv \"$HOME/.genatrix/$0.env.tmp\" \"$HOME/.genatrix/$0.env\"",
+        )
+        .arg(name)
+        .stdin(std::process::Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("no stdin for sudo"))?
+        .write_all(format!("{var}={token}\n").as_bytes())?;
+    if !child.wait()?.success() {
+        anyhow::bail!("could not store the token as {EXEC_USER}; run `genatrix exec setup` first");
+    }
+    println!("Stored. {name} starts signed in from the next step on.");
+    Ok(())
 }
 
 /// Carry out `genatrix project|recipe|role`.
@@ -472,6 +543,10 @@ pub fn work(system: &System, action: WorkAction) -> anyhow::Result<()> {
                 println!("  [{}] {}: {}", e.seq, e.kind, e.text.replace('\n', " "));
             }
         }
+        WorkAction::PushAgain { id } => match super::github::push_again(system, &id)? {
+            Ok(a) => println!("Offered again as {}; it waits on the approvals page.", a.id),
+            Err(why) => anyhow::bail!(why),
+        },
         WorkAction::Stop { id } => {
             println!(
                 "A dispatch is stopped by the core running it: use the stop button on its page \
@@ -510,6 +585,16 @@ pub async fn github(system: Arc<System>, action: GithubAction) -> anyhow::Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_token_is_stored_only_when_it_cannot_be_shell_text() {
+        assert!(token_is_plain("sk-ant-oat01-AbC_123.x"));
+        assert!(!token_is_plain(""));
+        assert!(!token_is_plain("a b"));
+        assert!(!token_is_plain("x;rm -rf ~"));
+        assert!(!token_is_plain("$(id)"));
+        assert!(!token_is_plain("a'b"));
+    }
 
     #[test]
     fn setup_makes_a_hidden_user_with_no_password_and_a_narrow_rule() {

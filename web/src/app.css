@@ -346,7 +346,10 @@
   .work-form { @apply flex flex-col gap-2.5; }
   .work-form label { @apply flex flex-col gap-1 text-[13px] text-muted; }
   .work-form label.quiet-toggle { @apply flex-row; }
-  .work-form select { @apply min-h-[38px] rounded-control border border-line bg-surface px-3 py-2 text-[15px] text-ink; }
+  .work-form .field { @apply flex flex-col gap-1.5; }
+  .work-form .field-label { @apply text-[13px] text-muted; }
+  .work-form .field .chooser { @apply mt-0; }
+  .work-form .field-note { @apply m-0 text-[12px] leading-[1.5]; color: var(--faint); }
   .work .state.running { color: var(--accent-ink); }
   .work .state.failed { color: var(--secret); }
   .work .diff, .work .said {

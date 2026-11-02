@@ -94,6 +94,18 @@
     if (!id) return;
     try { await post(`/api/work/${id}/stop`); } catch (e: any) { error = e.message; }
   }
+  // A push GitHub refused (or you declined) is offered again as a new card.
+  // Its failure shows beside the button; `error` would replace the page.
+  let offered = $state<Action | null>(null);
+  let offerError = $state('');
+  async function pushAgain() {
+    if (!id) return;
+    offerError = '';
+    try {
+      offered = await post<Action>(`/api/work/${id}/push-again`);
+      if (detail) detail = { ...detail, push_again: false };
+    } catch (e: any) { offerError = e.message; }
+  }
   async function toggleDiff() {
     if (diff !== null) { diff = null; return; }
     try { diff = (await get<{ diff: string }>(`/api/work/${id}/diff`)).diff; } catch (e: any) { error = e.message; }
@@ -118,7 +130,10 @@
       <div class="chooser">
         {#if d.state === 'running'}<button type="button" class="choose lowers" onclick={stop}>{t('work.stop')}</button>{/if}
         {#if d.tip}<button type="button" class="choose" onclick={toggleDiff}>{diff === null ? t('work.diff') : t('work.diff.hide')}</button>{/if}
+        {#if detail.push_again}<button type="button" class="choose" onclick={pushAgain}>{t('work.push_again')}</button>{/if}
       </div>
+      {#if offerError}<p class="note error">{offerError}</p>{/if}
+      {#if offered}<ol class="rows cards"><ActionCard action={offered} /></ol>{/if}
       {#if diff !== null}<pre class="diff">{diff}</pre>{/if}
 
       <h4 class="card-label">{t('work.steps')}</h4>
@@ -148,8 +163,8 @@
     {/if}
   {:else}
     <p class="note">{t('work.lede')}</p>
-    {#if error}<p class="note error">{error}</p>{/if}
-    {#if notice}<p class="note">{notice}</p>{/if}
+    {#if error && !overview?.projects.length}<p class="note error">{error}</p>{/if}
+    {#if notice && !overview?.projects.length}<p class="note">{notice}</p>{/if}
     {#if !overview}<Empty text={t('loading')} />
     {:else}
       {#if !overview.github}<p class="note">{t('work.github.off')}</p>{/if}
@@ -158,25 +173,40 @@
       {#if overview.projects.length}
         <h2 class="group-title">{t('work.new')}</h2>
         <div class="work-form">
-          <label>{t('work.project')}
-            <select bind:value={project}>{#each overview.projects as p}<option value={p.name}>{p.name}</option>{/each}</select>
-          </label>
-          <label>{t('work.recipe')}
-            <select bind:value={recipe}>{#each overview.recipes as r}<option value={r.name}>{r.title}</option>{/each}</select>
-          </label>
-          {#if chosenRecipe}
-            <p class="note">{chosenRecipe.steps.map((s) => `${s.id} (${s.role}, ${s.executor})`).join(' → ')}{chosenRecipe.rounds ? ` · ≤ ${chosenRecipe.rounds}` : ''}</p>
-          {/if}
-          {#if chosenProject}
-            <p class="note">{chosenProject.github ?? '—'} · {chosenProject.executors.join(', ')}</p>
-          {/if}
+          <div class="field">
+            <span class="field-label" id="work-project">{t('work.project')}</span>
+            <div class="chooser" role="radiogroup" aria-labelledby="work-project">
+              {#each overview.projects as p}
+                <button type="button" class="choose" role="radio" aria-checked={project === p.name} class:is-on={project === p.name} onclick={() => (project = p.name)}>{p.name}</button>
+              {/each}
+            </div>
+            {#if chosenProject}
+              <p class="field-note">{chosenProject.github ?? '—'} · {chosenProject.executors.join(', ')}</p>
+            {/if}
+          </div>
+          <div class="field">
+            <span class="field-label" id="work-recipe">{t('work.recipe')}</span>
+            <div class="chooser" role="radiogroup" aria-labelledby="work-recipe">
+              {#each overview.recipes as r}
+                <button type="button" class="choose" role="radio" aria-checked={recipe === r.name} class:is-on={recipe === r.name} onclick={() => (recipe = r.name)}>{r.title}</button>
+              {/each}
+            </div>
+            {#if chosenRecipe}
+              <p class="field-note">{chosenRecipe.steps.map((s) => `${s.id} (${s.role}, ${s.executor})`).join(' → ')}{chosenRecipe.rounds ? ` · ≤ ${chosenRecipe.rounds}` : ''}</p>
+            {/if}
+          </div>
           <label>{t('work.task')}
             <textarea class="draft" bind:value={task} placeholder={t('work.task.placeholder')}></textarea>
           </label>
           <label class="quiet-toggle"><input type="checkbox" bind:checked={isPublic} /> {t('work.public')}</label>
           <div class="chooser">
-            <button type="button" class="choose primary" disabled={drafting || !task.trim() || !project} onclick={draft}>{t('work.draft')}</button>
-            <button type="button" class="choose" disabled={suggesting || !task.trim()} onclick={suggest}>{t('work.suggest')}</button>
+            <button type="button" class="choose primary" disabled={drafting || !task.trim() || !project} onclick={draft}>{drafting ? t('work.drafting') : t('work.draft')}</button>
+            <button type="button" class="choose" disabled={suggesting || !task.trim()} onclick={suggest}>{suggesting ? t('work.suggesting') : t('work.suggest')}</button>
+          </div>
+          <!-- What pressing a button did shows here, beside the button, not at the top of the page. -->
+          <div aria-live="polite">
+            {#if error}<p class="note error">{error}</p>{/if}
+            {#if notice}<p class="note">{notice}</p>{/if}
           </div>
         </div>
         {#if drafted}<ol class="rows cards"><ActionCard action={drafted} /></ol>{/if}

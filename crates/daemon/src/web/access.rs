@@ -629,9 +629,37 @@ mod tests {
         let (_dir, system) = crate::system::test_system();
         let app = app(&system);
         let phone = paired_cookie(&app).await;
+        // A project is filed only with a repository and its base branch.
+        let repo = tempfile::tempdir().unwrap();
+        for args in [
+            &["init", "--quiet", "-b", "main"][..],
+            &[
+                "-c",
+                "user.name=u",
+                "-c",
+                "user.email=u@example.com",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "first",
+            ],
+        ] {
+            let ok = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok);
+        }
         let project = serde_json::json!({
             "kind": "project",
-            "text": "name = \"p\"\nrepo = \"/tmp/p\"\nexecutors = [\"codex\"]\n"
+            "text": format!(
+                "name = \"p\"\nrepo = \"{}\"\nexecutors = [\"codex\"]\n",
+                repo.path().display()
+            )
         });
         let r = call(
             &app,

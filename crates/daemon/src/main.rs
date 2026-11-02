@@ -273,8 +273,7 @@ async fn main() -> anyhow::Result<()> {
             agents::terminal::command(std::sync::Arc::new(system), action).await
         }
         Command::Exec { action } => {
-            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
-            executors::terminal::exec(&system, action)
+            executors::terminal::exec(&executors::Exec::load(&config)?, action)
         }
         Command::Project { action } => {
             let system = System::open(config.clone(), ticket_key(&config, false)?)?;

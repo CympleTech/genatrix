@@ -56,7 +56,20 @@ fn start(workspace: &str, text: &str) -> Start {
 
 /// Run the host binary with this start; everything it said, and its end.
 async fn host(start: Start, cancel_after: Option<std::time::Duration>) -> (Vec<FromHost>, End) {
-    let mut child = Command::new(HOST)
+    host_with_home(start, cancel_after, None).await
+}
+
+/// The same, with the host's `HOME` set.
+async fn host_with_home(
+    start: Start,
+    cancel_after: Option<std::time::Duration>,
+    home: Option<&std::path::Path>,
+) -> (Vec<FromHost>, End) {
+    let mut command = Command::new(HOST);
+    if let Some(home) = home {
+        command.env("HOME", home);
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .kill_on_drop(true)
@@ -82,7 +95,14 @@ async fn host(start: Start, cancel_after: Option<std::time::Duration>) -> (Vec<F
     let mut said = Vec::new();
     loop {
         match wire::read::<_, FromHost>(&mut stdout).await.unwrap() {
-            Some(FromHost::End(end)) => return (said, end),
+            Some(FromHost::End(end)) => {
+                // Its last word said, the host is gone, though the core
+                // still holds its input open.
+                let exited =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await;
+                assert!(exited.is_ok(), "the host did not exit after its last word");
+                return (said, end);
+            }
             Some(other) => said.push(other),
             None => panic!("the host ended without a last word"),
         }
@@ -276,4 +296,43 @@ async fn an_executor_that_is_not_signed_in_says_how_to_fix_it() {
     let (_, end) = host(s, None).await;
     assert_eq!(end.stop, "failed");
     assert!(end.error.unwrap().contains("genatrix exec login fake"));
+
+    // Claude Code's adapter opens the session and asks at the prompt.
+    let mut s = start(&ws, "hello");
+    s.executor.command = vec![
+        "/usr/bin/env".into(),
+        "FAKE_AUTH=prompt".into(),
+        FAKE.into(),
+    ];
+    let (_, end) = host(s, None).await;
+    assert_eq!(end.stop, "failed");
+    assert!(end.error.unwrap().contains("genatrix exec login fake"));
+}
+
+/// A sign-in token left in the executor's user's home by `genatrix exec
+/// login` reaches the executor's environment; the host never reads it.
+#[tokio::test]
+async fn a_token_in_the_executors_home_reaches_the_executor() {
+    let (_dir, ws) = workspace();
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(home.path().join(".genatrix")).unwrap();
+    std::fs::write(
+        home.path().join(".genatrix/fake.env"),
+        "FAKE_TOKEN=sk-test-1\n",
+    )
+    .unwrap();
+    let (_, end) =
+        host_with_home(start(&ws, "@fake env FAKE_TOKEN"), None, Some(home.path())).await;
+    assert_eq!(end.error, None);
+    assert!(
+        end.answer.contains("FAKE_TOKEN=sk-test-1"),
+        "{}",
+        end.answer
+    );
+
+    // With none there, nothing is set.
+    let empty = tempfile::tempdir().unwrap();
+    let (_, end) =
+        host_with_home(start(&ws, "@fake env FAKE_TOKEN"), None, Some(empty.path())).await;
+    assert!(end.answer.contains("FAKE_TOKEN=\n"), "{}", end.answer);
 }

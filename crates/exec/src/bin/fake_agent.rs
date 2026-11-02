@@ -7,13 +7,15 @@
 //! - `@fake read <path>`: ask to read
 //! - `@fake mode`: ask to switch its own mode
 //! - `@fake say <text>`: say it
+//! - `@fake env <name>`: say the value of an environment variable
 //! - `@fake sleep <seconds>`: wait
 //! - `@fake leave`: exit without answering
 //!
 //! After each request it says `allowed <what>` or `denied <what>`, so a test
 //! can see the answer from the executor's side too. With the environment
 //! variable `FAKE_AUTH` set, it asks to be signed in instead of opening a
-//! session.
+//! session; with `FAKE_AUTH=prompt`, it opens one and asks at the prompt,
+//! as Claude Code's adapter does.
 
 #![allow(clippy::too_many_lines, clippy::match_same_arms)] // a test fixture, one script
 
@@ -62,7 +64,7 @@ fn main() {
                 "protocolVersion": 1, "agentCapabilities": {}, "authMethods": []
             }})),
             "session/new" => {
-                if std::env::var_os("FAKE_AUTH").is_some() {
+                if std::env::var_os("FAKE_AUTH").is_some_and(|v| v != "prompt") {
                     send(
                         &json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32000, "message": "Authentication required"}}),
                     );
@@ -71,6 +73,11 @@ fn main() {
                 }
             }
             "session/cancel" => {}
+            "session/prompt" if std::env::var_os("FAKE_AUTH").is_some_and(|v| v == "prompt") => {
+                send(
+                    &json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32000, "message": "Authentication required"}}),
+                );
+            }
             "session/prompt" => {
                 let session = params.get("sessionId").cloned().unwrap_or(Value::Null);
                 let text = params["prompt"][0]["text"]
@@ -174,6 +181,14 @@ fn main() {
                             );
                         }
                         "say" => say(&session, &format!("{rest}\n")),
+                        "env" => say(
+                            &session,
+                            &format!(
+                                "{}={}\n",
+                                rest.trim(),
+                                std::env::var(rest.trim()).unwrap_or_default()
+                            ),
+                        ),
                         "sleep" => {
                             let secs: u64 = rest.trim().parse().unwrap_or(1);
                             std::thread::sleep(std::time::Duration::from_secs(secs));

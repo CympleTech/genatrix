@@ -58,13 +58,31 @@ pub async fn run(
     // `cd` into the workspace as the executor's user: the host itself may
     // not be allowed into it. The path and the search path are arguments,
     // never shell text.
+    //
+    // A sign-in token left by `genatrix exec login` in the executor's
+    // user's home, `~/.genatrix/<executor>.env`, is read there, by that
+    // user: the host never holds it.
+    if !start
+        .executor
+        .name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return failed(
+            "refused",
+            "an executor's name is letters, digits, - and _".into(),
+        );
+    }
     let mut argv = vec![
         "/bin/sh".to_owned(),
         "-c".to_owned(),
-        "cd \"$0\" || exit 1; if [ -n \"$1\" ]; then PATH=\"$1\"; export PATH; fi; shift; exec \"$@\""
+        "cd \"$0\" || exit 1; if [ -n \"$1\" ]; then PATH=\"$1\"; export PATH; fi; \
+         t=\"$HOME/.genatrix/$2.env\"; if [ -n \"$HOME\" ] && [ -r \"$t\" ]; then set -a; . \"$t\"; set +a; fi; \
+         shift 2; exec \"$@\""
             .to_owned(),
         workspace.clone(),
         start.executor.path.clone().unwrap_or_default(),
+        start.executor.name.clone(),
     ];
     argv.extend(start.executor.command.iter().cloned());
     let argv = start.isolation.wrap(&argv);
@@ -159,15 +177,7 @@ async fn converse(
     .await
     {
         Ok(v) => v,
-        Err(e) if e.code == AUTH_REQUIRED => {
-            return failed(
-                "failed",
-                format!(
-                    "`{}` is not signed in for the executor's user; run `genatrix exec login {}`",
-                    start.executor.name, start.executor.name
-                ),
-            );
-        }
+        Err(e) if e.code == AUTH_REQUIRED => return not_signed_in(start),
         Err(e) => {
             return failed(
                 "failed",
@@ -201,6 +211,9 @@ async fn converse(
                         answer,
                         error: None,
                     },
+                    // Some adapters open a session and ask for a login
+                    // only when the first prompt arrives.
+                    Ok(Err(e)) if e.code == AUTH_REQUIRED => not_signed_in(start),
                     Ok(Err(e)) => End { stop: "failed".into(), answer, error: Some(e.to_string()) },
                     Err(_) => End { stop: "failed".into(), answer, error: Some("the executor ended".into()) },
                 };
@@ -230,6 +243,17 @@ async fn converse(
             }
         }
     }
+}
+
+/// The executor wants a login its user does not have.
+fn not_signed_in(start: &Start) -> End {
+    failed(
+        "failed",
+        format!(
+            "`{}` is not signed in for the executor's user; run `genatrix exec login {}`",
+            start.executor.name, start.executor.name
+        ),
+    )
 }
 
 /// A request whose answer is awaited while the agent's own requests are

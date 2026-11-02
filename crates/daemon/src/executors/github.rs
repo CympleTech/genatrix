@@ -27,7 +27,15 @@ pub const ACCOUNT: &str = "token";
 
 /// The token, if the user signed in.
 pub fn token() -> Option<String> {
-    Keychain::named(SERVICE).read(ACCOUNT).ok().flatten()
+    stored_token().ok().flatten()
+}
+
+/// The token, or why the keychain would not give it. A token that is there
+/// but cannot be read is not the same as no token: the keychain refuses a
+/// process with no access to the login session, such as one started over
+/// SSH or inside some terminal multiplexers.
+pub fn stored_token() -> anyhow::Result<Option<String>> {
+    Keychain::named(SERVICE).read(ACCOUNT)
 }
 
 /// Carry out every approved push and pull request that can go now.
@@ -47,9 +55,21 @@ pub async fn execute_approved(system: &Arc<System>) -> anyhow::Result<usize> {
     if approved.is_empty() {
         return Ok(0);
     }
-    let Some(token) = token() else {
-        tracing::info!("approved GitHub work waits: run `genatrix github login`");
-        return Ok(0);
+    let token = match stored_token() {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            tracing::info!("approved GitHub work waits: run `genatrix github login`");
+            return Ok(0);
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "approved GitHub work waits: the GitHub token is in the keychain but this \
+                 process may not read it; start the core from a terminal on the desktop, \
+                 not over SSH or inside tmux"
+            );
+            return Ok(0);
+        }
     };
     let mut done = 0;
     // Pushes first, so a pull request approved with its push goes after it.
@@ -152,6 +172,69 @@ fn pushed(system: &System, dispatch: &str) -> anyhow::Result<bool> {
         .list(&system.store, Some("executed"), 500)?
         .iter()
         .any(|a| matches!(&a.effect, Effect::PushBranch { dispatch: d, .. } if d == dispatch)))
+}
+
+/// The push a dispatch may be offered again: its latest push failed, was
+/// declined, or expired, and none is waiting, approved or done. A push
+/// whose outcome is unknown is not offered again: it may have gone.
+fn push_to_offer_again(
+    system: &System,
+    dispatch: &str,
+) -> anyhow::Result<Result<genatrix_agent::action::Action, String>> {
+    let mut pushes: Vec<_> = system
+        .actions
+        .list(&system.store, None, 1000)?
+        .into_iter()
+        .filter(|a| matches!(&a.effect, Effect::PushBranch { dispatch: d, .. } if d == dispatch))
+        .collect();
+    pushes.sort_by_key(|a| a.created_at);
+    if let Some(live) = pushes.iter().find(|a| {
+        matches!(
+            a.status,
+            Status::Pending
+                | Status::Approved { .. }
+                | Status::Executed { .. }
+                | Status::Unknown { .. }
+        )
+    }) {
+        return Ok(Err(match live.status {
+            Status::Executed { .. } => "this work was pushed already".to_owned(),
+            Status::Unknown { .. } => {
+                "the last push may have gone; look on GitHub before pushing again".to_owned()
+            }
+            _ => "a push for this work is waiting already".to_owned(),
+        }));
+    }
+    Ok(pushes
+        .pop()
+        .ok_or_else(|| "this work has no push to offer again".to_owned()))
+}
+
+/// Whether [`push_again`] would offer a push for this dispatch.
+pub fn can_push_again(system: &System, dispatch: &str) -> bool {
+    matches!(push_to_offer_again(system, dispatch), Ok(Ok(_)))
+}
+
+/// Offer a failed push again: the same commit to the same branch, as a new
+/// action that waits for approval like the first. A pull request approved
+/// with the first goes once this one is carried out.
+pub fn push_again(
+    system: &System,
+    dispatch: &str,
+) -> anyhow::Result<Result<genatrix_agent::action::Action, String>> {
+    let last = match push_to_offer_again(system, dispatch)? {
+        Ok(a) => a,
+        Err(why) => return Ok(Err(why)),
+    };
+    let action = system.actions.propose_by_user(
+        &system.store,
+        &system.ledger,
+        dispatch,
+        last.effect.clone(),
+        last.current().payload.clone(),
+        last.rationale.clone(),
+    )?;
+    Ok(Ok(action))
 }
 
 /// Ask GitHub who a token belongs to, through the same sandboxed connector.

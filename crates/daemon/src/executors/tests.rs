@@ -498,3 +498,91 @@ fn the_core_starts_executors_as_their_own_user() {
         genatrix_exec::isolation::Isolation::exec_user()
     );
 }
+
+#[test]
+fn a_project_is_filed_only_with_a_repository_and_its_base_branch() {
+    let (_dir, system) = crate::system::test_system();
+    let root = tempfile::tempdir().unwrap();
+    let file = |repo: &std::path::Path| {
+        super::file_definition(
+            &system.store,
+            "project",
+            &format!(
+                "name = \"p\"\nrepo = \"{}\"\nexecutors = [\"claude-code\"]\n",
+                repo.display()
+            ),
+        )
+        .map_err(|e| e.to_string())
+    };
+    let missing = root.path().join("missing");
+    assert!(file(&missing).unwrap_err().contains("does not exist"));
+    let empty = root.path().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    assert!(file(&empty).unwrap_err().contains("not a git repository"));
+    git(&empty, &["init", "--quiet", "-b", "main"]);
+    assert!(file(&empty).unwrap_err().contains("no branch `main`"));
+    git(&empty, &["config", "user.name", "u"]);
+    git(&empty, &["config", "user.email", "u@example.com"]);
+    git(
+        &empty,
+        &["commit", "--quiet", "--allow-empty", "-m", "first"],
+    );
+    file(&empty).unwrap();
+}
+
+/// A push that did not go (here, declined; on the machine, refused by
+/// GitHub) can be offered again: the same commit to the same branch, as a
+/// new action waiting for approval. Only one at a time.
+#[tokio::test]
+async fn a_push_that_did_not_go_can_be_offered_again_once() {
+    let f = fixture(false);
+    *f.host.turns.lock().unwrap() = VecDeque::from(vec![Turn {
+        write: Some(("NOTES".into(), "x\n".into())),
+        answer: "done".into(),
+        hang: false,
+    }]);
+    let a = super::draft::draft(&f.system, &request("implement", "Add notes.", true)).unwrap();
+    approve(&f.system, &a.id);
+    super::run::start_approved(&f.system).unwrap();
+    until_done(&f.system, &a.id).await;
+    let push = |status: &str| {
+        f.system
+            .actions
+            .list(&f.system.store, Some(status), 10)
+            .unwrap()
+            .into_iter()
+            .filter(|p| matches!(p.effect, Effect::PushBranch { .. }))
+            .collect::<Vec<_>>()
+    };
+    let first = push("pending").pop().expect("a push waits");
+    assert!(
+        super::github::push_again(&f.system, &a.id)
+            .unwrap()
+            .is_err(),
+        "not while one waits"
+    );
+    f.system
+        .actions
+        .decline(
+            &f.system.store,
+            &f.system.ledger,
+            &first.id,
+            "token lacked access",
+        )
+        .unwrap();
+    assert!(super::github::can_push_again(&f.system, &a.id));
+    let again = super::github::push_again(&f.system, &a.id)
+        .unwrap()
+        .unwrap();
+    assert_ne!(again.id, first.id);
+    assert_eq!(
+        serde_json::to_value(&again.effect).unwrap(),
+        serde_json::to_value(&first.effect).unwrap(),
+        "the same commit to the same branch"
+    );
+    assert!(
+        super::github::push_again(&f.system, &a.id)
+            .unwrap()
+            .is_err()
+    );
+}

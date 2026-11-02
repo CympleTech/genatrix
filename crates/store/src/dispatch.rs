@@ -72,7 +72,8 @@ pub struct DispatchStep {
     pub role: String,
     /// The executor.
     pub executor: String,
-    /// `running`, `done`, `failed`, `refused`, `cancelled`.
+    /// `running`, `done`, `failed`, `refused`, `cancelled`; `waiting` when
+    /// it ended with a question for the user, `answered` once they answered.
     pub state: String,
     /// The egress record of the text it was given.
     pub egress_id: Option<String>,
@@ -90,6 +91,10 @@ pub struct DispatchStep {
     pub started_ms: i64,
     /// Ended.
     pub ended_ms: Option<i64>,
+    /// The user's answer to the question the step ended with.
+    pub reply: Option<String>,
+    /// The level that answer leaves at: `public` or `personal`.
+    pub reply_level: Option<String>,
 }
 
 /// One thing an executor said or did.
@@ -140,7 +145,8 @@ fn dispatch_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DispatchRow> {
 }
 
 const STEP_COLUMNS: &str = "dispatch_id, seq, step, round, role, executor, state, egress_id, stop, \
-                            answer, verdict, commit_id, error, started_ms, ended_ms";
+                            answer, verdict, commit_id, error, started_ms, ended_ms, reply, \
+                            reply_level";
 
 fn step_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DispatchStep> {
     Ok(DispatchStep {
@@ -159,6 +165,8 @@ fn step_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DispatchStep> {
         error: r.get(12)?,
         started_ms: r.get(13)?,
         ended_ms: r.get(14)?,
+        reply: r.get(15)?,
+        reply_level: r.get(16)?,
     })
 }
 
@@ -293,11 +301,16 @@ impl Store {
 
     /// Dispatches left running, as a restart finds them.
     pub fn running_dispatches(&self) -> Result<Vec<DispatchRow>> {
+        self.dispatches_in("running")
+    }
+
+    /// Dispatches in one state, oldest first.
+    pub fn dispatches_in(&self, state: &str) -> Result<Vec<DispatchRow>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(&format!(
-            "SELECT {DISPATCH_COLUMNS} FROM dispatch WHERE state = 'running'"
+            "SELECT {DISPATCH_COLUMNS} FROM dispatch WHERE state = ?1 ORDER BY started_ms"
         ))?;
-        let rows = stmt.query_map([], dispatch_row)?;
+        let rows = stmt.query_map(params![state], dispatch_row)?;
         rows.collect::<rusqlite::Result<_>>().map_err(Into::into)
     }
 
@@ -306,12 +319,13 @@ impl Store {
         self.conn().execute(
             &format!(
                 "INSERT INTO dispatch_step ({STEP_COLUMNS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
                  ON CONFLICT (dispatch_id, seq) DO UPDATE SET
                     state = excluded.state, egress_id = excluded.egress_id, stop = excluded.stop,
                     answer = excluded.answer, verdict = excluded.verdict,
                     commit_id = excluded.commit_id, error = excluded.error,
-                    ended_ms = excluded.ended_ms"
+                    ended_ms = excluded.ended_ms, reply = excluded.reply,
+                    reply_level = excluded.reply_level"
             ),
             params![
                 s.dispatch_id,
@@ -328,7 +342,9 @@ impl Store {
                 s.commit_id,
                 s.error,
                 s.started_ms,
-                s.ended_ms
+                s.ended_ms,
+                s.reply,
+                s.reply_level
             ],
         )?;
         Ok(())
@@ -446,6 +462,15 @@ mod tests {
             ..Default::default()
         };
         s.put_dispatch_step(&step).unwrap();
+        step.state = "waiting".into();
+        s.put_dispatch_step(&step).unwrap();
+        step.state = "answered".into();
+        step.reply = Some("SQLite".into());
+        step.reply_level = Some("public".into());
+        s.put_dispatch_step(&step).unwrap();
+        let back = &s.dispatch_steps("d1").unwrap()[0];
+        assert_eq!(back.reply.as_deref(), Some("SQLite"));
+        assert_eq!(back.reply_level.as_deref(), Some("public"));
         step.state = "done".into();
         step.commit_id = Some("abc".into());
         s.put_dispatch_step(&step).unwrap();

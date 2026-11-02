@@ -770,6 +770,11 @@ async fn work_as_approved(system: std::sync::Arc<System>) {
             Ok(n) => tracing::info!(n, "dispatch(es) started"),
             Err(e) => tracing::warn!(error = %e, "could not start dispatches"),
         }
+        match executors::run::resume_answered(&system) {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(n, "answered dispatch(es) carried on"),
+            Err(e) => tracing::warn!(error = %e, "could not carry on answered dispatches"),
+        }
         match executors::github::execute_approved(&system).await {
             Ok(0) => {}
             Ok(n) => tracing::info!(n, "GitHub action(s) carried out"),

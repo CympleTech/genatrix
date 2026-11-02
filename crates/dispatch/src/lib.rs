@@ -16,6 +16,7 @@
 //! - [`machine`]: given a recipe and what has happened, the next step.
 //! - [`scope`]: the answer to an executor's request for permission.
 //! - [`prompt`]: the text one step hands to its executor.
+//! - [`report`]: what an executor hands back at the end of each turn.
 //!
 //! Nothing here reads a file, starts a process or touches the network.
 
@@ -24,6 +25,7 @@ pub mod machine;
 pub mod project;
 pub mod prompt;
 pub mod recipe;
+pub mod report;
 pub mod role;
 pub mod scope;
 

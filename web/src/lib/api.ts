@@ -100,7 +100,8 @@ export interface WorkStep {
   commit_id: string | null; error: string | null; started_ms: number; ended_ms: number | null;
 }
 export interface WorkEvent { seq: number; n: number; at_ms: number; kind: string; text: string }
-export interface WorkDetail { dispatch: Dispatch; steps: WorkStep[]; events: WorkEvent[]; push_again: boolean }
+export interface WorkQuestion { seq: number; question: string; options: string[]; recommend: number | null; progress: string }
+export interface WorkDetail { dispatch: Dispatch; steps: WorkStep[]; events: WorkEvent[]; push_again: boolean; question: WorkQuestion | null }
 export type CardValue =
   | { type: 'text'; text: string }
   | { type: 'money'; cents: number; currency: string }

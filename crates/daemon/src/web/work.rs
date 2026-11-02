@@ -41,6 +41,7 @@ pub fn routes() -> axum::Router<Arc<System>> {
         .route("/api/work/{id}/diff", get(diff))
         .route("/api/work/{id}/stop", post(stop))
         .route("/api/work/{id}/push-again", post(push_again))
+        .route("/api/work/{id}/answer", post(answer))
         .route("/api/action/{id}/level", post(level))
 }
 
@@ -322,8 +323,18 @@ async fn one(
         Err(e) => return broke(&e),
     };
     let push_again = crate::executors::github::can_push_again(&system, &id);
+    let question = match crate::executors::run::question(&system, &id) {
+        Ok(q) => q.map(|(seq, q)| {
+            serde_json::json!({
+                "seq": seq, "question": q.question, "options": q.options,
+                "recommend": q.recommend, "progress": q.progress,
+            })
+        }),
+        Err(e) => return broke(&e),
+    };
     Json(serde_json::json!({
         "push_again": push_again,
+        "question": question,
         "dispatch": DispatchView::from(row),
         "steps": steps.into_iter().map(|s| StepRecord {
             verdict: s.verdict.as_deref().and_then(|v| serde_json::from_str(v).ok()),
@@ -359,9 +370,62 @@ async fn diff(State(system): Shared, Path(id): Path<String>) -> Response {
 
 async fn stop(State(system): Shared, Path(id): Path<String>) -> Response {
     if system.exec.stop(&id) {
-        Json(serde_json::json!({"stopping": true})).into_response()
-    } else {
-        refuse(StatusCode::CONFLICT, "this work is not running")
+        return Json(serde_json::json!({"stopping": true})).into_response();
+    }
+    match crate::executors::run::stop_waiting(&system, &id) {
+        Ok(true) => Json(serde_json::json!({"stopping": true})).into_response(),
+        Ok(false) => refuse(StatusCode::CONFLICT, "this work is not running"),
+        Err(e) => broke(&e),
+    }
+}
+
+#[derive(Deserialize)]
+struct AnswerBody {
+    /// One of the executor's options, by index.
+    #[serde(default)]
+    option: Option<usize>,
+    /// Or the user's own words.
+    #[serde(default)]
+    text: String,
+    /// Whether those words are not private.
+    #[serde(default)]
+    public: bool,
+}
+
+/// Answer a waiting dispatch's question (design 13, "等你回答"). An option
+/// is the executor's own words handed back, so it leaves as public; the
+/// user's own words leave as personal unless they say otherwise.
+async fn answer(
+    State(system): Shared,
+    Path(id): Path<String>,
+    Json(body): Json<AnswerBody>,
+) -> Response {
+    let reply = match body.option {
+        Some(i) => match crate::executors::run::question(&system, &id) {
+            Ok(Some((_, q))) => match q.options.get(i) {
+                Some(o) => crate::executors::run::Reply {
+                    text: o.clone(),
+                    public: true,
+                },
+                None => return refuse(StatusCode::BAD_REQUEST, "no such option"),
+            },
+            Ok(None) => {
+                return refuse(
+                    StatusCode::CONFLICT,
+                    "this work is not waiting for an answer",
+                );
+            }
+            Err(e) => return broke(&e),
+        },
+        None => crate::executors::run::Reply {
+            text: body.text,
+            public: body.public,
+        },
+    };
+    match crate::executors::run::answer(&system, &id, &reply) {
+        Ok(Ok(())) => Json(serde_json::json!({"answered": true})).into_response(),
+        Ok(Err(why)) => refuse(StatusCode::BAD_REQUEST, why),
+        Err(e) => broke(&e),
     }
 }
 

@@ -39,6 +39,25 @@ pub struct Situation<'a> {
     pub round: u32,
 }
 
+/// When to decide and when to ask (design 13, "自己判断，必要时才问").
+const DECIDING: &str = "\n## Deciding and asking\n\n\
+Decide routine things yourself: naming, structure, small trade-offs, anything a careful \
+engineer on this project would simply do. Say in your summary what you decided. Do not \
+ask the user to confirm them.\n\n\
+Stop and ask only when the choice is the user's to make: the task leaves it open and the \
+choices give the user something clearly different, or it cannot be undone, or it needs \
+something only the user knows. Ask one question.\n\n\
+Never ask for permission to run a command or touch a path. What you may do was fixed when \
+the user approved this work, and an answer will not change it.\n";
+
+/// The shape of a question.
+const ASKING: &str = "\nIf you must ask instead, stop where you are, leave your work in the \
+workspace, and end your answer with this object in place of the one above:\n\n\
+{\"genatrix\": \"ask\", \"question\": \"the one question\", \"options\": [\"two to four \
+answers\"], \"recommend\": the index of the option you recommend, \"progress\": \"where \
+the work stands\"}\n\n\
+The user's answer comes back to you in a later turn, with what you said in this one.\n";
+
 /// Put text in an envelope.
 #[must_use]
 pub fn envelope(m: &Material) -> String {
@@ -101,11 +120,17 @@ pub fn compose(
     if situation.round > 1 {
         let _ = write!(out, "\nThis is round {} of this step.\n", situation.round);
     }
+    out.push_str(DECIDING);
     out.push_str("\n## What to hand back\n\n");
     match step.produces {
         Produces::Commits => out.push_str(
-            "When you are done, say in a few sentences what you changed and why, and \
-             whether the commands pass.\n",
+            "When you are done, end your answer with one JSON object on its own, exactly \
+             this shape:\n\n\
+             {\"genatrix\": \"done\", \"title\": \"one line, a commit subject for your \
+             changes\", \"summary\": \"a few sentences: what you changed and why, what you \
+             decided on the user's behalf, whether the commands pass\"}\n\n\
+             Write the title and the summary in the language the task is written in. They \
+             become the commit message and the pull request the user reviews.\n",
         ),
         Produces::Verdict => out.push_str(
             "Review the work against the task. End your answer with one JSON object on its \
@@ -119,6 +144,7 @@ pub fn compose(
              document itself, in Markdown.\n",
         ),
     }
+    out.push_str(ASKING);
     out.push_str("\n## Material\n\n");
     for m in material {
         out.push_str(&envelope(m));
@@ -179,5 +205,24 @@ mod tests {
         assert!(text.contains("`cargo test`"));
         let text = compose(&role(), &step(Produces::Commits), &s, &[]);
         assert!(text.contains("Do not commit, push"));
+    }
+
+    #[test]
+    fn every_step_is_told_to_decide_routine_things_and_how_to_ask() {
+        let s = Situation {
+            branch: "genatrix/d1",
+            base_commit: "abc123",
+            commands: &[],
+            round: 1,
+        };
+        for produces in [Produces::Commits, Produces::Verdict, Produces::Notes] {
+            let text = compose(&role(), &step(produces), &s, &[]);
+            assert!(text.contains("Decide routine things yourself"));
+            assert!(text.contains("Never ask for permission"));
+            assert!(text.contains("\"genatrix\": \"ask\""));
+        }
+        let text = compose(&role(), &step(Produces::Commits), &s, &[]);
+        assert!(text.contains("\"genatrix\": \"done\""));
+        assert!(text.contains("language the task is written in"));
     }
 }

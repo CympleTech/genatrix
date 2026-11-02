@@ -50,6 +50,7 @@ crates/daemon/src/web/work.rs  the page's API;  web/src/pages/Work.svelte  the p
 | E7 | The Work page; approval cards with facts and the public switch | type check and build; access: a paired phone may draft and watch, only this machine files a project |
 | E8 | `implement-and-review` end to end | with the scripted host, on a real git repository. `implement` with the real Claude Code, through to a pushed branch and a merged pull request on a side repository; Codex and the review loop not yet run for real |
 | E9 | Drafts filled in by the local model (`Plan`) | the form is filled; nothing is drafted until the user presses draft |
+| E10 | Design 13 v0.3: a report at the end of every turn, work that waits for the user's answer, commit messages and pull requests from the executor's own summary | `report` tests; the prompt tells every step to decide routine things and ask only what is the user's; with the scripted host, a question leaves the work waiting with its workspace, an option goes back as material through the gate with the same scope, the user's own words are refused where personal content may not go, a restart-safe resume from the record, the commit and the pull request written from the report; migration 17 keeps every row and reference (invariant 29) |
 
 ## For the author, at the machine
 

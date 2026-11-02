@@ -173,7 +173,11 @@ async fn until_done(system: &System, id: &str) -> genatrix_store::DispatchRow {
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    panic!("the dispatch did not end");
+    panic!(
+        "the dispatch did not end: {:?} {:?}",
+        system.store.get_dispatch(id).unwrap(),
+        system.store.dispatch_steps(id).unwrap()
+    );
 }
 
 fn turn(answer: &str) -> Turn {
@@ -584,5 +588,156 @@ async fn a_push_that_did_not_go_can_be_offered_again_once() {
         super::github::push_again(&f.system, &a.id)
             .unwrap()
             .is_err()
+    );
+}
+
+/// Design 13 v0.3, "等你回答", and proposed invariant 29: a step that ends
+/// with a question leaves the work waiting, workspace and all; the answer
+/// goes back to the same executor in an envelope, through the gate, with
+/// the same scope; the commit and the pull request are written from the
+/// executor's own report.
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // one conversation, in the order it happens
+async fn a_question_waits_for_the_answer_and_the_work_goes_on_from_there() {
+    let f = fixture(false);
+    *f.host.turns.lock().unwrap() = VecDeque::from(vec![
+        Turn {
+            write: Some(("src/db.rs".into(), "// models\n".into())),
+            answer: "Models written.\n{\"genatrix\": \"ask\", \"question\": \"用哪个数据库？\", \
+                     \"options\": [\"SQLite\", \"Postgres\"], \"recommend\": 0, \
+                     \"progress\": \"模型写好了\"}"
+                .into(),
+            hang: false,
+        },
+        Turn {
+            write: Some(("src/store.rs".into(), "// sqlite\n".into())),
+            answer: "{\"genatrix\": \"done\", \"title\": \"加入基于 SQLite 的存储\", \
+                     \"summary\": \"按你的选择用了 SQLite；表名我按项目习惯取了复数。\"}"
+                .into(),
+            hang: false,
+        },
+    ]);
+    let a =
+        super::draft::draft(&f.system, &request("implement", "给项目加一个存储层", true)).unwrap();
+    approve(&f.system, &a.id);
+    super::run::start_approved(&f.system).unwrap();
+    let d = until_done(&f.system, &a.id).await;
+    assert_eq!(d.state, "waiting");
+    let workspace = f.root.join("exec").join(a.id.to_lowercase());
+    assert!(workspace.join("src/db.rs").exists(), "the workspace stays");
+    let (_, q) = super::run::question(&f.system, &a.id)
+        .unwrap()
+        .expect("a question");
+    assert_eq!(q.options, ["SQLite", "Postgres"]);
+    assert_eq!(q.recommend, Some(0));
+
+    // The user's own words count as personal, and this project keeps
+    // personal content at home.
+    let refused = super::run::answer(
+        &f.system,
+        &a.id,
+        &super::run::Reply {
+            text: "用 SQLite，我只在本机跑".into(),
+            public: false,
+        },
+    )
+    .unwrap();
+    assert!(refused.unwrap_err().contains("personal"));
+
+    // One of its own options goes back as it is.
+    super::run::answer(
+        &f.system,
+        &a.id,
+        &super::run::Reply {
+            text: q.options[0].clone(),
+            public: true,
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(super::run::resume_answered(&f.system).unwrap(), 1);
+    let d = until_done(&f.system, &a.id).await;
+    assert_eq!(d.state, "finished", "{d:?}");
+
+    let seen = f.host.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 2);
+    assert!(
+        seen.iter().all(|(_, admitted)| *admitted),
+        "each turn had its ticket"
+    );
+    let second = &seen[1].0;
+    assert!(
+        second.text.contains("<<genatrix:material id=\"reply#1\""),
+        "the answer is material"
+    );
+    assert!(second.text.contains("SQLite"));
+    assert!(
+        second.text.contains("模型写好了"),
+        "with what it said before"
+    );
+    assert_eq!(
+        serde_json::to_value(&second.scope).unwrap(),
+        serde_json::to_value(&seen[0].0.scope).unwrap(),
+        "an answer changes nothing it may do"
+    );
+    // Both turns went through the gate.
+    assert_eq!(delegations(&f.system).len(), 2);
+
+    // The commit, from its report, holds what both turns left.
+    let mirror = f.root.join("mirrors").join("demo.git");
+    let tip = d.tip.clone().unwrap();
+    let message = git(&mirror, &["log", "-1", "--format=%B", &tip]);
+    assert!(message.starts_with("加入基于 SQLite 的存储"), "{message}");
+    assert!(message.contains("表名我按项目习惯取了复数"));
+    let files = git(&mirror, &["show", "--name-only", "--format=", &tip]);
+    assert!(
+        files.contains("src/db.rs") && files.contains("src/store.rs"),
+        "{files}"
+    );
+
+    // The pull request: its title and summary, the files, the task, in the
+    // task's language.
+    let pr = f
+        .system
+        .actions
+        .list(&f.system.store, Some("pending"), 10)
+        .unwrap()
+        .into_iter()
+        .find(|p| matches!(p.effect, Effect::OpenPullRequest { .. }))
+        .expect("a pull request waits");
+    let text = pr.current().payload.clone();
+    assert!(text.starts_with("加入基于 SQLite 的存储\n"), "{text}");
+    assert!(text.contains("## 概要") && text.contains("按你的选择用了 SQLite"));
+    assert!(text.contains("## 改动的文件") && text.contains("src/store.rs"));
+    assert!(text.contains("> 给项目加一个存储层"));
+    assert!(!workspace.exists(), "the workspace goes when the work ends");
+}
+
+#[tokio::test]
+async fn work_waiting_for_an_answer_can_be_stopped() {
+    let f = fixture(false);
+    *f.host.turns.lock().unwrap() = VecDeque::from(vec![turn(
+        "{\"genatrix\": \"ask\", \"question\": \"A or B?\", \"options\": [\"A\", \"B\"]}",
+    )]);
+    let a = super::draft::draft(&f.system, &request("implement", "Do it.", true)).unwrap();
+    approve(&f.system, &a.id);
+    super::run::start_approved(&f.system).unwrap();
+    assert_eq!(until_done(&f.system, &a.id).await.state, "waiting");
+    assert!(super::run::stop_waiting(&f.system, &a.id).unwrap());
+    let d = f.system.store.get_dispatch(&a.id).unwrap().unwrap();
+    assert_eq!(d.state, "stopped");
+    assert!(!f.root.join("exec").join(a.id.to_lowercase()).exists());
+    assert!(
+        super::run::answer(
+            &f.system,
+            &a.id,
+            &super::run::Reply {
+                text: "A".into(),
+                public: true
+            }
+        )
+        .unwrap()
+        .is_err(),
+        "a stopped work takes no answer"
     );
 }

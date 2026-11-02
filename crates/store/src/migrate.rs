@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use crate::error::{Error, Result};
 
 /// Highest migration this build knows.
-pub const SCHEMA_VERSION: i64 = 16;
+pub const SCHEMA_VERSION: i64 = 17;
 
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_init.sql")),
@@ -28,6 +28,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (14, include_str!("../migrations/0014_junk.sql")),
     (15, include_str!("../migrations/0015_category.sql")),
     (16, include_str!("../migrations/0016_dispatch.sql")),
+    (17, include_str!("../migrations/0017_dispatch_reply.sql")),
 ];
 
 pub(crate) fn current_version(conn: &Connection) -> Result<i64> {
@@ -55,4 +56,60 @@ pub(crate) fn run(conn: &mut Connection) -> Result<()> {
         tx.commit()?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Migration 17 builds the dispatch tables again to widen a CHECK. Foreign
+    /// keys are on while it runs; it must keep every row, and leave the steps
+    /// and events pointing at the new `dispatch`.
+    #[test]
+    fn rebuilding_the_dispatch_tables_keeps_every_row_and_every_reference() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        for (version, sql) in MIGRATIONS.iter().filter(|(v, _)| *v <= 16) {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", version).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO dispatch (id, project, recipe, recipe_hash, state, level, branch, started_ms)
+                 VALUES ('d1', 'p', 'implement', 'h', 'finished', 'public', 'genatrix/d1', 1);
+             INSERT INTO dispatch_step (dispatch_id, seq, step, round, role, executor, state, started_ms)
+                 VALUES ('d1', 1, 'implement', 1, 'backend', 'claude-code', 'done', 2);
+             INSERT INTO dispatch_event (dispatch_id, seq, n, at_ms, kind, text)
+                 VALUES ('d1', 1, 1, 3, 'message', 'hello');",
+        )
+        .unwrap();
+
+        run(&mut conn).unwrap();
+        assert_eq!(current_version(&conn).unwrap(), SCHEMA_VERSION);
+        let count = |table: &str| -> i64 {
+            conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(
+            (
+                count("dispatch"),
+                count("dispatch_step"),
+                count("dispatch_event")
+            ),
+            (1, 1, 1)
+        );
+        conn.execute("UPDATE dispatch SET state = 'waiting' WHERE id = 'd1'", [])
+            .unwrap();
+        let fk: Vec<String> = conn
+            .prepare("SELECT \"table\" FROM pragma_foreign_key_list('dispatch_step')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(fk, ["dispatch"]);
+        // Removing the dispatch still takes its steps and events with it.
+        conn.execute("DELETE FROM dispatch WHERE id = 'd1'", [])
+            .unwrap();
+        assert_eq!((count("dispatch_step"), count("dispatch_event")), (0, 0));
+    }
 }

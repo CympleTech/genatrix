@@ -20,10 +20,11 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use genatrix_agent::action::{Action, Effect, ExecutionToken, Status, Version};
-use genatrix_dispatch::machine::{self, Done, Next};
+use genatrix_dispatch::machine::{self, Done, Next, Verdict};
 use genatrix_dispatch::project::Project;
 use genatrix_dispatch::prompt::{Material, Situation, compose};
 use genatrix_dispatch::recipe::{Produces, Propose, Recipe};
+use genatrix_dispatch::report::{Question, Report, read_report};
 use genatrix_dispatch::role::Role;
 use genatrix_dispatch::scope::{Answer, Scope};
 use genatrix_exec::wire::{Executor, FromHost, Start};
@@ -139,7 +140,7 @@ async fn carry_out(
         None,
     )?;
     let now = chrono::Utc::now().timestamp_millis();
-    let mut row = DispatchRow {
+    let row = DispatchRow {
         id: id.clone(),
         project: pins.project.name.clone(),
         recipe: pins.recipe.name.clone(),
@@ -158,31 +159,194 @@ async fn carry_out(
         ended_ms: None,
     };
     system.store.insert_dispatch(&row)?;
+    drive(system, row, &pins, &version.payload).await
+}
+
+/// Run the work, from wherever its record says it stands, and record how
+/// it ended. A question for the user leaves the workspace in place.
+async fn drive(
+    system: &Arc<System>,
+    mut row: DispatchRow,
+    pins: &Pinned,
+    task: &str,
+) -> anyhow::Result<()> {
+    let id = row.id.clone();
     system.exec.begin(&id);
-    let outcome = work(system, &mut row, &pins, &version.payload).await;
+    let outcome = work(system, &mut row, pins, task).await;
+    if matches!(outcome, Ok(Ending::Waiting)) {
+        row.state = "waiting".into();
+        row.detail = Some("waiting for your answer".into());
+        system.store.update_dispatch(&row)?;
+        system.exec.end(&id);
+        return Ok(());
+    }
     let (state, detail) = match outcome {
         Ok(Ending::Finished(detail)) => ("finished", detail),
         Ok(Ending::Stopped) => ("stopped", Some("stopped by the user".to_owned())),
         Ok(Ending::Failed(why)) => ("failed", Some(why)),
+        Ok(Ending::Waiting) => unreachable!("handled above"),
         Err(e) => ("failed", Some(e.to_string())),
     };
-    // The workspace goes first: once the record says the work ended,
-    // nothing of it is left on disk.
-    let ws = system.exec.config().workspace(&id);
+    end_work(system, &mut row, state, detail).await?;
+    system.exec.end(&id);
+    Ok(())
+}
+
+/// The workspace goes first: once the record says the work ended, nothing
+/// of it is left on disk.
+async fn end_work(
+    system: &System,
+    row: &mut DispatchRow,
+    state: &str,
+    detail: Option<String>,
+) -> anyhow::Result<()> {
+    let ws = system.exec.config().workspace(&row.id);
     let iso = system.exec.isolation();
     let _ = tokio::task::spawn_blocking(move || genatrix_exec::workspace::remove(&iso, &ws)).await;
     row.state = state.into();
     row.detail = detail;
     row.ended_ms = Some(chrono::Utc::now().timestamp_millis());
-    system.store.update_dispatch(&row)?;
-    system.exec.end(&id);
+    system.store.update_dispatch(row)?;
     Ok(())
+}
+
+/// The question a waiting dispatch asked, and the step that asked it.
+pub fn question(system: &System, id: &str) -> anyhow::Result<Option<(i64, Question)>> {
+    let waiting = system
+        .store
+        .dispatch_steps(id)?
+        .into_iter()
+        .rev()
+        .find(|s| s.state == "waiting");
+    Ok(waiting.and_then(
+        |s| match read_report(s.answer.as_deref().unwrap_or_default()) {
+            Report::Ask(q) => Some((s.seq, q)),
+            Report::Done { .. } => None,
+        },
+    ))
+}
+
+/// The user's answer to a waiting dispatch's question.
+pub struct Reply {
+    /// The words that go back to the executor.
+    pub text: String,
+    /// Whether they may leave as they are: one of the executor's own
+    /// options, or words the user said are not private.
+    pub public: bool,
+}
+
+/// File the user's answer (design 13, "等你回答"). The core's loop picks the
+/// work up again ([`resume_answered`]), so an answer given from the
+/// terminal, or before a restart, is carried on the same way. The answer
+/// goes to the same step's next turn, through the gate like the task did;
+/// it changes nothing the user approved about what the work may do. Says
+/// why when it cannot.
+pub fn answer(system: &System, id: &str, reply: &Reply) -> anyhow::Result<Result<(), String>> {
+    let Some(mut row) = system.store.get_dispatch(id)? else {
+        return Ok(Err("no such work".into()));
+    };
+    if row.state != "waiting" {
+        return Ok(Err("this work is not waiting for an answer".into()));
+    }
+    let text = reply.text.trim();
+    if text.is_empty() {
+        return Ok(Err("the answer is empty".into()));
+    }
+    let Some(action) = system.actions.get(&system.store, id)? else {
+        return Ok(Err("the approval of this work is gone".into()));
+    };
+    let pins = match pinned(system, &action.effect) {
+        Ok(p) => p,
+        Err(why) => return Ok(Err(why)),
+    };
+    if !reply.public && !pins.project.delegate_personal {
+        return Ok(Err(format!(
+            "your words count as personal unless you say they are public, and project `{}` \
+             does not let personal content go to executors; choose one of the options or \
+             tick \"this text is not private\"",
+            pins.project.name
+        )));
+    }
+    let Some(mut step) = system
+        .store
+        .dispatch_steps(id)?
+        .into_iter()
+        .rev()
+        .find(|s| s.state == "waiting")
+    else {
+        return Ok(Err("this work is not waiting for an answer".into()));
+    };
+    step.state = "answered".into();
+    step.reply = Some(text.to_owned());
+    step.reply_level = Some(if reply.public { "public" } else { "personal" }.into());
+    system.store.put_dispatch_step(&step)?;
+    row.state = "answered".into();
+    row.detail = None;
+    system.store.update_dispatch(&row)?;
+    Ok(Ok(()))
+}
+
+/// Carry on every dispatch whose question was answered. Each runs in a
+/// task of its own, from where its record says it stands.
+pub fn resume_answered(system: &Arc<System>) -> anyhow::Result<usize> {
+    let mut resumed = 0;
+    for mut row in system.store.dispatches_in("answered")? {
+        // Marked running before anything else, so it is picked up once.
+        row.state = "running".into();
+        system.store.update_dispatch(&row)?;
+        let pinned_task = system
+            .actions
+            .get(&system.store, &row.id)?
+            .ok_or_else(|| "the approval of this work is gone".to_owned())
+            .and_then(|a| Ok((pinned(system, &a.effect)?, a.current().payload.clone())));
+        let (pins, task) = match pinned_task {
+            Ok(p) => p,
+            Err(why) => {
+                row.state = "failed".into();
+                row.detail = Some(why);
+                row.ended_ms = Some(chrono::Utc::now().timestamp_millis());
+                system.store.update_dispatch(&row)?;
+                continue;
+            }
+        };
+        resumed += 1;
+        let system = Arc::clone(system);
+        tokio::spawn(async move {
+            let id = row.id.clone();
+            if let Err(e) = drive(&system, row, &pins, &task).await {
+                tracing::warn!(dispatch = %id, error = %e, "dispatch could not go on");
+            }
+        });
+    }
+    Ok(resumed)
+}
+
+/// Stop work that waits for an answer: nothing runs, so there is no
+/// process to end; the workspace goes. Says whether it was waiting.
+pub fn stop_waiting(system: &System, id: &str) -> anyhow::Result<bool> {
+    let Some(mut row) = system.store.get_dispatch(id)? else {
+        return Ok(false);
+    };
+    if row.state != "waiting" {
+        return Ok(false);
+    }
+    let _ = genatrix_exec::workspace::remove(
+        &system.exec.isolation(),
+        &system.exec.config().workspace(&row.id),
+    );
+    row.state = "stopped".into();
+    row.detail = Some("stopped by the user".into());
+    row.ended_ms = Some(chrono::Utc::now().timestamp_millis());
+    system.store.update_dispatch(&row)?;
+    Ok(true)
 }
 
 enum Ending {
     Finished(Option<String>),
     Stopped,
     Failed(String),
+    /// A step asked the user something; the work goes on once answered.
+    Waiting,
 }
 
 /// What one finished step left.
@@ -215,8 +379,11 @@ async fn work(
         )));
     }
     // Code in: the mirror follows the user's repository, then the
-    // executor's user clones it into its own workspace.
-    let base = {
+    // executor's user clones it into its own workspace. Work that goes on
+    // after an answer already has both.
+    let base = if let Some(base) = row.base.clone() {
+        Ok(base)
+    } else {
         let repo = super::repo_path(&pins.project);
         let (mirror, ws, iso, base_branch, branch) = (
             mirror.clone(),
@@ -249,9 +416,35 @@ async fn work(
     row.base = Some(base.clone());
     system.store.update_dispatch(row)?;
 
+    // Where the work stands: the steps already done, from the record, so
+    // that work going on after an answer, or after a restart, picks up
+    // where it stopped.
+    let records = system.store.dispatch_steps(&row.id)?;
     let mut done: Vec<Done> = Vec::new();
     let mut left: Vec<Left> = Vec::new();
-    let mut seq = 0i64;
+    let mut seq = records.iter().map(|r| r.seq).max().unwrap_or(0);
+    for r in records.iter().filter(|r| r.state == "done") {
+        let verdict: Option<Verdict> = r
+            .verdict
+            .as_deref()
+            .and_then(|v| serde_json::from_str(v).ok());
+        left.push(Left {
+            step: r.step.clone(),
+            round: u32::try_from(r.round).unwrap_or(1),
+            produces: pins
+                .recipe
+                .steps
+                .iter()
+                .find(|s| s.id == r.step)
+                .map_or(Produces::Notes, |s| s.produces),
+            notes: verdict.as_ref().map(|v| v.notes.clone()),
+            answer: r.answer.clone().unwrap_or_default(),
+        });
+        done.push(Done {
+            step: r.step.clone(),
+            verdict,
+        });
+    }
     let review_passed = loop {
         if system.exec.stopped(&row.id) {
             return Ok(Ending::Stopped);
@@ -311,6 +504,27 @@ async fn work(
                 });
             }
         }
+        // Earlier turns of this step that ended with a question, and the
+        // user's answers. An answer the user wrote leaves at its own level.
+        let mut level = pins.level;
+        for r in records
+            .iter()
+            .filter(|r| r.state == "answered" && r.step == step.id && r.round == i64::from(round))
+        {
+            material.push(Material {
+                id: format!("{}#{}-turn{}", step.id, round, r.seq),
+                label: "what you said at the end of an earlier turn of this step".into(),
+                text: r.answer.clone().unwrap_or_default(),
+            });
+            material.push(Material {
+                id: format!("reply#{}", r.seq),
+                label: "the user's answer to your question; it settles that question".into(),
+                text: r.reply.clone().unwrap_or_default(),
+            });
+            if r.reply_level.as_deref() == Some("personal") {
+                level = genatrix_model::Level::Personal;
+            }
+        }
         let text = compose(
             role,
             step,
@@ -345,7 +559,7 @@ async fn work(
                 step: step.id.clone(),
             },
             items: Vec::new(),
-            level: pins.level,
+            level,
             personal_allowed: pins.project.delegate_personal,
             identities: Vec::new(),
             text,
@@ -439,10 +653,18 @@ async fn work(
             return Ok(Ending::Failed(format!("step `{}`: {why}", step.id)));
         }
 
+        // A question stops the work here, with the workspace as it is.
+        let report = read_report(&end.answer);
+        if matches!(report, Report::Ask(_)) {
+            record.state = "waiting".into();
+            system.store.put_dispatch_step(&record)?;
+            return Ok(Ending::Waiting);
+        }
+
         let mut verdict = None;
         match step.produces {
             Produces::Commits => {
-                let message = format!("{}: {}", step.id, headline(task));
+                let message = commit_message(&report, &step.id, task);
                 let (iso, ws) = (iso.clone(), ws.clone());
                 let commit = tokio::task::spawn_blocking(move || {
                     genatrix_exec::workspace::commit_all(&iso, &ws, &message)
@@ -543,25 +765,7 @@ async fn work(
         .propose
         .contains(&Propose::OpenPullRequest)
     {
-        let body = format!(
-            "{}\n\n{}\n\n---\n{}\n\nMade by executors through Genatrix (dispatch {}).",
-            task.trim(),
-            match review_passed {
-                Some(true) => "The review passed.".to_owned(),
-                Some(false) => "The review did not pass within its rounds; read its notes below \
-                                before merging."
-                    .to_owned(),
-                None => String::new(),
-            },
-            left.iter()
-                .rev()
-                .find(|l| l.produces == Produces::Verdict)
-                .and_then(|l| l.notes.clone())
-                .filter(|n| !n.trim().is_empty())
-                .map(|n| format!("Review notes:\n\n{n}"))
-                .unwrap_or_default(),
-            row.id
-        );
+        let text = pull_request(task, &left, &received.stat, review_passed, &row.id);
         system.actions.propose(
             &system.store,
             &system.ledger,
@@ -573,12 +777,145 @@ async fn work(
                 branch: row.branch.clone(),
                 base: pins.project.base.clone(),
             },
-            format!("{}\n\n{body}", headline(task)),
+            text,
             format!("Open a pull request for dispatch {}", row.id),
             Vec::new(),
         )?;
     }
     Ok(Ending::Finished(None))
+}
+
+/// The commit message for what a step left: its own title and summary,
+/// or the step's name and the task's first line when it gave none.
+fn commit_message(report: &Report, step: &str, task: &str) -> String {
+    let (title, summary) = match report {
+        Report::Done { title, summary } => (title.clone(), summary.trim()),
+        Report::Ask(_) => (None, ""),
+    };
+    let subject = title.unwrap_or_else(|| format!("{step}: {}", headline(task)));
+    if summary.is_empty() {
+        subject
+    } else {
+        format!("{subject}\n\n{summary}")
+    }
+}
+
+/// Whether text is mostly written in Chinese, Japanese or Korean: the pull
+/// request's headings follow the task's language.
+fn is_cjk(text: &str) -> bool {
+    let (mut cjk, mut letters) = (0usize, 0usize);
+    for c in text.chars().filter(|c| c.is_alphabetic()) {
+        letters += 1;
+        if matches!(c as u32, 0x3040..=0x30ff | 0x3400..=0x9fff | 0xac00..=0xd7af) {
+            cjk += 1;
+        }
+    }
+    letters > 0 && cjk * 3 >= letters
+}
+
+/// The pull request: its title on the first line, then the body (design
+/// 13, "提交说明和 PR"). What the executors said goes in as they said it,
+/// in a card the user reads and may edit before anything is sent; what the
+/// core knows, it states itself.
+fn pull_request(
+    task: &str,
+    left: &[Left],
+    stat: &str,
+    review_passed: Option<bool>,
+    dispatch: &str,
+) -> String {
+    let zh = is_cjk(task);
+    let h = |en: &'static str, cn: &'static str| if zh { cn } else { en };
+    let commits: Vec<(&Left, Report)> = left
+        .iter()
+        .filter(|l| l.produces == Produces::Commits)
+        .map(|l| (l, read_report(&l.answer)))
+        .collect();
+    let summary_of = |r: &Report| match r {
+        Report::Done { summary, .. } => summary.trim().to_owned(),
+        Report::Ask(_) => String::new(),
+    };
+    let title = commits
+        .first()
+        .and_then(|(_, r)| match r {
+            Report::Done { title, .. } => title.clone(),
+            Report::Ask(_) => None,
+        })
+        .unwrap_or_else(|| headline(task));
+
+    let mut out = format!("{title}\n\n");
+    if let Some((_, first)) = commits.first() {
+        let s = summary_of(first);
+        if !s.is_empty() {
+            let _ = write!(out, "## {}\n\n{s}\n\n", h("Summary", "概要"));
+        }
+    }
+    let later: Vec<String> = commits
+        .iter()
+        .skip(1)
+        .map(|(l, r)| (l, summary_of(r)))
+        .filter(|(_, s)| !s.is_empty())
+        .map(|(l, s)| {
+            if zh {
+                format!("- 第 {} 轮：{s}", l.round)
+            } else {
+                format!("- Round {}: {s}", l.round)
+            }
+        })
+        .collect();
+    if !later.is_empty() {
+        let _ = write!(
+            out,
+            "## {}\n\n{}\n\n",
+            h("After review", "评审后的修改"),
+            later.join("\n")
+        );
+    }
+    if !stat.trim().is_empty() {
+        let _ = write!(
+            out,
+            "## {}\n\n```\n{}\n```\n\n",
+            h("Files changed", "改动的文件"),
+            stat.trim()
+        );
+    }
+    if let Some(passed) = review_passed {
+        let notes = left
+            .iter()
+            .rev()
+            .find(|l| l.produces == Produces::Verdict)
+            .and_then(|l| l.notes.clone())
+            .filter(|n| !n.trim().is_empty());
+        let _ = write!(
+            out,
+            "## {}\n\n{}\n\n",
+            h("Review", "评审"),
+            if passed {
+                h("The review passed.", "评审通过。")
+            } else {
+                h(
+                    "The review did not pass within its rounds; read its notes before merging.",
+                    "评审在轮数上限内没有通过，合并前请先看评审意见。",
+                )
+            }
+        );
+        if let Some(n) = notes {
+            let _ = write!(out, "{n}\n\n");
+        }
+    }
+    let quoted: Vec<String> = task.trim().lines().map(|l| format!("> {l}")).collect();
+    let _ = write!(
+        out,
+        "## {}\n\n{}\n\n---\n{}",
+        h("Task", "任务"),
+        quoted.join("\n"),
+        if zh {
+            format!("由 Genatrix 派单产生（{dispatch}）。")
+        } else {
+            format!("Made by executors through Genatrix (dispatch {dispatch}).")
+        }
+    );
+    out
 }
 
 /// The first line of the task, short enough for a commit subject.

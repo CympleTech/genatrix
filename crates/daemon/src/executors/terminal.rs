@@ -82,7 +82,23 @@ pub enum WorkAction {
         /// The dispatch's id.
         id: String,
     },
-    /// Stop a running dispatch. Only the core that runs it can; this asks it.
+    /// Answer the question a dispatch is waiting on. The running core
+    /// carries the work on within a few seconds.
+    Answer {
+        /// The dispatch's id.
+        id: String,
+        /// Choose one of its options, counting from 1.
+        #[arg(long)]
+        choose: Option<usize>,
+        /// Or answer in your own words.
+        text: Option<String>,
+        /// Say your words are not private, so they may go to the executor
+        /// as they are.
+        #[arg(long)]
+        public: bool,
+    },
+    /// Stop a dispatch. A running one is stopped by the core running it; one
+    /// waiting for your answer is stopped here.
     Stop {
         /// The dispatch's id.
         id: String,
@@ -487,6 +503,7 @@ pub fn definitions(system: &System, kind: &str, action: DefinitionAction) -> any
 }
 
 /// Carry out `genatrix work`.
+#[allow(clippy::too_many_lines)] // one match, one arm per command
 pub fn work(system: &System, action: WorkAction) -> anyhow::Result<()> {
     match action {
         WorkAction::Draft {
@@ -527,6 +544,18 @@ pub fn work(system: &System, action: WorkAction) -> anyhow::Result<()> {
             if let Some(detail) = &d.detail {
                 println!("{detail}");
             }
+            if let Some((_, q)) = super::run::question(system, &id)? {
+                println!("\n{}\n\n{}", q.progress, q.question);
+                for (i, o) in q.options.iter().enumerate() {
+                    let mark = if q.recommend == Some(i) {
+                        " (recommended)"
+                    } else {
+                        ""
+                    };
+                    println!("  {}. {o}{mark}", i + 1);
+                }
+                println!("\ngenatrix work answer {id} --choose N, or in your own words");
+            }
             for s in system.store.dispatch_steps(&id)? {
                 println!(
                     "\n#{} {} (round {}) · {} as {} · {}",
@@ -547,7 +576,38 @@ pub fn work(system: &System, action: WorkAction) -> anyhow::Result<()> {
             Ok(a) => println!("Offered again as {}; it waits on the approvals page.", a.id),
             Err(why) => anyhow::bail!(why),
         },
+        WorkAction::Answer {
+            id,
+            choose,
+            text,
+            public,
+        } => {
+            let reply = match (choose, text) {
+                (Some(n), None) => {
+                    let Some((_, q)) = super::run::question(system, &id)? else {
+                        anyhow::bail!("{id} is not waiting for an answer");
+                    };
+                    let Some(o) = n.checked_sub(1).and_then(|i| q.options.get(i)) else {
+                        anyhow::bail!("there is no option {n}");
+                    };
+                    super::run::Reply {
+                        text: o.clone(),
+                        public: true,
+                    }
+                }
+                (None, Some(text)) => super::run::Reply { text, public },
+                _ => anyhow::bail!("give either --choose N or your own words"),
+            };
+            match super::run::answer(system, &id, &reply)? {
+                Ok(()) => println!("Answered. The core carries the work on within a few seconds."),
+                Err(why) => anyhow::bail!(why),
+            }
+        }
         WorkAction::Stop { id } => {
+            if super::run::stop_waiting(system, &id)? {
+                println!("Stopped; its workspace is gone.");
+                return Ok(());
+            }
             println!(
                 "A dispatch is stopped by the core running it: use the stop button on its page \
                  (the core's local API: POST /api/dispatch/{id}/stop)."

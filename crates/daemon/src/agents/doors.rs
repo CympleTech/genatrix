@@ -121,6 +121,7 @@ impl StoreDoors {
                 Kind::Event => "event",
                 Kind::Note => "note",
                 Kind::File => "file",
+                Kind::Task => "task",
             }
             .to_owned(),
             direction: match item.direction {

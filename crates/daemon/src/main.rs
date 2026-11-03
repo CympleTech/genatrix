@@ -89,7 +89,7 @@ enum Command {
     /// checks it against the server, and keeps it in the keychain.
     Account {
         /// The address. For a well-known provider that is all it takes.
-        #[arg(long, required_unless_present_any = ["forget", "add_telegram"])]
+        #[arg(long, required_unless_present_any = ["forget", "add_telegram", "add_lark"])]
         add: Option<String>,
         /// The IMAP server, when it cannot be worked out from the address.
         #[arg(long)]
@@ -100,8 +100,16 @@ enum Command {
         /// Sign in to Telegram with this phone number (international form,
         /// `+64...`). Asks for the code Telegram sends, and the password if
         /// two-step verification is on.
-        #[arg(long, conflicts_with_all = ["add", "forget"], required_unless_present_any = ["add", "forget"])]
+        #[arg(long, conflicts_with_all = ["add", "forget"], required_unless_present_any = ["add", "forget", "add_lark"])]
         add_telegram: Option<String>,
+        /// Sign in to Lark through your company's app, by its App ID
+        /// (`cli_...`). Asks for the App Secret, then shows a link and a
+        /// code to confirm on any device (design 05, "飞书").
+        #[arg(long, conflicts_with_all = ["add", "forget", "add_telegram"])]
+        add_lark: Option<String>,
+        /// With `--add-lark`: the app is on Feishu (China), not Lark.
+        #[arg(long, requires = "add_lark")]
+        feishu: bool,
     },
     /// Run in the background from login onwards, or stop doing so.
     Service {
@@ -123,7 +131,7 @@ enum Command {
     /// Remove everything one connector brought in, so it is fetched again
     /// under today's rules. Shows the counts first; asks before deleting.
     Purge {
-        /// `telegram` or `imap`; or `promises`, for the promises the model
+        /// `telegram`, `imap` or `lark`; or `promises`, for the promises the model
         /// inferred and you never judged, to be read again.
         connector: String,
         /// Only show what would go.
@@ -249,8 +257,13 @@ async fn main() -> anyhow::Result<()> {
             add_telegram: Some(phone),
             ..
         } => add_telegram(&config, &phone).await,
+        Command::Account {
+            add_lark: Some(app_id),
+            feishu,
+            ..
+        } => add_lark(&config, &app_id, feishu).await,
         Command::Account { .. } => {
-            anyhow::bail!("say which account: --add, --forget or --add-telegram")
+            anyhow::bail!("say which account: --add, --forget, --add-telegram or --add-lark")
         }
         Command::Service { action } => service(&config, &action),
         Command::Sync { limit } => sync(&config, limit).await,
@@ -262,6 +275,7 @@ async fn main() -> anyhow::Result<()> {
             let system = System::open(config.clone(), ticket_key(&config, false)?)?;
             let connector = match connector.as_str() {
                 "telegram" => genatrix_model::Connector::Telegram,
+                "lark" => genatrix_model::Connector::Lark,
                 "imap" | "mail" => genatrix_model::Connector::Imap,
                 "promises" => return purge::promises(&system, dry_run, yes),
                 other => anyhow::bail!("no connector called {other}"),
@@ -560,15 +574,67 @@ async fn add_telegram(config: &Config, phone: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Sign in to Lark (design 05, "飞书", "应用与授权"): the app's secret, then
+/// the device flow, a link and a code the user confirms on any device.
+async fn add_lark(config: &Config, app_id: &str, feishu: bool) -> anyhow::Result<()> {
+    use genatrix_connector_lark::auth::{self, Poll};
+    use genatrix_connector_lark::{Brand, Secret};
+
+    let app_id = app_id.trim().to_owned();
+    if !app_id.starts_with("cli_") {
+        anyhow::bail!("a Lark App ID starts with cli_; it is on the app's Credentials page");
+    }
+    let app_secret = rpassword::prompt_password(format!("App Secret for {app_id}: "))?;
+    let secret = Secret {
+        app_id,
+        app_secret: app_secret.trim().to_owned(),
+        brand: if feishu { Brand::Feishu } else { Brand::Lark },
+    };
+    let system = System::open(config.clone(), ticket_key(config, false)?)?;
+
+    let starting = secret.clone();
+    let pending = tokio::task::spawn_blocking(move || auth::start_device(&starting)).await??;
+    println!();
+    println!("  open   {}", pending.verification_uri_complete);
+    println!("  code   {}", pending.user_code);
+    println!("  and confirm there, on this or any other device. Waiting…");
+
+    let mut interval = pending.interval.max(1);
+    let token = loop {
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+        let (s, p) = (secret.clone(), pending.clone());
+        match tokio::task::spawn_blocking(move || auth::poll_device(&s, &p)).await? {
+            Ok(Poll::Waiting) => {}
+            Ok(Poll::SlowDown) => interval = (interval + 5).min(60),
+            Ok(Poll::Done(token)) => break token,
+            Ok(Poll::Over(why)) => anyhow::bail!("not signed in: {why}"),
+            Err(auth::AuthError::Transient(why)) => tracing::warn!(%why, "polling Lark"),
+            Err(e) => anyhow::bail!("not signed in: {e}"),
+        }
+    };
+    let brand = secret.brand;
+    let shown = token.clone();
+    let me = tokio::task::spawn_blocking(move || auth::whoami(brand, &shown)).await??;
+    setup::keep_lark(&system, &secret, &me, &token)?;
+    println!(
+        "  signed in as {} ({}){}",
+        me.name,
+        me.open_id,
+        me.email
+            .as_deref()
+            .map_or(String::new(), |e| format!(", {e}"))
+    );
+    println!("  app secret  in the keychain; sign-in in the encrypted store");
+    println!();
+    println!("`genatrix serve` reads your Lark tasks while it runs; restart it to pick this up.");
+    Ok(())
+}
+
 /// Remove a mailbox from the list and its password from the keychain. Items
 /// already fetched stay, as design 05 says for a stopped account.
 async fn forget_account(config: &Config, address: &str) -> anyhow::Result<()> {
     let system = System::open(config.clone(), ticket_key(config, false)?)?;
-    let kind = if address.trim().starts_with('+') {
-        setup::Kind::Telegram
-    } else {
-        setup::Kind::Mail
-    };
+    let kind = setup::Kind::of(address);
     if setup::remove(&system, kind, address).await? {
         println!("{} removed; what it fetched stays", address.trim());
     } else {

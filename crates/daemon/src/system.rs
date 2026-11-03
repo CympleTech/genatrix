@@ -68,6 +68,17 @@ pub struct System {
             ),
         >,
     >,
+    /// Lark sign-ins waiting for the user to confirm on Lark's side, by id:
+    /// the app, and the device code being polled.
+    pub lark_logins: std::sync::Mutex<
+        std::collections::HashMap<
+            String,
+            (
+                genatrix_connector_lark::Secret,
+                genatrix_connector_lark::auth::Pending,
+            ),
+        >,
+    >,
     /// How the model download is going (design 04, "模型下载").
     pub download: std::sync::Mutex<crate::download::Progress>,
     /// Numbers that are slow to compute and slow to change: bytes on disk,
@@ -214,6 +225,7 @@ impl System {
             ticket_key,
             connector_tasks: std::sync::Mutex::new(Vec::new()),
             logins: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+            lark_logins: std::sync::Mutex::new(std::collections::HashMap::new()),
             download: std::sync::Mutex::new(crate::download::Progress::default()),
         })
     }

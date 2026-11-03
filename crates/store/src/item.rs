@@ -39,6 +39,7 @@ fn kind_to_col(k: Kind) -> &'static str {
         Kind::Event => "event",
         Kind::Note => "note",
         Kind::File => "file",
+        Kind::Task => "task",
     }
 }
 

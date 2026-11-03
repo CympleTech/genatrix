@@ -220,6 +220,206 @@ pub fn chat(
     Ok(Ingested::Added(item.id))
 }
 
+/// The person behind a Lark user, made on first sight (design 05, "归一":
+/// the `open_id` is a handle of its own kind).
+fn lark_person(
+    store: &Store,
+    party: &genatrix_connector::protocol::Party,
+) -> anyhow::Result<Option<genatrix_model::PersonId>> {
+    if party.id.trim().is_empty() {
+        return Ok(None);
+    }
+    let person = store.person_for_handle(HandleKind::LarkId, &party.id, &party.name)?;
+    // Someone first seen without a name (the app could not read contacts
+    // then) gets one as soon as a source says it.
+    store.name_if_unnamed(person, HandleKind::LarkId, &party.name)?;
+    Ok(Some(person))
+}
+
+/// A task's thread, kept up to date with its title and people.
+fn task_thread(
+    store: &Store,
+    account: &str,
+    key: &str,
+    title: &str,
+    members: Vec<genatrix_model::PersonId>,
+) -> anyhow::Result<ThreadId> {
+    let source = Source::new(Connector::Lark, account, key.to_owned());
+    let known = store.find_thread(&source)?;
+    let title = if title.is_empty() {
+        known.as_ref().and_then(|t| t.title.clone())
+    } else {
+        Some(title.to_owned())
+    };
+    let mut everyone = known.map(|t| t.members).unwrap_or_default();
+    for person in members {
+        if !everyone.contains(&person) {
+            everyone.push(person);
+        }
+    }
+    Ok(store.upsert_thread(&Thread {
+        id: ThreadId::new(),
+        kind: ThreadKind::Task,
+        source,
+        title,
+        members: everyone,
+        first_at: None,
+        last_at: None,
+    })?)
+}
+
+/// Turn one task, as it now stands, into an item, unless this version is
+/// already here. A changed task is a new raw record and a new item that
+/// supersedes the current one, as an edited chat message is (design 05,
+/// "飞书", "归一").
+pub fn task(
+    store: &Store,
+    raw_files: &FileStore,
+    account: &str,
+    record: &genatrix_connector::protocol::TaskRecord,
+) -> anyhow::Result<Ingested> {
+    use genatrix_model::{TaskList, TaskStatus};
+
+    let source = Source::new(Connector::Lark, account, record.external_id.clone());
+    let raw = Raw::describe(source.clone(), "application/json", &record.raw);
+    if !store.insert_raw(&raw)? {
+        return Ok(Ingested::AlreadyHad);
+    }
+    raw_files.put(&record.raw)?;
+
+    let me = store.self_person()?.map(|p| p.id);
+    let author = match &record.creator {
+        Some(creator) => lark_person(store, creator)?,
+        None => None,
+    };
+    let mut assignees = Vec::new();
+    for party in &record.assignees {
+        if let Some(person) = lark_person(store, party)?
+            && !assignees.contains(&person)
+        {
+            assignees.push(person);
+        }
+    }
+    let direction = genatrix_model::item::direction_of(author, &assignees, |p| me == Some(p), true);
+    let thread_id = task_thread(
+        store,
+        account,
+        &record.thread_key,
+        &record.title,
+        author
+            .into_iter()
+            .chain(assignees.iter().copied())
+            .collect(),
+    )?;
+
+    let time = |s: &str| chrono::DateTime::parse_from_rfc3339(s).ok();
+    let occurred_at = time(&record.updated)
+        .or_else(|| time(&record.created))
+        .unwrap_or_else(|| Utc::now().into());
+    let mut text = record.title.clone();
+    if !record.description.is_empty() {
+        text.push_str("\n\n");
+        text.push_str(&record.description);
+    }
+
+    let item = Item {
+        id: ItemId::new(),
+        supersedes: store.current_item(&source)?.map(|c| c.id),
+        source,
+        raw_id: raw.id,
+        thread_id,
+        occurred_at,
+        ingested_at: Utc::now(),
+        direction,
+        author,
+        recipients: assignees.clone(),
+        text,
+        blobs: vec![],
+        sensitivity: Level::default(),
+        tombstoned: false,
+        payload: Payload::Task {
+            title: record.title.clone(),
+            status: if record.status == "done" {
+                TaskStatus::Done
+            } else {
+                TaskStatus::Todo
+            },
+            due: record.due.as_deref().and_then(time),
+            url: record.url.clone(),
+            lists: record
+                .lists
+                .iter()
+                .map(|l| TaskList {
+                    id: l.id.clone(),
+                    name: l.name.clone(),
+                })
+                .collect(),
+            assignees,
+        },
+    };
+    store.insert_item(&item)?;
+    Ok(Ingested::Added(item.id))
+}
+
+/// Turn one comment on a task into an item in the task's thread.
+pub fn task_comment(
+    store: &Store,
+    raw_files: &FileStore,
+    account: &str,
+    comment: &genatrix_connector::protocol::TaskComment,
+) -> anyhow::Result<Ingested> {
+    let source = Source::new(Connector::Lark, account, comment.external_id.clone());
+    let raw = Raw::describe(source.clone(), "application/json", &comment.raw);
+    if !store.insert_raw(&raw)? {
+        return Ok(Ingested::AlreadyHad);
+    }
+    raw_files.put(&comment.raw)?;
+
+    let me = store.self_person()?.map(|p| p.id);
+    let author = match &comment.author {
+        Some(party) => lark_person(store, party)?,
+        None => None,
+    };
+    let direction = genatrix_model::item::direction_of(author, &[], |p| me == Some(p), true);
+    let thread_id = task_thread(
+        store,
+        account,
+        &comment.thread_key,
+        &comment.thread_title,
+        author.into_iter().collect(),
+    )?;
+    let reply_to = match &comment.reply_to {
+        Some(external) => store
+            .current_item(&Source::new(Connector::Lark, account, external.clone()))?
+            .map(|i| i.id),
+        None => None,
+    };
+    let item = Item {
+        id: ItemId::new(),
+        supersedes: store.current_item(&source)?.map(|c| c.id),
+        source,
+        raw_id: raw.id,
+        thread_id,
+        occurred_at: chrono::DateTime::parse_from_rfc3339(&comment.date)
+            .unwrap_or_else(|_| Utc::now().into()),
+        ingested_at: Utc::now(),
+        direction,
+        author,
+        recipients: vec![],
+        text: comment.text.clone(),
+        blobs: vec![],
+        sensitivity: Level::default(),
+        tombstoned: false,
+        payload: Payload::Message {
+            reply_to,
+            forwarded_from: None,
+            edited: false,
+        },
+    };
+    store.insert_item(&item)?;
+    Ok(Ingested::Added(item.id))
+}
+
 /// The person a direct chat is with, from its key (`chat:<telegram id>`).
 fn direct_peer(
     store: &Store,
@@ -793,5 +993,116 @@ Friday?\r\n";
         let top = system.store.speakers(groups[0].thread.id, 5).unwrap();
         assert_eq!(top[0].1, 2, "Bob spoke most");
         assert_eq!(system.store.voices(groups[0].thread.id).unwrap(), 2);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)] // one task's life, from first sight to done
+    fn a_lark_task_is_its_own_thread_its_changes_are_versions_and_its_comments_join_it() {
+        use genatrix_connector::protocol::{Party, TaskComment, TaskListRef, TaskRecord};
+        use genatrix_model::{Direction, TaskStatus};
+        let (_dir, system) = crate::system::test_system();
+        let store = &system.store;
+        // The user's own open_id, as signing in claims it.
+        let me = store
+            .person_for_handle(HandleKind::LarkId, "ou_me", "Me")
+            .unwrap();
+        store.set_self(me).unwrap();
+
+        let record = |status: &str, updated: &str| TaskRecord {
+            external_id: "task:g1".into(),
+            thread_key: "task:g1".into(),
+            title: "Fix the login page".into(),
+            description: "500 on Safari".into(),
+            status: status.into(),
+            due: Some("2026-11-10T00:00:00+00:00".into()),
+            url: Some("https://applink.larksuite.com/x".into()),
+            lists: vec![TaskListRef {
+                id: "tl".into(),
+                name: "Web".into(),
+            }],
+            creator: Some(Party {
+                id: "ou_boss".into(),
+                name: "Boss".into(),
+            }),
+            assignees: vec![Party {
+                id: "ou_me".into(),
+                name: "Me".into(),
+            }],
+            created: "2026-11-01T00:00:00+00:00".into(),
+            updated: updated.into(),
+            raw: format!("{{\"status\":\"{status}\",\"updated\":\"{updated}\"}}").into_bytes(),
+        };
+        let first = record("todo", "2026-11-01T01:00:00+00:00");
+        let Ingested::Added(v1) = task(store, &system.raw_files, "ou_me", &first).unwrap() else {
+            panic!("the first sight is new")
+        };
+        assert_eq!(
+            task(store, &system.raw_files, "ou_me", &first).unwrap(),
+            Ingested::AlreadyHad,
+            "the same version twice is one"
+        );
+        let item = store.get_item(v1).unwrap().unwrap();
+        assert_eq!(
+            item.direction,
+            Direction::Inbound,
+            "the boss assigned it to me"
+        );
+        assert_eq!(item.recipients, vec![me]);
+        assert!(item.text.starts_with("Fix the login page\n\n500"));
+        let thread = store.get_thread(item.thread_id).unwrap().unwrap();
+        assert_eq!(thread.kind, ThreadKind::Task);
+        assert_eq!(thread.title.as_deref(), Some("Fix the login page"));
+
+        let comment = TaskComment {
+            external_id: "comment:7".into(),
+            thread_key: "task:g1".into(),
+            thread_title: String::new(),
+            author: Some(Party {
+                id: "ou_me".into(),
+                name: "Me".into(),
+            }),
+            date: "2026-11-01T02:00:00+00:00".into(),
+            text: "on it".into(),
+            reply_to: None,
+            raw: b"{\"id\":\"7\"}".to_vec(),
+        };
+        let Ingested::Added(c) = task_comment(store, &system.raw_files, "ou_me", &comment).unwrap()
+        else {
+            panic!()
+        };
+        let c = store.get_item(c).unwrap().unwrap();
+        assert_eq!(
+            c.thread_id, item.thread_id,
+            "the comment is in the task's thread"
+        );
+        assert_eq!(c.direction, Direction::Outbound);
+        let thread = store.get_thread(item.thread_id).unwrap().unwrap();
+        assert_eq!(
+            thread.title.as_deref(),
+            Some("Fix the login page"),
+            "a comment without a title does not blank the task's"
+        );
+
+        let done = record("done", "2026-11-02T01:00:00+00:00");
+        let Ingested::Added(v2) = task(store, &system.raw_files, "ou_me", &done).unwrap() else {
+            panic!("a change is a new version")
+        };
+        let v2 = store.get_item(v2).unwrap().unwrap();
+        assert_eq!(v2.supersedes, Some(v1));
+        assert!(matches!(
+            v2.payload,
+            Payload::Task {
+                status: TaskStatus::Done,
+                ..
+            }
+        ));
+        assert_eq!(
+            store
+                .current_item(&Source::new(Connector::Lark, "ou_me", "task:g1"))
+                .unwrap()
+                .unwrap()
+                .id,
+            v2.id
+        );
     }
 }

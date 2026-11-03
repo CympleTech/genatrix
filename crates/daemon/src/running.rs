@@ -66,6 +66,7 @@ pub fn start(system: &Arc<System>) -> anyhow::Result<()> {
     }
 
     tasks.extend(start_telegram_accounts(system, &accounts, &grant)?);
+    tasks.extend(start_lark_accounts(system, &accounts, &grant)?);
 
     if let Some(binary) = connectors::mail_binary() {
         tasks.extend(connectors::start_mail(system.clone(), assigned, binary)?);
@@ -194,6 +195,67 @@ fn start_telegram_accounts(
             detail:
                 "genatrix-telegram is not beside this binary; `cargo build --release --workspace`"
                     .into(),
+        });
+    }
+    Ok(Vec::new())
+}
+
+/// The keychain service the Lark app secrets are kept under, by app id.
+pub const LARK_KEYCHAIN: &str = "Genatrix Lark";
+
+fn start_lark_accounts(
+    system: &Arc<System>,
+    accounts: &accounts::Accounts,
+    grant: &genatrix_connector::capability::Grant,
+) -> anyhow::Result<Vec<tokio::task::JoinHandle<()>>> {
+    if accounts.lark.is_empty() {
+        return Ok(Vec::new());
+    }
+    let keychain = crate::keychain::Keychain::named(LARK_KEYCHAIN);
+    let mut assigned = Vec::new();
+    for account in accounts.lark.values() {
+        let status = system.accounts.track(&account.open_id);
+        let app_secret = match keychain.read(&account.app_id) {
+            Ok(Some(secret)) => secret,
+            Ok(None) => {
+                status.send_replace(SyncState::NeedsLogin {
+                    detail: format!(
+                        "no secret stored for the Lark app {}; run `genatrix account --add-lark {}`",
+                        account.app_id, account.app_id
+                    ),
+                });
+                continue;
+            }
+            Err(e) => {
+                status.send_replace(SyncState::Retrying {
+                    detail: format!("the keychain could not be read: {e}"),
+                    attempt: 0,
+                    next_in_secs: 0,
+                });
+                continue;
+            }
+        };
+        let Some(capability) = grant.account(&account.open_id) else {
+            continue;
+        };
+        let secret = serde_json::to_string(&genatrix_connector_lark::Secret {
+            app_id: account.app_id.clone(),
+            app_secret,
+            brand: account.brand,
+        })?;
+        assigned.push(connectors::Assigned {
+            capability: capability.clone(),
+            secret,
+            status,
+        });
+    }
+    if let Some(binary) = connectors::binary_for("lark") {
+        return connectors::start_lark(system.clone(), assigned, binary);
+    }
+    for a in &assigned {
+        a.status.send_replace(SyncState::Stopped {
+            detail: "genatrix-lark is not beside this binary; `cargo build --release --workspace`"
+                .into(),
         });
     }
     Ok(Vec::new())

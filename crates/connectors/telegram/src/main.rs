@@ -128,6 +128,7 @@ impl Core {
                 account: self.account.clone(),
                 messages: vec![],
                 chats,
+                ..Default::default()
             }))
             .await?
         {

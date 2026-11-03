@@ -48,6 +48,8 @@ pub fn routes() -> Router<Arc<System>> {
         .route("/api/chats", get(chats))
         .route("/api/group/{id}", get(group))
         .route("/api/group/{id}/chat", get(group_chat))
+        .route("/api/task/{id}", get(task))
+        .route("/api/task/{id}/chat", get(group_chat))
         .route("/api/person/{id}/relationship", post(set_relationship))
         .route("/api/commitment/{id}", post(set_commitment))
         .route("/api/ledger", get(ledger))
@@ -273,7 +275,7 @@ struct ChatMessage {
     /// The user's own message: drawn on the right.
     mine: bool,
     connector: String,
-    /// `mail`, `direct`, `group` or `channel`.
+    /// `mail`, `direct`, `group`, `channel` or `task`.
     place: &'static str,
     /// For a group or channel, its name: the message was not said to the
     /// user alone, and the stream says so.
@@ -314,6 +316,7 @@ fn chat_messages(
                 Some(genatrix_model::ThreadKind::GroupChat) => "group",
                 Some(genatrix_model::ThreadKind::Channel) => "channel",
                 Some(genatrix_model::ThreadKind::DirectChat) => "direct",
+                Some(genatrix_model::ThreadKind::Task) => "task",
                 _ => "mail",
             };
             let mine = item.direction == genatrix_model::Direction::Outbound;
@@ -338,13 +341,14 @@ fn chat_messages(
                 mine,
                 connector: item.source.connector.as_str().to_owned(),
                 place,
-                place_name: matches!(place, "group" | "channel")
+                place_name: matches!(place, "group" | "channel" | "task")
                     .then(|| thread.and_then(|t| t.title.clone()))
                     .flatten(),
                 subject: match &item.payload {
                     genatrix_model::Payload::Mail { subject, .. } if !subject.is_empty() => {
                         Some(subject.clone())
                     }
+                    genatrix_model::Payload::Task { title, .. } => Some(title.clone()),
                     _ => None,
                 },
                 folded: shown.len() < text.len(),
@@ -453,10 +457,202 @@ struct Party {
     last_text: Option<String>,
     /// In a group, who said the last thing.
     last_author: Option<String>,
+    /// Whether that was you; the page says so in its own words.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    last_mine: bool,
     roles: Vec<String>,
     /// For a person, the messages either way one to one; for a group, all
     /// of its messages kept here.
     messages: u64,
+    /// A task's: `todo` or `done`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<&'static str>,
+    /// A task's due day.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    due: Option<String>,
+    /// Who gave the task.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from: Option<String>,
+    /// Whether that was you.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    from_me: bool,
+    /// The lists a task is in.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    lists: Vec<String>,
+}
+
+/// A task as one line of the list, or `None` when its own item is missing
+/// (only comments arrived, which a connector does not do).
+struct TaskFacts {
+    title: String,
+    done: bool,
+    due: Option<String>,
+    url: Option<String>,
+    lists: Vec<String>,
+    from: Option<String>,
+    from_me: bool,
+    assignees: Vec<Who>,
+    description: String,
+}
+
+/// Someone named on a task: their name, and whether it is you (design 06
+/// v0.12: you are "you", not one of your addresses).
+#[derive(Serialize)]
+struct Who {
+    name: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    me: bool,
+}
+
+fn task_facts(
+    system: &System,
+    thread: &genatrix_model::Thread,
+) -> Result<Option<TaskFacts>, ApiError> {
+    let Some(item) = system.store.current_item(&thread.source)? else {
+        return Ok(None);
+    };
+    let genatrix_model::Payload::Task {
+        title,
+        status,
+        due,
+        url,
+        lists,
+        assignees,
+    } = &item.payload
+    else {
+        return Ok(None);
+    };
+    let me = system.store.self_person()?.map(|p| p.id);
+    let description = item
+        .text
+        .strip_prefix(title.as_str())
+        .unwrap_or(&item.text)
+        .trim()
+        .to_owned();
+    Ok(Some(TaskFacts {
+        title: title.clone(),
+        done: *status == genatrix_model::TaskStatus::Done,
+        due: due.map(|d| {
+            d.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d")
+                .to_string()
+        }),
+        url: url.clone(),
+        lists: lists
+            .iter()
+            .map(|l| {
+                if l.name.is_empty() {
+                    l.id.clone()
+                } else {
+                    l.name.clone()
+                }
+            })
+            .collect(),
+        from: item.author.map(|a| name_of(system, Some(a))),
+        from_me: item.author.is_some() && item.author == me,
+        assignees: assignees
+            .iter()
+            .map(|p| Who {
+                name: name_of(system, Some(*p)),
+                me: Some(*p) == me,
+            })
+            .collect(),
+        description,
+    }))
+}
+
+/// Every task as a party (design 06 v0.12, "工作").
+fn task_parties(system: &System) -> Result<Vec<Party>, ApiError> {
+    let flat = |t: String| t.replace('\n', " ").trim().to_owned();
+    let overview = system.store.task_overview()?;
+    let ids: Vec<_> = overview.iter().map(|t| t.thread.id).collect();
+    let mut words = system.store.group_last_words(&ids)?;
+    let me = system.store.self_person()?.map(|p| p.id);
+    let mut out = Vec::new();
+    for t in overview {
+        let Some(facts) = task_facts(system, &t.thread)? else {
+            continue;
+        };
+        let word = words.remove(&t.thread.id);
+        out.push(Party {
+            kind: "task",
+            id: t.thread.id.to_string(),
+            name: facts.title,
+            last_at: day_of_ms(t.last_ms),
+            last_ms: t.last_ms,
+            last_author: word
+                .as_ref()
+                .and_then(|w| w.author)
+                .map(|a| name_of(system, Some(a))),
+            last_mine: me.is_some() && word.as_ref().and_then(|w| w.author) == me,
+            last_text: word.map(|w| flat(w.text)),
+            roles: Vec::new(),
+            messages: t.messages,
+            status: Some(if facts.done { "done" } else { "todo" }),
+            due: facts.due,
+            from: facts.from,
+            from_me: facts.from_me,
+            lists: facts.lists,
+        });
+    }
+    Ok(out)
+}
+
+#[derive(Serialize)]
+struct TaskDetail {
+    id: String,
+    name: String,
+    status: &'static str,
+    due: Option<String>,
+    url: Option<String>,
+    lists: Vec<String>,
+    from: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    from_me: bool,
+    assignees: Vec<Who>,
+    description: String,
+    connector: String,
+    messages: u64,
+    first_at: Option<String>,
+    last_at: Option<String>,
+}
+
+/// The facts about one task: its own, as it stands now.
+async fn task(State(system): Shared, Path(id): Path<String>) -> Result<Response, ApiError> {
+    let Ok(id) = id.parse::<genatrix_model::ThreadId>() else {
+        return Ok(not_found("that is not a thread identifier"));
+    };
+    let Some(thread) = system.store.get_thread(id)? else {
+        return Ok(not_found("no such task"));
+    };
+    if thread.kind != genatrix_model::ThreadKind::Task {
+        return Ok(not_found("that is not a task"));
+    }
+    let Some(facts) = task_facts(&system, &thread)? else {
+        return Ok(not_found("the task itself has not arrived"));
+    };
+    let row = system
+        .store
+        .task_overview()?
+        .into_iter()
+        .find(|t| t.thread.id == id);
+    Ok(Json(TaskDetail {
+        id: id.to_string(),
+        name: facts.title,
+        status: if facts.done { "done" } else { "todo" },
+        due: facts.due,
+        url: facts.url,
+        lists: facts.lists,
+        from: facts.from,
+        from_me: facts.from_me,
+        assignees: facts.assignees,
+        description: facts.description,
+        connector: thread.source.connector.as_str().to_owned(),
+        messages: row.as_ref().map_or(0, |t| t.messages),
+        first_at: row.as_ref().and_then(|t| day_of_ms(t.first_ms)),
+        last_at: row.as_ref().and_then(|t| day_of_ms(t.last_ms)),
+    })
+    .into_response())
 }
 
 /// Size and last activity of every group and channel, at most once a minute,
@@ -494,7 +690,6 @@ fn day_of_ms(ms: i64) -> Option<String> {
     })
 }
 
-/// Every conversation, people and groups together, most recent first.
 /// The parties that are not people or groups: the one entry for quiet mail
 /// (design 06, "订阅与广告") and the installed agents (design 11).
 fn more_parties(system: &System) -> Result<Vec<Party>, ApiError> {
@@ -512,8 +707,14 @@ fn more_parties(system: &System) -> Result<Vec<Party>, ApiError> {
             last_ms: newest.last_ms,
             last_text: Some(newest.name.clone()),
             last_author: None,
+            last_mine: false,
             roles: Vec::new(),
             messages: quiet,
+            status: None,
+            due: None,
+            from: None,
+            from_me: false,
+            lists: Vec::new(),
         });
     }
     // Installed agents are parties too (design 06 v0.5, design 11): the
@@ -530,8 +731,14 @@ fn more_parties(system: &System) -> Result<Vec<Party>, ApiError> {
             last_ms: c.last_ms,
             last_text: c.last_text.map(flat),
             last_author: None,
+            last_mine: false,
             roles: Vec::new(),
             messages: c.runs,
+            status: None,
+            due: None,
+            from: None,
+            from_me: false,
+            lists: Vec::new(),
         });
     }
     Ok(out)
@@ -569,6 +776,7 @@ async fn chats(State(system): Shared) -> Result<Json<Vec<Party>>, ApiError> {
     let mut person_words = system.store.last_words(&person_ids)?;
     let mut roles = system.store.roles_for(&person_ids)?;
     let mut group_words = system.store.group_last_words(&thread_ids)?;
+    let me = system.store.self_person()?.map(|p| p.id);
     let flat = |t: String| t.replace('\n', " ").trim().to_owned();
 
     let mut out = parties
@@ -584,8 +792,14 @@ async fn chats(State(system): Shared) -> Result<Json<Vec<Party>>, ApiError> {
                     last_ms: ms,
                     last_text: person_words.remove(&o.person.id).map(flat),
                     last_author: None,
+                    last_mine: false,
                     roles: roles.remove(&o.person.id).unwrap_or_default(),
                     messages: o.from_them + o.to_them,
+                    status: None,
+                    due: None,
+                    from: None,
+                    from_me: false,
+                    lists: Vec::new(),
                 }
             } else {
                 let g = &groups[i];
@@ -604,14 +818,21 @@ async fn chats(State(system): Shared) -> Result<Json<Vec<Party>>, ApiError> {
                         .as_ref()
                         .and_then(|w| w.author)
                         .map(|a| name_of(&system, Some(a))),
+                    last_mine: me.is_some() && word.as_ref().and_then(|w| w.author) == me,
                     last_text: word.map(|w| flat(w.text)),
                     roles: Vec::new(),
                     messages: g.messages,
+                    status: None,
+                    due: None,
+                    from: None,
+                    from_me: false,
+                    lists: Vec::new(),
                 }
             }
         })
         .collect::<Vec<_>>();
     out.extend(more_parties(&system)?);
+    out.extend(task_parties(&system)?);
     out.sort_by_key(|p| std::cmp::Reverse(p.last_ms));
     Ok(Json(out))
 }
@@ -1340,6 +1561,7 @@ async fn review(
             .unwrap_or_default();
         let subject = match &item.payload {
             genatrix_model::Payload::Mail { subject, .. } => Some(subject.clone()),
+            genatrix_model::Payload::Task { title, .. } => Some(title.clone()),
             _ => None,
         };
         items.push(ReviewRow {
@@ -1693,6 +1915,7 @@ fn detail(system: &System, id: ItemId) -> Result<Detail, ApiError> {
         .collect();
     let subject = match &item.payload {
         genatrix_model::Payload::Mail { subject, .. } => Some(subject.clone()),
+        genatrix_model::Payload::Task { title, .. } => Some(title.clone()),
         _ => None,
     };
 
@@ -2052,4 +2275,62 @@ fn not_found(message: &str) -> Response {
         Json(serde_json::json!({ "error": message })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use genatrix_connector::protocol::{Party as LarkParty, TaskRecord};
+    use genatrix_model::HandleKind;
+
+    use super::*;
+
+    /// You are "you" on a task, not whichever of your addresses named you
+    /// first (design 06 v0.12).
+    #[test]
+    fn on_a_task_you_are_marked_as_you_and_others_by_name() {
+        let (_dir, system) = crate::system::test_system();
+        let store = &system.store;
+        let me = store
+            .person_for_handle(HandleKind::Email, "me@example.com", "me@example.com")
+            .unwrap();
+        store.set_self(me).unwrap();
+        store
+            .person_for_handle(HandleKind::LarkId, "ou_me", "Me")
+            .and_then(|p| store.fold_person(p, me, true).map(|_| ()))
+            .unwrap();
+        let who = |id: &str, name: &str| LarkParty {
+            id: id.into(),
+            name: name.into(),
+        };
+        let record = TaskRecord {
+            external_id: "task:g1".into(),
+            thread_key: "task:g1".into(),
+            title: "Fix the login page".into(),
+            status: "todo".into(),
+            creator: Some(who("ou_boss", "Boss")),
+            assignees: vec![who("ou_boss", "Boss"), who("ou_me", "Me")],
+            created: "2026-11-01T00:00:00+00:00".into(),
+            updated: "2026-11-01T01:00:00+00:00".into(),
+            raw: b"{}".to_vec(),
+            ..Default::default()
+        };
+        crate::ingest::task(store, &system.raw_files, "ou_me", &record).unwrap();
+
+        let Ok(rows) = task_parties(&system) else {
+            panic!("the tasks could not be listed")
+        };
+        let row = &rows[0];
+        assert_eq!(row.from.as_deref(), Some("Boss"));
+        assert!(!row.from_me);
+        let thread = store.get_thread(row.id.parse().unwrap()).unwrap().unwrap();
+        let Ok(Some(facts)) = task_facts(&system, &thread) else {
+            panic!("the task has no facts")
+        };
+        let named: Vec<(&str, bool)> = facts
+            .assignees
+            .iter()
+            .map(|w| (w.name.as_str(), w.me))
+            .collect();
+        assert_eq!(named, [("Boss", false), ("me@example.com", true)]);
+    }
 }

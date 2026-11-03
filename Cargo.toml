@@ -4,6 +4,7 @@ members = [
     "crates/agent",
     "crates/connectors/github",
     "crates/connectors/imap",
+    "crates/connectors/lark",
     "crates/connectors/protocol",
     "crates/connectors/telegram",
     "crates/daemon",
@@ -43,6 +44,7 @@ genatrix-llm = { path = "crates/llm" }
 genatrix-connector = { path = "crates/connectors/protocol" }
 genatrix-connector-imap = { path = "crates/connectors/imap" }
 genatrix-connector-telegram = { path = "crates/connectors/telegram" }
+genatrix-connector-lark = { path = "crates/connectors/lark" }
 genatrix-host = { path = "crates/host" }
 genatrix-dispatch = { path = "crates/dispatch" }
 genatrix-exec = { path = "crates/exec" }

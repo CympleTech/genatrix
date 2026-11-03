@@ -1,0 +1,31 @@
+[package]
+name = "genatrix-connector-lark"
+description = "Lark (Feishu) connector: the tasks assigned to the user, read only"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "genatrix-lark"
+path = "src/main.rs"
+
+[dependencies]
+genatrix-connector.workspace = true
+genatrix-model.workspace = true
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+clap = { workspace = true, features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+
+[lints]
+workspace = true

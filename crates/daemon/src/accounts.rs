@@ -65,6 +65,25 @@ pub const TELEGRAM_HOSTS: &[&str] = &[
     "149.154.171.5",
 ];
 
+/// One Lark (Feishu) account: the user, signed in to their company's app.
+/// The app secret is in the keychain and the sign-in in the encrypted
+/// store; neither is here.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LarkAccount {
+    /// The user's `open_id` for the app, which is the account's name.
+    pub open_id: String,
+    /// Their name at sign-in.
+    pub name: String,
+    /// Their email, when Lark gave one.
+    #[serde(default)]
+    pub email: Option<String>,
+    /// The company's app.
+    pub app_id: String,
+    /// Lark or Feishu.
+    #[serde(default)]
+    pub brand: genatrix_connector_lark::Brand,
+}
+
 /// Every account, as stored.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Accounts {
@@ -74,6 +93,9 @@ pub struct Accounts {
     /// Telegram accounts, keyed by phone number.
     #[serde(default)]
     pub telegram: BTreeMap<String, TelegramAccount>,
+    /// Lark accounts, keyed by `open_id`.
+    #[serde(default)]
+    pub lark: BTreeMap<String, LarkAccount>,
 }
 
 impl Accounts {
@@ -132,6 +154,11 @@ impl Accounts {
         );
     }
 
+    /// Add or replace a Lark account.
+    pub fn add_lark(&mut self, account: LarkAccount) {
+        self.lark.insert(account.open_id.clone(), account);
+    }
+
     /// What each account is allowed to reach and do.
     #[must_use]
     pub fn grant(&self) -> Grant {
@@ -153,7 +180,14 @@ impl Accounts {
             }
             capability
         });
-        Grant::of(mail.chain(telegram).collect())
+        // Lark: its own open platform, and nothing to carry out. Signing in
+        // reaches the accounts host too, but that is the core, not the
+        // connector (design 05, "飞书").
+        let lark = self.lark.values().map(|account| {
+            AccountCapability::new(Connector::Lark, &account.open_id)
+                .with_host(Host::new(account.brand.open_host(), 443))
+        });
+        Grant::of(mail.chain(telegram).chain(lark).collect())
     }
 }
 
@@ -255,6 +289,28 @@ mod tests {
             "no password is written down: {text}"
         );
         assert_eq!(Accounts::load(&path).unwrap().mail.len(), 1);
+    }
+
+    #[test]
+    fn a_lark_account_reaches_its_open_platform_only_and_may_do_nothing() {
+        let mut accounts = Accounts::default();
+        accounts.add_lark(LarkAccount {
+            open_id: "ou_me".into(),
+            name: "Me".into(),
+            email: None,
+            app_id: "cli_1".into(),
+            brand: genatrix_connector_lark::Brand::Lark,
+        });
+        let grant = accounts.grant();
+        let cap = grant.account("ou_me").unwrap();
+        assert_eq!(cap.connector, Connector::Lark);
+        assert!(cap.may_reach(&Host::new("open.larksuite.com", 443)));
+        assert!(!cap.may_reach(&Host::new("accounts.larksuite.com", 443)));
+        assert!(!cap.may_reach(&Host::new("open.feishu.cn", 443)));
+        assert!(
+            cap.effects.is_empty(),
+            "read only (design 05, \"飞书\", 不做)"
+        );
     }
 
     #[test]

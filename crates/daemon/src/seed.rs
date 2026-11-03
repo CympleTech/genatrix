@@ -201,10 +201,13 @@ pub fn run(store: &Store, raw_files: &FileStore) -> anyhow::Result<usize> {
             Connector::Telegram => {
                 store.person_for_handle(HandleKind::TelegramId, sample.from, sample.from_name)?
             }
+            Connector::Lark => {
+                store.person_for_handle(HandleKind::LarkId, sample.from, sample.from_name)?
+            }
         };
         let self_person = match sample.connector {
             Connector::Imap => me,
-            Connector::Telegram => me_telegram,
+            Connector::Telegram | Connector::Lark => me_telegram,
         };
         let outbound = author == self_person;
         let recipients = if outbound { vec![] } else { vec![self_person] };
@@ -226,7 +229,7 @@ pub fn run(store: &Store, raw_files: &FileStore) -> anyhow::Result<usize> {
                     .map(|(n, v)| ((*n).to_lowercase(), (*v).to_owned()))
                     .collect(),
             },
-            Connector::Telegram => Payload::Message {
+            Connector::Telegram | Connector::Lark => Payload::Message {
                 reply_to: None,
                 forwarded_from: None,
                 edited: false,
@@ -263,6 +266,7 @@ const fn content_type(connector: Connector) -> &'static str {
     match connector {
         Connector::Imap => "message/rfc822",
         Connector::Telegram => "application/x-telegram-message+json",
+        Connector::Lark => "application/json",
     }
 }
 

@@ -41,12 +41,24 @@ pub struct LastWord {
 }
 
 const MULTI: &str = "t.kind IN ('group_chat', 'channel')";
+const TASKS: &str = "t.kind = 'task'";
 
 impl Store {
     /// Every group and channel with something kept from it, most recently
     /// active first. Answered from `item_thread` for the counts and times;
     /// the user's own share needs the author, so it reads the rows.
     pub fn group_overview(&self) -> Result<Vec<GroupOverview>> {
+        self.containers(MULTI)
+    }
+
+    /// Every task (design 06 v0.12, "工作"), the same way: a task is a
+    /// container of its versions and its comments. Counts include every
+    /// version.
+    pub fn task_overview(&self) -> Result<Vec<GroupOverview>> {
+        self.containers(TASKS)
+    }
+
+    fn containers(&self, which: &str) -> Result<Vec<GroupOverview>> {
         let me = self
             .self_person()?
             .map(|p| p.id.to_string())
@@ -57,7 +69,7 @@ impl Store {
                     sum(CASE WHEN i.author = ?1 THEN 1 ELSE 0 END) AS n_mine,
                     min(i.occurred_ms) AS first_ms, max(i.occurred_ms) AS last_ms
              FROM thread t JOIN item i ON i.thread_id = t.id
-             WHERE {MULTI} AND i.tombstoned = 0
+             WHERE {which} AND i.tombstoned = 0
              GROUP BY t.id
              ORDER BY last_ms DESC"
         ))?;

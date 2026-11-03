@@ -36,7 +36,7 @@ impl Store {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT i.id FROM item i
-             WHERE i.thread_id NOT IN (SELECT id FROM thread WHERE kind IN ('group_chat', 'channel'))
+             WHERE i.thread_id NOT IN (SELECT id FROM thread WHERE kind IN ('group_chat', 'channel', 'task'))
                AND (i.author = ?1
                     OR (EXISTS (SELECT 1 FROM json_each(i.recipients) WHERE value = ?1)
                         AND NOT EXISTS (SELECT 1 FROM json_each(i.recipients)

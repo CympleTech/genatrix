@@ -346,9 +346,9 @@
   .work-form { @apply flex flex-col gap-2.5; }
   .work-form label { @apply flex flex-col gap-1 text-[13px] text-muted; }
   .work-form label.quiet-toggle { @apply flex-row; }
-  .work-form .field { @apply flex flex-col gap-1.5; }
-  .work-form .field-label { @apply text-[13px] text-muted; }
-  .work-form .field .chooser { @apply mt-0; }
+  .work-form .field, .setup-form .field { @apply flex flex-col gap-1.5; }
+  .work-form .field-label, .setup-form .field-label { @apply text-[13px] text-muted; }
+  .work-form .field .chooser, .setup-form .field .chooser { @apply mt-0; }
   .work-form .field-note { @apply m-0 text-[12px] leading-[1.5]; color: var(--faint); }
   .work .state.running { color: var(--accent-ink); }
   .work .state.failed { color: var(--secret); }
@@ -518,6 +518,18 @@
   }
   .chat-search input { @apply min-h-[42px] flex-1 border-0 bg-transparent text-[15px] text-ink outline-none; }
   .parties { @apply m-0 flex list-none flex-col gap-1 p-0; }
+  .segments { @apply mb-3 flex gap-1 rounded-full bg-surface p-1; box-shadow: var(--shadow); }
+  .segment {
+    @apply flex min-h-[36px] flex-1 items-center justify-center gap-1.5 rounded-full border-0 bg-transparent px-3 text-[14px] font-medium text-muted;
+  }
+  .segment.is-on { background: var(--ink); color: var(--surface); }
+  .segment-count { @apply rounded-full px-1.5 text-[11px] font-semibold; background: var(--accent); color: var(--surface); }
+  .parties-divider { @apply px-3 pb-1 pt-4 text-[12px] font-medium uppercase tracking-wide; color: var(--faint); }
+  .task-party.done .party-name { @apply font-medium text-muted line-through; text-decoration-color: var(--faint); }
+  .party-when.due { color: var(--accent); }
+  .task-status { @apply rounded-full px-2 py-0.5 text-[12px] font-semibold; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--accent); }
+  .task-status.done { background: var(--surface-2); color: var(--muted); }
+  .task-description { @apply whitespace-pre-wrap text-[14px]; overflow-wrap: anywhere; }
   .party {
     @apply flex w-full items-center gap-3.5 rounded-card border-0 bg-transparent px-3 py-3 text-left transition-colors;
   }

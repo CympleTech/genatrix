@@ -23,6 +23,8 @@ pub enum Kind {
     Note,
     /// A file.
     File,
+    /// A task assigned to the user.
+    Task,
 }
 
 /// The item from your point of view. Computed from the `is_self` person.
@@ -100,6 +102,21 @@ pub enum Payload {
         /// Whether the body is markdown.
         markdown: bool,
     },
+    /// A task, as it stands in this version.
+    Task {
+        /// Title.
+        title: String,
+        /// To do or done.
+        status: TaskStatus,
+        /// When it is due, if it has a date.
+        due: Option<Timestamp>,
+        /// Where it lives in the source, for opening it there.
+        url: Option<String>,
+        /// The lists it belongs to.
+        lists: Vec<TaskList>,
+        /// Who it is assigned to.
+        assignees: Vec<PersonId>,
+    },
     /// A file.
     File {
         /// File name.
@@ -121,8 +138,28 @@ impl Payload {
             Self::Event { .. } => Kind::Event,
             Self::Note { .. } => Kind::Note,
             Self::File { .. } => Kind::File,
+            Self::Task { .. } => Kind::Task,
         }
     }
+}
+
+/// Whether a task is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    /// Still to do.
+    Todo,
+    /// Done.
+    Done,
+}
+
+/// A list a task belongs to, as the source names it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TaskList {
+    /// The source's stable identifier.
+    pub id: String,
+    /// Its name when the task was read.
+    pub name: String,
 }
 
 /// One cell on the timeline.

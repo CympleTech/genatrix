@@ -11,14 +11,15 @@ use genatrix_model::Connector;
 use crate::config::Config;
 use crate::system::System;
 
-/// Sync cursors that survive a purge: the Telegram session, so the account
-/// stays signed in and history is simply fetched again.
-const KEEP: [&str; 1] = ["session"];
+/// Sync cursors that survive a purge: the Telegram session and the Lark
+/// sign-in, so the account stays signed in and history is simply fetched
+/// again.
+const KEEP: [&str; 2] = ["session", "oauth"];
 
 /// Whether a core is running on this data directory: it listens for its
 /// connectors.
 fn core_running(config: &Config) -> bool {
-    ["imap", "telegram"].iter().any(|kind| {
+    ["imap", "telegram", "lark"].iter().any(|kind| {
         std::os::unix::net::UnixStream::connect(
             config.data_dir.join("run").join(format!("{kind}.sock")),
         )

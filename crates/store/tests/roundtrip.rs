@@ -582,3 +582,85 @@ fn junk_takes_one_conversation_and_keeps_the_mark() {
     f.store.set_person_junk(f.alice, None).unwrap();
     assert!(!f.store.is_junk_handle(HandleKind::TelegramId, "2").unwrap());
 }
+
+#[test]
+fn a_person_named_only_by_their_address_takes_a_name_later_and_keeps_one_given() {
+    let store = Store::open_in_memory(&key()).unwrap();
+    let nameless = store
+        .person_for_handle(HandleKind::LarkId, "ou_1", "")
+        .unwrap();
+    assert!(
+        store
+            .name_if_unnamed(nameless, HandleKind::LarkId, "Ann")
+            .unwrap()
+    );
+    assert_eq!(
+        store.get_person(nameless).unwrap().unwrap().display_name,
+        "Ann"
+    );
+    assert!(
+        !store
+            .name_if_unnamed(nameless, HandleKind::LarkId, "Someone else")
+            .unwrap(),
+        "a real name is never replaced"
+    );
+    assert_eq!(
+        store.get_person(nameless).unwrap().unwrap().display_name,
+        "Ann"
+    );
+}
+
+#[test]
+fn a_task_is_its_own_conversation_and_not_part_of_the_assigners() {
+    let mut f = fixture();
+    message(
+        &f,
+        "dm:1",
+        f.alice,
+        f.me,
+        "2026-11-01T09:00:00+00:00",
+        "lunch?",
+    );
+    f.thread = f
+        .store
+        .upsert_thread(&Thread {
+            id: ThreadId::new(),
+            kind: ThreadKind::Task,
+            source: Source::new(Connector::Lark, "me", "task:g1"),
+            title: Some("Fix the login page".into()),
+            members: vec![f.alice, f.me],
+            first_at: None,
+            last_at: None,
+        })
+        .unwrap();
+    let task = message(
+        &f,
+        "task:g1",
+        f.alice,
+        f.me,
+        "2026-11-01T10:00:00+00:00",
+        "Fix it",
+    );
+
+    let tasks = f.store.task_overview().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].thread.id, f.thread);
+    assert!(
+        f.store.group_overview().unwrap().is_empty(),
+        "a task is not a group"
+    );
+
+    let alices = f.store.person_conversation_items(f.alice).unwrap();
+    assert_eq!(
+        alices.len(),
+        1,
+        "only the direct message is Alice's conversation"
+    );
+    assert!(!alices.contains(&task.id.to_string()));
+    let people = f.store.people_overview(10).unwrap();
+    let alice = people.iter().find(|p| p.person.id == f.alice).unwrap();
+    assert_eq!(
+        alice.from_them, 1,
+        "the task is not counted as something Alice said to you"
+    );
+}

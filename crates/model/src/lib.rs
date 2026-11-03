@@ -26,7 +26,7 @@ pub use blob::{Blob, ContentHash};
 pub use commitment::{Commitment, CommitmentStatus, Standing};
 pub use digest::{Digest, DigestGroup, DigestPoint};
 pub use id::{AnnotationId, BlobRef, CommitmentId, HandleId, ItemId, PersonId, RawId, ThreadId};
-pub use item::{Direction, Item, Kind, Payload, Timestamp};
+pub use item::{Direction, Item, Kind, Payload, TaskList, TaskStatus, Timestamp};
 pub use person::{Confidence, Handle, HandleKind, Person};
 pub use raw::Raw;
 pub use sensitivity::Level;

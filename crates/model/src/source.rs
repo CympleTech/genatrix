@@ -10,6 +10,8 @@ pub enum Connector {
     Imap,
     /// Telegram, user-account protocol.
     Telegram,
+    /// Lark (Feishu) tasks, read as the user.
+    Lark,
 }
 
 impl Connector {
@@ -19,6 +21,7 @@ impl Connector {
         match self {
             Self::Imap => "imap",
             Self::Telegram => "telegram",
+            Self::Lark => "lark",
         }
     }
 }

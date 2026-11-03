@@ -3,6 +3,7 @@
   import {
     get, post,
     type Action, type ChatMessage, type ChatPage, type Detail, type GroupDetail, type PersonDetail,
+    type TaskDetail,
   } from '../lib/api';
   import { t } from '../lib/i18n';
   import { connectorName, hours, initials } from '../lib/format';
@@ -21,11 +22,14 @@
   // card in the stream, and nothing is sent from here.
   //
   // A party is a person, whose conversation is what passed one to one, or a
-  // group or channel, which is one party however many people are in it.
-  let { kind, id, name: given = '' }: { kind: 'person' | 'group'; id: string; name?: string } = $props();
+  // group or channel, which is one party however many people are in it, or
+  // a task with its comments (v0.12), which is read here and answered in
+  // the source.
+  let { kind, id, name: given = '' }: { kind: 'person' | 'group' | 'task'; id: string; name?: string } = $props();
 
   let person = $state<PersonDetail | null>(null);
   let group = $state<GroupDetail | null>(null);
+  let task = $state<TaskDetail | null>(null);
   let messages = $state<ChatMessage[]>([]);
   let earlier = $state(false);
   let loading = $state(true);
@@ -43,13 +47,14 @@
   let panel = $state<HTMLElement | null>(null);
   let stream = $state<HTMLElement | null>(null);
 
-  const base = $derived(kind === 'person' ? `/api/person/${id}` : `/api/group/${id}`);
-  const name = $derived(given || person?.card.name || group?.name || '');
+  const base = $derived(kind === 'person' ? `/api/person/${id}` : kind === 'task' ? `/api/task/${id}` : `/api/group/${id}`);
+  const name = $derived(given || person?.card.name || group?.name || task?.name || '');
   const open = $derived(person?.commitments.filter((c) => c.status === 'open' || c.status === 'overdue') ?? []);
   // In a person's conversation every message is one to one; in a group the
   // reply goes to the group, which is what you are there to do.
   const target = $derived(
-    [...messages].reverse().find((m) => !m.mine && (kind === 'group' || m.place === 'direct' || m.place === 'mail')) ?? null,
+    kind === 'task' ? null
+      : [...messages].reverse().find((m) => !m.mine && (kind === 'group' || m.place === 'direct' || m.place === 'mail')) ?? null,
   );
 
   // The panel takes the height the window has left, so the facts stay put and
@@ -77,6 +82,8 @@
       get<PersonDetail>(base)
         .then((d) => { person = d; roles = [...d.card.roles]; notes = d.notes || ''; })
         .catch((e) => { error = e.message; });
+    } else if (kind === 'task') {
+      get<TaskDetail>(base).then((d) => { task = d; }).catch((e) => { error = e.message; });
     } else {
       get<GroupDetail>(base).then((d) => { group = d; }).catch((e) => { error = e.message; });
     }
@@ -224,8 +231,8 @@
 <div class="conversation" bind:this={panel}>
   <header class="conv-head">
     <button type="button" class="back" onclick={() => go('/chats')} aria-label={t('people.back')}><Icon name="back" size={18} /></button>
-    <span class="avatar" class:multi={kind === 'group'}>
-      {#if kind === 'group'}<Icon name={group?.kind ?? 'group'} size={18} />{:else}{initials(name)}{/if}
+    <span class="avatar" class:multi={kind !== 'person'}>
+      {#if kind === 'group'}<Icon name={group?.kind ?? 'group'} size={18} />{:else if kind === 'task'}<Icon name="task" size={18} />{:else}{initials(name)}{/if}
     </span>
     <div class="conv-title">
       <span class="conv-name">{name}</span>
@@ -235,6 +242,8 @@
           {#if person}<span class="faint">{person.stats.connectors.map(([c]) => connectorName(c)).join(' · ')}</span>{/if}
         {:else if group}
           <span class="faint">{t(group.kind === 'channel' ? 'chat.channel' : 'chat.group')} · {t('chat.voices', { n: group.voices })}</span>
+        {:else if task}
+          <span class="faint">{connectorName(task.connector)} · {t('task.title')}{task.from ? ' · ' + (task.from_me ? t('chat.you') : task.from) : ''}</span>
         {/if}
       </span>
     </div>
@@ -259,6 +268,28 @@
       <span><b>{group.mine}</b> {t('chat.yours')}</span>
       <span><b>{group.voices}</b> {t('chat.voicesShort')}</span>
       {#if group.first_at}<span>{t('people.since')} <b>{group.first_at}</b></span>{/if}
+    </div>
+  {:else if task}
+    <div class="conv-summary">
+      <span class="task-status" class:done={task.status === 'done'}>{t(task.status === 'done' ? 'task.done' : 'task.todo')}</span>
+      {#if task.due}<span>{t('task.due')} <b>{task.due}</b></span>{/if}
+      <span><b>{Math.max(0, task.messages - 1)}</b> {t('task.comments')}</span>
+      {#if task.url}<a class="promise-chip has" href={task.url} target="_blank" rel="noreferrer">{t('task.open')}</a>{/if}
+    </div>
+  {/if}
+
+  {#if expanded && task}
+    <div class="conv-details">
+      <div class="details-grid">
+        <div>
+          {#if task.from}<h3 class="group-title">{t('task.from')}</h3><p>{task.from_me ? t('chat.you') : task.from}</p>{/if}
+          {#if task.assignees.length}<h3 class="group-title">{t('task.assignees')}</h3><p>{task.assignees.map((a) => (a.me ? t('chat.you') : a.name)).join('、')}</p>{/if}
+          {#if task.lists.length}<h3 class="group-title">{t('task.lists')}</h3><div class="roles">{#each task.lists as l}<span class="role">{l}</span>{/each}</div>{/if}
+        </div>
+        <div>
+          {#if task.description}<h3 class="group-title">{t('task.description')}</h3><p class="task-description">{task.description}</p>{/if}
+        </div>
+      </div>
     </div>
   {/if}
 
@@ -333,7 +364,7 @@
         {@const d = opened[m.id]}
         <div class="msg" class:mine={m.mine} class:tight>
           {#if showAuthor(i)}<span class="msg-author">{m.author}</span>{/if}
-          <div class="bubble" class:mail={m.place === 'mail'}>
+          <div class="bubble" class:mail={m.place === 'mail' || m.place === 'task'}>
             {#if m.subject}<p class="bubble-subject">{m.subject}</p>{/if}
             {#if d && d !== 'loading'}
               {#if d.summary}<div class="summary"><span class="ai">{t('item.summary')}</span><p>{d.summary}</p></div>{/if}
@@ -342,7 +373,7 @@
               <p class="bubble-text" class:clamped={long(m)}>{m.text}</p>
             {/if}
             <div class="bubble-foot">
-              <span class="msg-time">{m.time}{m.place === 'mail' ? ' · ' + t('chat.bymail') : ''}</span>
+              <span class="msg-time">{m.time}{m.place === 'mail' ? ' · ' + t('chat.bymail') : m.place === 'task' && kind !== 'task' ? ' · ' + t('chat.ontask', { name: m.place_name ?? '' }) : ''}</span>
               <button type="button" class="bubble-more" onclick={() => toggle(m)}>
                 {d === 'loading' ? t('loading') : d ? t('chat.less') : long(m) ? t('chat.full') : '···'}
               </button>
@@ -363,6 +394,11 @@
     {/if}
   </div>
 
+  {#if kind === 'task'}
+  <div class="composer">
+    <span class="composer-note">{t('task.readonly')}</span>
+  </div>
+  {:else}
   <div class="composer">
     <button type="button" class="choose primary" disabled={!target || drafting} onclick={draft}>
       <Icon name="ask" size={16} />{drafting ? t('chat.drafting') : t('chat.draft')}
@@ -371,4 +407,5 @@
       {draftError || (!target ? t('chat.nodraftable') : kind === 'group' ? t('chat.draftnote.group') : t('chat.draftnote'))}
     </span>
   </div>
+  {/if}
 </div>

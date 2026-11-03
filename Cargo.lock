@@ -2001,6 +2001,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "genatrix-connector-lark"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "clap",
+ "genatrix-connector",
+ "genatrix-model",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "ureq",
+]
+
+[[package]]
 name = "genatrix-connector-telegram"
 version = "0.0.1"
 dependencies = [
@@ -2036,6 +2055,7 @@ dependencies = [
  "genatrix-connector",
  "genatrix-connector-github",
  "genatrix-connector-imap",
+ "genatrix-connector-lark",
  "genatrix-connector-telegram",
  "genatrix-dispatch",
  "genatrix-exec",

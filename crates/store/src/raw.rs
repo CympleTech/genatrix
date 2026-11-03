@@ -13,6 +13,7 @@ pub(crate) fn connector_from_col(table: &'static str, s: &str) -> Result<Connect
     match s {
         "imap" => Ok(Connector::Imap),
         "telegram" => Ok(Connector::Telegram),
+        "lark" => Ok(Connector::Lark),
         other => Err(corrupt(table, "connector", other)),
     }
 }

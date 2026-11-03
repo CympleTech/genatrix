@@ -18,10 +18,11 @@ use crate::time::{utc_from_col, utc_to_col};
 
 /// What counts between the user and a person: what passed one to one, by
 /// mail or in a direct chat. What they said in a group or a channel belongs
-/// to that group's conversation, not to theirs (design 06 v0.6), so every
-/// person query here carries this condition.
+/// to that group's conversation, not to theirs (design 06 v0.6), and a task
+/// with its comments is a conversation of its own (v0.12), so every person
+/// query here carries this condition.
 const ONE_TO_ONE: &str =
-    "thread_id NOT IN (SELECT id FROM thread WHERE kind IN ('group_chat', 'channel'))";
+    "thread_id NOT IN (SELECT id FROM thread WHERE kind IN ('group_chat', 'channel', 'task'))";
 
 /// What the user has said about a person.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

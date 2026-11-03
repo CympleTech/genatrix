@@ -32,6 +32,8 @@ pub enum HandleKind {
     TelegramId,
     /// A Telegram username.
     TelegramUsername,
+    /// A Lark (Feishu) user's `open_id`, which is per app.
+    LarkId,
     /// A phone number.
     Phone,
 }
@@ -71,7 +73,7 @@ impl Handle {
         match kind {
             HandleKind::Email => v.to_lowercase(),
             HandleKind::TelegramUsername => v.trim_start_matches('@').to_lowercase(),
-            HandleKind::TelegramId | HandleKind::Phone => v.to_owned(),
+            HandleKind::TelegramId | HandleKind::LarkId | HandleKind::Phone => v.to_owned(),
         }
     }
 }

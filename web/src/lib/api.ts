@@ -149,15 +149,23 @@ export interface Device { id: string; name: string; created_at: string; last_see
 
 export interface ChatMessage {
   id: string; day: string; time: string; ms: number; mine: boolean; connector: string;
-  place: 'mail' | 'direct' | 'group' | 'channel'; place_name: string | null;
+  place: 'mail' | 'direct' | 'group' | 'channel' | 'task'; place_name: string | null;
   subject: string | null; text: string; folded: boolean; level: string; author: string | null;
 }
 export interface ChatPage { messages: ChatMessage[]; earlier: boolean }
 
 export interface Party {
-  kind: 'person' | 'group' | 'channel' | 'agent' | 'quiet'; id: string; name: string;
-  last_at: string | null; last_ms: number; last_text: string | null; last_author: string | null;
+  kind: 'person' | 'group' | 'channel' | 'agent' | 'quiet' | 'task'; id: string; name: string;
+  last_at: string | null; last_ms: number; last_text: string | null; last_author: string | null; last_mine?: boolean;
   roles: string[]; messages: number;
+  // A task's (design 06 v0.12, "工作").
+  status?: 'todo' | 'done'; due?: string; from?: string; from_me?: boolean; lists?: string[];
+}
+export interface TaskDetail {
+  id: string; name: string; status: 'todo' | 'done'; due: string | null; url: string | null;
+  lists: string[]; from: string | null; from_me?: boolean; assignees: { name: string; me?: boolean }[];
+  description: string; connector: string;
+  messages: number; first_at: string | null; last_at: string | null;
 }
 // --- functional agents (design 11; crates/daemon/src/web/agents.rs) ---
 export type Risk = 'reads' | 'own' | 'outward' | 'strangers';

@@ -19,6 +19,7 @@ fn kind_to_col(k: ThreadKind) -> &'static str {
         ThreadKind::Calendar => "calendar",
         ThreadKind::Notebook => "notebook",
         ThreadKind::Folder => "folder",
+        ThreadKind::Task => "task",
     }
 }
 
@@ -31,6 +32,7 @@ fn kind_from_col(s: &str) -> Result<ThreadKind> {
         "calendar" => ThreadKind::Calendar,
         "notebook" => ThreadKind::Notebook,
         "folder" => ThreadKind::Folder,
+        "task" => ThreadKind::Task,
         other => return Err(corrupt(T, "kind", other)),
     })
 }

@@ -46,7 +46,7 @@ async fn restart_connectors(system: &Arc<System>) {
 
 #[derive(Serialize)]
 struct AccountView {
-    /// `mail` or `telegram`.
+    /// `mail`, `telegram` or `lark`.
     kind: &'static str,
     /// The address or the phone number: what removing it names.
     id: String,
@@ -120,6 +120,22 @@ async fn view(
             },
             detail: "Telegram".to_owned(),
             can_send: true,
+            state,
+            text,
+        });
+    }
+    for a in list.lark.values() {
+        let (state, text) = state_of(&a.open_id);
+        accounts.push(AccountView {
+            kind: "lark",
+            id: a.open_id.clone(),
+            name: match &a.email {
+                Some(email) if !a.name.is_empty() => format!("{} · {email}", a.name),
+                _ if !a.name.is_empty() => a.name.clone(),
+                _ => a.open_id.clone(),
+            },
+            detail: format!("{} · {}", a.brand.open_host(), a.app_id),
+            can_send: false,
             state,
             text,
         });
@@ -474,6 +490,139 @@ async fn export(
     }
 }
 
+#[derive(Deserialize)]
+struct LarkStartBody {
+    app_id: String,
+    app_secret: String,
+    /// `lark` or `feishu`.
+    #[serde(default)]
+    brand: Option<String>,
+}
+
+/// Start a Lark sign-in: the app's id and secret, typed on this machine
+/// (invariant 12), for a link and a code the user confirms on Lark's side,
+/// on any device (design 05, "飞书", "应用与授权").
+async fn lark_start(
+    State(system): State<Arc<System>>,
+    Extension(caller): Extension<Caller>,
+    Json(body): Json<LarkStartBody>,
+) -> Response {
+    use genatrix_connector_lark::{Brand, Secret, auth};
+    if let Some(no) = local_only(&caller) {
+        return no;
+    }
+    let app_id = body.app_id.trim().to_owned();
+    if !app_id.starts_with("cli_") {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "a Lark App ID starts with cli_; it is on the app's Credentials page",
+        );
+    }
+    let brand = match body.brand.as_deref().map(str::parse::<Brand>) {
+        None => Brand::Lark,
+        Some(Ok(b)) => b,
+        Some(Err(e)) => return refuse(StatusCode::BAD_REQUEST, e),
+    };
+    let secret = Secret {
+        app_id,
+        app_secret: body.app_secret.trim().to_owned(),
+        brand,
+    };
+    let starting = secret.clone();
+    let pending = match tokio::task::spawn_blocking(move || auth::start_device(&starting)).await {
+        Ok(Ok(p)) => p,
+        Ok(Err(e)) => return refuse(StatusCode::BAD_REQUEST, e.to_string()),
+        Err(e) => return refuse(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    let id = ulid::Ulid::new().to_string();
+    let answer = serde_json::json!({
+        "flow": id,
+        "url": pending.verification_uri_complete,
+        "code": pending.user_code,
+        "interval": pending.interval,
+    });
+    let mut flows = system
+        .lark_logins
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let now = chrono::Utc::now().timestamp_millis();
+    flows.retain(|_, (_, p)| p.expires_ms > now);
+    flows.insert(id, (secret, pending));
+    Json(answer).into_response()
+}
+
+#[derive(Deserialize)]
+struct LarkPollBody {
+    flow: String,
+}
+
+/// Ask Lark once whether the user has confirmed. The page asks again after
+/// the interval Lark gave.
+async fn lark_poll(
+    State(system): State<Arc<System>>,
+    Extension(caller): Extension<Caller>,
+    Json(body): Json<LarkPollBody>,
+) -> Response {
+    use genatrix_connector_lark::auth::{self, Poll};
+    if let Some(no) = local_only(&caller) {
+        return no;
+    }
+    let flow = system
+        .lark_logins
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&body.flow)
+        .cloned();
+    let Some((secret, pending)) = flow else {
+        return refuse(StatusCode::GONE, "this sign-in has lapsed; start again");
+    };
+    let polling = (secret.clone(), pending);
+    let polled = tokio::task::spawn_blocking(move || {
+        let token = match auth::poll_device(&polling.0, &polling.1)? {
+            Poll::Done(token) => token,
+            other => return Ok((other, None)),
+        };
+        let me = auth::whoami(polling.0.brand, &token)?;
+        Ok::<_, auth::AuthError>((Poll::Done(token), Some(me)))
+    })
+    .await;
+    let forget = || {
+        system
+            .lark_logins
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&body.flow);
+    };
+    match polled {
+        Ok(Ok((Poll::Waiting | Poll::SlowDown, _))) => {
+            Json(serde_json::json!({ "waiting": true })).into_response()
+        }
+        Ok(Ok((Poll::Done(token), Some(me)))) => {
+            forget();
+            if let Err(e) = setup::keep_lark(&system, &secret, &me, &token) {
+                return refuse(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+            }
+            tracing::info!(open_id = %me.open_id, "a Lark account was signed in from the page");
+            restart_connectors(&system).await;
+            Json(serde_json::json!({ "done": true, "name": me.name })).into_response()
+        }
+        Ok(Ok((Poll::Over(why), _))) => {
+            forget();
+            refuse(StatusCode::BAD_REQUEST, why)
+        }
+        Ok(Ok((Poll::Done(_), None))) => refuse(StatusCode::INTERNAL_SERVER_ERROR, "no user"),
+        Ok(Err(auth::AuthError::Transient(why))) => {
+            tracing::info!(%why, "polling Lark");
+            Json(serde_json::json!({ "waiting": true })).into_response()
+        }
+        Ok(Err(e)) => {
+            forget();
+            refuse(StatusCode::BAD_REQUEST, e.to_string())
+        }
+        Err(e) => refuse(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
 /// The routes.
 pub fn routes() -> axum::Router<Arc<System>> {
     use axum::routing::{get, post};
@@ -483,6 +632,8 @@ pub fn routes() -> axum::Router<Arc<System>> {
         .route("/api/setup/telegram/start", post(telegram_start))
         .route("/api/setup/telegram/code", post(telegram_code))
         .route("/api/setup/telegram/password", post(telegram_password))
+        .route("/api/setup/lark/start", post(lark_start))
+        .route("/api/setup/lark/poll", post(lark_poll))
         .route("/api/setup/remove", post(remove))
         .route("/api/model", get(models))
         .route("/api/model/download", post(download))

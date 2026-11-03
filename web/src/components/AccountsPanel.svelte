@@ -4,18 +4,20 @@
   import Icon from './Icon.svelte';
 
   // Design 09 ("先落地的是设置页") and design 05 ("在界面上接入"): add a
-  // mailbox, sign in to Telegram in three steps, remove an account. Design 02,
+  // mailbox, sign in to Telegram in three steps, sign in to Lark with a
+  // link confirmed on any device ("飞书"), remove an account. Design 02,
   // invariant 12: only on the machine Genatrix runs on; a paired phone sees
   // the accounts and is told where to go.
   interface AccountView {
-    kind: 'mail' | 'telegram'; id: string; name: string; detail: string;
+    kind: 'mail' | 'telegram' | 'lark'; id: string; name: string; detail: string;
     can_send: boolean; state: string; text: string;
   }
   interface SetupView { local: boolean; accounts: AccountView[]; telegram: boolean }
 
   let view = $state<SetupView | null>(null);
   let error = $state('');
-  let adding = $state<'' | 'mail' | 'telegram'>('');
+  type Adding = '' | 'mail' | 'telegram' | 'lark';
+  let adding = $state<Adding>('');
   let confirming = $state('');
   let notice = $state('');
 
@@ -35,6 +37,43 @@
   let hint = $state<string | null>(null);
   let flow = $state('');
 
+  // lark: the app, then a link to confirm while this page asks Lark
+  let larkBrand = $state<'lark' | 'feishu'>('lark');
+  let appId = $state('');
+  let appSecret = $state('');
+  let larkLink = $state<{ url: string; code: string } | null>(null);
+  let larkTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function stopLark() {
+    if (larkTimer) clearTimeout(larkTimer);
+    larkTimer = null; larkLink = null;
+  }
+  $effect(() => stopLark);
+
+  async function larkStart(e: Event) {
+    e.preventDefault();
+    busy = true; formError = ''; stopLark();
+    try {
+      const r = await post<{ flow: string; url: string; code: string; interval: number }>(
+        '/api/setup/lark/start', { app_id: appId, app_secret: appSecret, brand: larkBrand });
+      appSecret = '';
+      larkLink = { url: r.url, code: r.code };
+      const every = Math.max(r.interval, 2) * 1000;
+      const poll = async () => {
+        try {
+          const p = await post<{ waiting?: boolean; done?: boolean; name?: string }>('/api/setup/lark/poll', { flow: r.flow });
+          if (p.done) {
+            stopLark(); notice = t('accounts.added', { name: p.name ?? 'Lark' }); adding = ''; await load();
+            return;
+          }
+          larkTimer = setTimeout(poll, every);
+        } catch (err: any) { formError = err.message; stopLark(); }
+      };
+      larkTimer = setTimeout(poll, every);
+    } catch (err: any) { formError = err.message; }
+    busy = false;
+  }
+
   async function load() {
     try { view = await get<SetupView>('/api/setup'); error = ''; } catch (e: any) { error = e.message; }
   }
@@ -44,8 +83,9 @@
     return () => clearInterval(timer);
   });
 
-  function open(kind: 'mail' | 'telegram') {
+  function open(kind: Exclude<Adding, ''>) {
     adding = adding === kind ? '' : kind;
+    stopLark(); appId = ''; appSecret = '';
     formError = ''; notice = ''; busy = false;
     address = ''; password = ''; imapHost = ''; needsServer = false;
     tgStep = 'phone'; phone = ''; code = ''; tgPassword = ''; hint = null; flow = '';
@@ -115,7 +155,7 @@
     <ul class="account-list">
       {#each view.accounts as a (a.kind + a.id)}
         <li class="account-row">
-          <span class="account-icon"><Icon name={a.kind === 'mail' ? 'mail' : 'telegram'} size={18} /></span>
+          <span class="account-icon"><Icon name={a.kind === 'lark' ? 'task' : a.kind} size={18} /></span>
           <span class="account-body">
             <span class="account-name">{a.name}</span>
             <span class="account-state {stateClass(a.state)}">{a.text}</span>
@@ -138,6 +178,9 @@
         </button>
         <button type="button" class="choose" class:is-on={adding === 'telegram'} disabled={!view.telegram} onclick={() => open('telegram')}>
           <Icon name="telegram" size={16} />{t('accounts.addTelegram')}
+        </button>
+        <button type="button" class="choose" class:is-on={adding === 'lark'} onclick={() => open('lark')}>
+          <Icon name="task" size={16} />{t('accounts.addLark')}
         </button>
       </div>
       {#if !view.telegram}<p class="note">{t('accounts.noTelegramCredentials')}</p>{/if}
@@ -170,6 +213,47 @@
           <div class="chooser">
             <button type="submit" class="choose primary" disabled={busy}>{busy ? t('accounts.checking') : t('accounts.checkAndAdd')}</button>
             <button type="button" class="choose lowers" onclick={() => open('mail')}>{t('accounts.cancel')}</button>
+          </div>
+        </form>
+      {/if}
+
+      {#if adding === 'lark'}
+        <form class="setup-form" onsubmit={larkStart}>
+          {#if !larkLink}
+            <div class="field">
+              <span class="field-label">{t('accounts.lark.where')}</span>
+              <div class="chooser">
+                <button type="button" class="choose" class:is-on={larkBrand === 'lark'} onclick={() => (larkBrand = 'lark')}>{t('accounts.lark.lark')}</button>
+                <button type="button" class="choose" class:is-on={larkBrand === 'feishu'} onclick={() => (larkBrand = 'feishu')}>{t('accounts.lark.feishu')}</button>
+              </div>
+            </div>
+            <div class="help">
+              <p class="help-title">{t('accounts.lark.help.title')}</p>
+              <ol>
+                <li>{t('accounts.lark.help.1')} <a href={larkBrand === 'lark' ? 'https://open.larksuite.com/app' : 'https://open.feishu.cn/app'} target="_blank" rel="noreferrer">{larkBrand === 'lark' ? 'open.larksuite.com/app' : 'open.feishu.cn/app'}</a></li>
+                <li>{t('accounts.lark.help.2')}</li>
+                <li>{t('accounts.lark.help.3')}</li>
+              </ol>
+            </div>
+            <label>{t('accounts.lark.appId')}
+              <input bind:value={appId} placeholder="cli_..." autocomplete="off" required />
+            </label>
+            <label>{t('accounts.lark.appSecret')}
+              <input type="password" bind:value={appSecret} autocomplete="off" required />
+            </label>
+            <p class="note">{t('accounts.lark.note')}</p>
+          {:else}
+            <p class="note">{t('accounts.lark.open')}</p>
+            <p><a href={larkLink.url} target="_blank" rel="noreferrer">{larkLink.url}</a></p>
+            <p class="note">{t('accounts.lark.code', { code: larkLink.code })}</p>
+            <p class="note">{t('accounts.lark.waiting')}</p>
+          {/if}
+          {#if formError}<p class="note error">{formError}</p>{/if}
+          <div class="chooser">
+            {#if !larkLink}
+              <button type="submit" class="choose primary" disabled={busy}>{busy ? t('accounts.working') : t('accounts.lark.start')}</button>
+            {/if}
+            <button type="button" class="choose lowers" onclick={() => open('lark')}>{t('accounts.cancel')}</button>
           </div>
         </form>
       {/if}

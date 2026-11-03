@@ -17,6 +17,7 @@ genatrix-agent.workspace = true
 genatrix-connector.workspace = true
 genatrix-connector-imap.workspace = true
 genatrix-connector-telegram.workspace = true
+genatrix-connector-lark.workspace = true
 genatrix-connector-github.workspace = true
 genatrix-dispatch.workspace = true
 genatrix-exec.workspace = true

@@ -124,6 +124,37 @@ pub fn keep_telegram(system: &System, phone: &str, signed_in: &SignedIn) -> anyh
     Ok(())
 }
 
+/// Keep a Lark sign-in (design 05, "飞书", "应用与授权"): the app secret in
+/// the keychain under the app id, the sign-in in the encrypted store beside
+/// the account's cursors, the account in the list, and the user's `open_id`
+/// as a handle of their own person.
+pub fn keep_lark(
+    system: &System,
+    secret: &genatrix_connector_lark::Secret,
+    me: &genatrix_connector_lark::auth::Me,
+    token: &genatrix_connector_lark::Token,
+) -> anyhow::Result<()> {
+    Keychain::named(crate::running::LARK_KEYCHAIN).store(&secret.app_id, &secret.app_secret)?;
+    system.store.put_sync_cursor(
+        Connector::Lark,
+        &me.open_id,
+        genatrix_connector_lark::SIGN_IN_SCOPE,
+        &serde_json::to_string(token)?,
+    )?;
+    let path = system.config.accounts_path();
+    let mut accounts = Accounts::load(&path)?;
+    accounts.add_lark(crate::accounts::LarkAccount {
+        open_id: me.open_id.clone(),
+        name: me.name.clone(),
+        email: me.email.clone(),
+        app_id: secret.app_id.clone(),
+        brand: secret.brand,
+    });
+    accounts.save(&path)?;
+    claim_address(system, HandleKind::LarkId, &me.open_id, &me.name)?;
+    Ok(())
+}
+
 /// Which kind of account.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -132,6 +163,24 @@ pub enum Kind {
     Mail,
     /// A Telegram account, named by its phone number.
     Telegram,
+    /// A Lark account, named by the user's `open_id`.
+    Lark,
+}
+
+impl Kind {
+    /// Which kind an account's name is: a phone number is Telegram, an
+    /// `open_id` is Lark, anything else a mailbox.
+    #[must_use]
+    pub fn of(id: &str) -> Self {
+        let id = id.trim();
+        if id.starts_with('+') {
+            Self::Telegram
+        } else if id.starts_with("ou_") {
+            Self::Lark
+        } else {
+            Self::Mail
+        }
+    }
 }
 
 /// Remove an account. Returns whether there was anything to remove. What it
@@ -157,6 +206,22 @@ pub async fn remove(system: &System, kind: Kind, id: &str) -> anyhow::Result<boo
                 .store
                 .delete_sync_cursor(Connector::Telegram, id, "session")?;
             listed || had
+        }
+        Kind::Lark => {
+            let gone = accounts.lark.remove(id);
+            // The sign-in is the secret here; the sync position stays, so
+            // signing in again resumes rather than reading everything again.
+            let had = system.store.delete_sync_cursor(
+                Connector::Lark,
+                id,
+                genatrix_connector_lark::SIGN_IN_SCOPE,
+            )?;
+            if let Some(app) = gone.as_ref().map(|a| a.app_id.clone())
+                && !accounts.lark.values().any(|a| a.app_id == app)
+            {
+                Keychain::named(crate::running::LARK_KEYCHAIN).forget(&app)?;
+            }
+            gone.is_some() || had
         }
     };
     accounts.save(&path)?;

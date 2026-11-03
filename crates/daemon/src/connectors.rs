@@ -124,6 +124,21 @@ pub fn start_telegram(
     )
 }
 
+/// Start the Lark connector for these accounts and keep it running.
+pub fn start_lark(
+    system: Arc<System>,
+    assigned: Vec<Assigned>,
+    binary: PathBuf,
+) -> anyhow::Result<Vec<tokio::task::JoinHandle<()>>> {
+    start_connector(
+        system,
+        "lark",
+        genatrix_model::Connector::Lark,
+        assigned,
+        binary,
+    )
+}
+
 /// Start one kind of connector for these accounts and keep it running.
 ///
 /// Each kind has its own socket, `run/<kind>.sock`, its own sandbox profile
@@ -377,8 +392,12 @@ async fn answer(server: &Server, body: Body) -> Body {
                 Ok(new) => new,
                 Err(fault) => return failure(fault.detail),
             };
+            let tasks = match sink.store_tasks(&store.tasks, &store.comments) {
+                Ok(new) => new,
+                Err(fault) => return failure(fault.detail),
+            };
             Body::Stored(protocol::Stored {
-                new: u32::try_from(mail + chats).unwrap_or(u32::MAX),
+                new: u32::try_from(mail + chats + tasks).unwrap_or(u32::MAX),
             })
         }
         Body::LoadCursor(load) => {
@@ -668,6 +687,7 @@ endpoint = {{ kind = "local_socket", path = "{}" }}
                 account: "me@example.com".into(),
                 messages: vec![ipc::to_wire(&incoming(n))],
                 chats: vec![],
+                ..Default::default()
             })
         };
         assert!(matches!(
@@ -742,6 +762,7 @@ endpoint = {{ kind = "local_socket", path = "{}" }}
                 account: "someone-else@example.com".into(),
                 messages: vec![],
                 chats: vec![],
+                ..Default::default()
             }),
         )
         .await;
@@ -756,6 +777,7 @@ endpoint = {{ kind = "local_socket", path = "{}" }}
                 account: "me@example.com".into(),
                 messages: vec![ipc::to_wire(&incoming(1))],
                 chats: vec![],
+                ..Default::default()
             }),
         )
         .await;
@@ -919,6 +941,7 @@ endpoint = {{ kind = "local_socket", path = "{}" }}
                 account: "me@example.com".into(),
                 messages: vec![ipc::to_wire(&refetched)],
                 chats: vec![],
+                ..Default::default()
             }),
         )
         .await;
@@ -989,6 +1012,7 @@ endpoint = {{ kind = "local_socket", path = "{}" }}
                 account: "me@example.com".into(),
                 messages: vec![ipc::to_wire(&fetched)],
                 chats: vec![],
+                ..Default::default()
             }),
         )
         .await;

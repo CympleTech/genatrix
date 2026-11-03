@@ -14,6 +14,7 @@ fn handle_kind_to_col(k: HandleKind) -> &'static str {
         HandleKind::Email => "email",
         HandleKind::TelegramId => "telegram_id",
         HandleKind::TelegramUsername => "telegram_username",
+        HandleKind::LarkId => "lark_id",
         HandleKind::Phone => "phone",
     }
 }
@@ -23,6 +24,7 @@ fn handle_kind_from_col(s: &str) -> Result<HandleKind> {
         "email" => HandleKind::Email,
         "telegram_id" => HandleKind::TelegramId,
         "telegram_username" => HandleKind::TelegramUsername,
+        "lark_id" => HandleKind::LarkId,
         "phone" => HandleKind::Phone,
         other => return Err(corrupt(H, "kind", other)),
     })
@@ -187,6 +189,23 @@ impl Store {
             Ok(())
         })?;
         Ok(person.id)
+    }
+
+    /// Name a person who so far has only their address for a name: made
+    /// from a handle before the source said who it was. A name the user or
+    /// an earlier source gave is never replaced. Says whether it changed.
+    pub fn name_if_unnamed(&self, id: PersonId, kind: HandleKind, name: &str) -> Result<bool> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Ok(false);
+        }
+        let n = self.conn().execute(
+            "UPDATE person SET display_name = ?2
+             WHERE id = ?1 AND display_name IN
+                (SELECT value FROM handle WHERE person_id = ?1 AND kind = ?3)",
+            params![id.to_string(), name, handle_kind_to_col(kind)],
+        )?;
+        Ok(n > 0)
     }
 
     /// Give a handle to another person: the account holder's own address

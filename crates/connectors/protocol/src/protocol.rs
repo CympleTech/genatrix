@@ -226,7 +226,7 @@ pub struct Assignment {
     pub secret: String,
 }
 
-/// Messages to keep: mail, chat, or both.
+/// Things to keep: mail, chat, tasks and their comments.
 #[derive(Clone, PartialEq, Message)]
 pub struct Store {
     /// Whose.
@@ -238,6 +238,109 @@ pub struct Store {
     /// Chat.
     #[prost(message, repeated, tag = "3")]
     pub chats: Vec<ChatMessage>,
+    /// Tasks, each as it stands now.
+    #[prost(message, repeated, tag = "4")]
+    pub tasks: Vec<TaskRecord>,
+    /// Comments on tasks.
+    #[prost(message, repeated, tag = "5")]
+    pub comments: Vec<TaskComment>,
+}
+
+/// One task as it stands now, normalized by the connector, with the
+/// source's own record. A changed task arrives again under the same
+/// external id with different bytes, and becomes a new version.
+#[derive(Clone, PartialEq, Message)]
+pub struct TaskRecord {
+    /// Account-wide identifier: `task:<id>`.
+    #[prost(string, tag = "1")]
+    pub external_id: String,
+    /// The task's own thread, which its comments share.
+    #[prost(string, tag = "2")]
+    pub thread_key: String,
+    /// Title.
+    #[prost(string, tag = "3")]
+    pub title: String,
+    /// Notes.
+    #[prost(string, tag = "4")]
+    pub description: String,
+    /// `todo` or `done`.
+    #[prost(string, tag = "5")]
+    pub status: String,
+    /// When it is due, RFC 3339.
+    #[prost(string, optional, tag = "6")]
+    pub due: Option<String>,
+    /// Where it opens in the source.
+    #[prost(string, optional, tag = "7")]
+    pub url: Option<String>,
+    /// The lists it is in.
+    #[prost(message, repeated, tag = "8")]
+    pub lists: Vec<TaskListRef>,
+    /// Who made it.
+    #[prost(message, optional, tag = "9")]
+    pub creator: Option<Party>,
+    /// Who it is assigned to.
+    #[prost(message, repeated, tag = "10")]
+    pub assignees: Vec<Party>,
+    /// When it was created, RFC 3339.
+    #[prost(string, tag = "11")]
+    pub created: String,
+    /// When it last changed, RFC 3339.
+    #[prost(string, tag = "12")]
+    pub updated: String,
+    /// The task as the source returned it.
+    #[prost(bytes = "vec", tag = "13")]
+    pub raw: Vec<u8>,
+}
+
+/// One comment on a task.
+#[derive(Clone, PartialEq, Message)]
+pub struct TaskComment {
+    /// Account-wide identifier: `comment:<id>`.
+    #[prost(string, tag = "1")]
+    pub external_id: String,
+    /// The task's thread.
+    #[prost(string, tag = "2")]
+    pub thread_key: String,
+    /// The task's title, for a thread seen first through a comment.
+    #[prost(string, tag = "3")]
+    pub thread_title: String,
+    /// Who wrote it.
+    #[prost(message, optional, tag = "4")]
+    pub author: Option<Party>,
+    /// When, RFC 3339.
+    #[prost(string, tag = "5")]
+    pub date: String,
+    /// Plain text.
+    #[prost(string, tag = "6")]
+    pub text: String,
+    /// The comment this one answers, as an external id.
+    #[prost(string, optional, tag = "7")]
+    pub reply_to: Option<String>,
+    /// The comment as the source returned it.
+    #[prost(bytes = "vec", tag = "8")]
+    pub raw: Vec<u8>,
+}
+
+/// A list a task is in.
+#[derive(Clone, PartialEq, Message)]
+pub struct TaskListRef {
+    /// The source's identifier.
+    #[prost(string, tag = "1")]
+    pub id: String,
+    /// Its name, when it could be read.
+    #[prost(string, tag = "2")]
+    pub name: String,
+}
+
+/// A person on a platform whose ids are strings.
+#[derive(Clone, PartialEq, Message)]
+pub struct Party {
+    /// The platform's identifier.
+    #[prost(string, tag = "1")]
+    pub id: String,
+    /// Display name, when known.
+    #[prost(string, tag = "2")]
+    pub name: String,
 }
 
 /// One chat message, normalized by the connector, with its original bytes.
@@ -615,6 +718,7 @@ mod tests {
                     ..MailMessage::default()
                 }],
                 chats: vec![],
+                ..Default::default()
             })),
         };
         write_frame(&mut a, &sent).await.unwrap();

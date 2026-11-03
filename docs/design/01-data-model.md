@@ -1,6 +1,7 @@
 # Genatrix · 数据模型
 
-> 状态：草稿 v0.5 · 2026-10-03 · 已通过（2026-09-14）
+> 状态：草稿 v0.6 · 2026-11-02 · 已通过（2026-09-14）
+> v0.6 变更：Task：飞书任务进来时的 Item、Thread 和 Handle 种类（05 号飞书一节）。
 > v0.5 变更：分类：个人往来、交易通知、订阅资讯、广告促销，后两类默认隐藏，不删除。
 > v0.4 变更：垃圾：你标记的对话对象，已有的删掉，以后的不收。
 > v0.3 变更：新接入账号的地址若已是别人，并入你并重算方向。
@@ -81,7 +82,7 @@ external_id 必须在账号范围内全局唯一，源系统给的单个 id 常�
 ```
 Item {
   id
-  kind:         Mail | Message | Event | Note | File
+  kind:         Mail | Message | Event | Note | File | Task
   source:       Source
   raw_id                          // 派生自哪条 Raw
   supersedes:   Option<item_id>   // 上游被编辑，新版本指向旧版本
@@ -116,6 +117,7 @@ Message { reply_to: Option<item_id>, forwarded_from: Option<person_id>, edited: 
 Event   { title, start, end, all_day, location, attendees: [person_id], status }
 Note    { title, format: Markdown | Plain }
 File    { name, mime, size }
+Task    { title, status: Todo | Done, due: Option<时间>, url, lists: [{id, name}], assignees: [person_id] }
 ```
 
 载荷不做大而全。每种只放"没有它这一格就读不懂"的字段。想要更多，去 Raw。
@@ -125,7 +127,7 @@ File    { name, mime, size }
 ```
 Thread {
   id
-  kind:         MailThread | DirectChat | GroupChat | Channel | Calendar | Notebook | Folder
+  kind:         MailThread | DirectChat | GroupChat | Channel | Calendar | Notebook | Folder | Task
   source:       Source
   title:        Option<String>     // 邮件主题、群名、日历名
   members:      [person_id]        // 当前成员，群聊变动时更新
@@ -148,7 +150,7 @@ Person {
 Handle {
   id
   person_id
-  kind:         Email | TelegramId | Phone | ...
+  kind:         Email | TelegramId | LarkId | Phone | ...
   value
   confidence:   Confirmed | Inferred
 }

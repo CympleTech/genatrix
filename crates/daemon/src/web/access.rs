@@ -449,6 +449,11 @@ mod tests {
                 serde_json::json!({"flow": "x", "password": "x"}),
             ),
             (
+                "/api/setup/lark/start",
+                serde_json::json!({"app_id": "cli_x", "app_secret": "x"}),
+            ),
+            ("/api/setup/lark/poll", serde_json::json!({"flow": "x"})),
+            (
                 "/api/setup/remove",
                 serde_json::json!({"kind": "mail", "id": "a@example.com"}),
             ),

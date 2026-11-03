@@ -68,6 +68,32 @@ impl StoreSink {
         Ok(new)
     }
 
+    /// Store tasks and comments on them, tasks first: a comment's thread
+    /// is its task's. Returns how many were new.
+    pub fn store_tasks(
+        &self,
+        tasks: &[genatrix_connector::protocol::TaskRecord],
+        comments: &[genatrix_connector::protocol::TaskComment],
+    ) -> Result<usize, Fault> {
+        let (store, raw) = (&self.system.store, &self.system.raw_files);
+        let mut new = 0;
+        for task in tasks {
+            match ingest::task(store, raw, &self.account, task) {
+                Ok(Ingested::Added(_)) => new += 1,
+                Ok(Ingested::AlreadyHad | Ingested::Ignored) => {}
+                Err(e) => return Err(self.fault("could not store a task", e)),
+            }
+        }
+        for comment in comments {
+            match ingest::task_comment(store, raw, &self.account, comment) {
+                Ok(Ingested::Added(_)) => new += 1,
+                Ok(Ingested::AlreadyHad | Ingested::Ignored) => {}
+                Err(e) => return Err(self.fault("could not store a comment", e)),
+            }
+        }
+        Ok(new)
+    }
+
     /// A mail the account sent, arriving by sync, may be the one an action
     /// with an unknown outcome was submitted as. Then it did go out.
     fn maybe_confirm_sent(&self, incoming: &Incoming, id: genatrix_model::ItemId) {

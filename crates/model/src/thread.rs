@@ -23,6 +23,8 @@ pub enum ThreadKind {
     Notebook,
     /// A folder of files.
     Folder,
+    /// One task, with its comments.
+    Task,
 }
 
 /// A container of items. Not a parent: a thread does not own the items, it

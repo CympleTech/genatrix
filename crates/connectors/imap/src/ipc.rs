@@ -95,6 +95,7 @@ impl Sink for IpcSink {
                 account: self.account.clone(),
                 messages: batch.iter().map(to_wire).collect(),
                 chats: vec![],
+                ..Default::default()
             }))
             .await?
         {

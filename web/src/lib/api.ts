@@ -76,7 +76,7 @@ export interface Action {
   level: string | null;
 }
 export interface WorkProject {
-  name: string; github: string | null; base: string; executors: string[];
+  name: string; workspace: string; github: string | null; base: string; executors: string[];
   commands: string[]; network: boolean; delegate_personal: boolean;
 }
 export interface WorkRecipe {
@@ -88,8 +88,10 @@ export interface Dispatch {
   base: string | null; tip: string | null; review_passed: boolean | null; detail: string | null;
   started_ms: number; ended_ms: number | null;
 }
+/** Design 14: the accounts and projects of one area of work. */
+export interface Workspace { name: string; title: string; accounts: string[] }
 export interface WorkOverview {
-  projects: WorkProject[]; recipes: WorkRecipe[];
+  workspaces: Workspace[]; projects: WorkProject[]; recipes: WorkRecipe[];
   roles: { name: string; title: string; may: string[] }[];
   executors: { name: string; vendor: string }[];
   dispatches: Dispatch[]; github: boolean; local: boolean;
@@ -101,7 +103,7 @@ export interface WorkStep {
 }
 export interface WorkEvent { seq: number; n: number; at_ms: number; kind: string; text: string }
 export interface WorkQuestion { seq: number; question: string; options: string[]; recommend: number | null; progress: string }
-export interface WorkDetail { dispatch: Dispatch; steps: WorkStep[]; events: WorkEvent[]; push_again: boolean; question: WorkQuestion | null }
+export interface WorkDetail { workspace: string | null; dispatch: Dispatch; steps: WorkStep[]; events: WorkEvent[]; push_again: boolean; question: WorkQuestion | null }
 export type CardValue =
   | { type: 'text'; text: string }
   | { type: 'money'; cents: number; currency: string }
@@ -159,12 +161,14 @@ export interface Party {
   last_at: string | null; last_ms: number; last_text: string | null; last_author: string | null; last_mine?: boolean;
   roles: string[]; messages: number;
   // A task's (design 06 v0.12, "工作").
-  status?: 'todo' | 'done'; due?: string; from?: string; from_me?: boolean; lists?: string[];
+  status?: 'todo' | 'done'; due?: string; from?: string; from_me?: boolean; lists?: string[]; space?: string;
 }
 export interface TaskDetail {
   id: string; name: string; status: 'todo' | 'done'; due: string | null; url: string | null;
   lists: string[]; from: string | null; from_me?: boolean; assignees: { name: string; me?: boolean }[];
   description: string; connector: string;
+  /** The workspace the task's account is in: its name, and what to call it. */
+  workspace: string | null; space: string | null;
   messages: number; first_at: string | null; last_at: string | null;
 }
 // --- functional agents (design 11; crates/daemon/src/web/agents.rs) ---

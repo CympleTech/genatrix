@@ -13,6 +13,7 @@
   import Pair from './pages/Pair.svelte';
   import Welcome from './pages/Welcome.svelte';
   import Work from './pages/Work.svelte';
+  import Spaces from './pages/Spaces.svelte';
   import { get as fetchJson } from './lib/api';
   import Icon from './components/Icon.svelte';
 
@@ -42,7 +43,7 @@
     { path: '/ask', key: 'ask' },
   ];
   const secondary = [
-    { path: '/work', key: 'work' },
+    { path: '/spaces', key: 'spaces' },
     { path: '/timeline', key: 'timeline' },
     { path: '/records', key: 'records' },
     { path: '/review', key: 'review' },
@@ -57,9 +58,11 @@
   const section = $derived($route.parts[0] ?? '');
   const title = $derived.by(() => {
     const all = [...primary, ...secondary].find((n) => (n.path === '/' ? section === '' : section === n.path.slice(1)));
-    return all ? t(all.key) : section === 'pair' ? t('pair.title') : section === 'welcome' ? t('welcome.title') : 'Genatrix';
+    return all ? t(all.key) : section === 'work' ? t('spaces') : section === 'pair' ? t('pair.title') : section === 'welcome' ? t('welcome.title') : 'Genatrix';
   });
   function on(path: string): boolean {
+    // One piece of work is followed on /work/…, inside its space.
+    if (path === '/spaces' && section === 'work') return true;
     return path === '/' ? section === '' : section === path.slice(1);
   }
   function nav(path: string) { more = false; go(path); }
@@ -109,6 +112,7 @@
         kind={$route.parts[1] === 'g' ? 'group' : $route.parts[1] === 'a' ? 'agent' : $route.parts[1] === 't' ? 'task' : $route.parts[1] === 'quiet' ? 'quiet' : 'person'}
         id={(['g', 'a', 't'].includes($route.parts[1]) ? $route.parts[2] : $route.parts[1]) ?? null}
       />
+    {:else if section === 'spaces'}<Spaces name={$route.parts[1] ?? null} />
     {:else if section === 'work'}<Work id={$route.parts[1] ?? null} />
     {:else if section === 'review'}<Review />
     {:else if section === 'records'}<Records />

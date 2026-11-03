@@ -17,6 +17,8 @@
 //! - [`scope`]: the answer to an executor's request for permission.
 //! - [`prompt`]: the text one step hands to its executor.
 //! - [`report`]: what an executor hands back at the end of each turn.
+//! - [`workspace`]: the accounts and projects of one area of work, and
+//!   which items may go to which executors (design 14).
 //!
 //! Nothing here reads a file, starts a process or touches the network.
 
@@ -28,6 +30,7 @@ pub mod recipe;
 pub mod report;
 pub mod role;
 pub mod scope;
+pub mod workspace;
 
 /// SHA-256 of a definition's text, hex: its identity (design 13: "模板是
 /// 版本化的文件，hash 就是身份").
@@ -46,6 +49,15 @@ pub enum DefinitionError {
     /// The shape is right but something in it is not allowed.
     #[error("{0}")]
     Invalid(String),
+}
+
+impl DefinitionError {
+    /// Whether `name` is not one a definition may have: anything but
+    /// lowercase letters, digits and dashes.
+    #[must_use]
+    pub fn is_bad_name(name: &str) -> bool {
+        check_name("name", name).is_err()
+    }
 }
 
 impl From<toml::de::Error> for DefinitionError {

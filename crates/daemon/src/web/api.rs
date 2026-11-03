@@ -447,7 +447,7 @@ fn handle_view(h: genatrix_model::Handle) -> HandleView {
 /// One entry in the list of conversations: a person, or a group or channel
 /// (design 06 v0.6: a multi-party container is one party).
 #[derive(Serialize)]
-struct Party {
+pub(crate) struct Party {
     /// `person`, `group`, `channel` or `agent`.
     kind: &'static str,
     id: String,
@@ -466,7 +466,7 @@ struct Party {
     messages: u64,
     /// A task's: `todo` or `done`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    status: Option<&'static str>,
+    pub(crate) status: Option<&'static str>,
     /// A task's due day.
     #[serde(skip_serializing_if = "Option::is_none")]
     due: Option<String>,
@@ -479,6 +479,10 @@ struct Party {
     /// The lists a task is in.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     lists: Vec<String>,
+    /// The workspace a task's account is in, as the page names it
+    /// (design 14).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    space: Option<String>,
 }
 
 /// A task as one line of the list, or `None` when its own item is missing
@@ -562,14 +566,19 @@ fn task_facts(
 }
 
 /// Every task as a party (design 06 v0.12, "工作").
-fn task_parties(system: &System) -> Result<Vec<Party>, ApiError> {
+pub(crate) fn task_parties(system: &System, only: Option<&str>) -> Result<Vec<Party>, ApiError> {
     let flat = |t: String| t.replace('\n', " ").trim().to_owned();
     let overview = system.store.task_overview()?;
     let ids: Vec<_> = overview.iter().map(|t| t.thread.id).collect();
     let mut words = system.store.group_last_words(&ids)?;
     let me = system.store.self_person()?.map(|p| p.id);
+    let defs = crate::executors::definitions(&system.store)?;
     let mut out = Vec::new();
     for t in overview {
+        let space = crate::executors::workspace_of(&defs, &t.thread.source);
+        if only.is_some() && space.map(|w| w.name.as_str()) != only {
+            continue;
+        }
         let Some(facts) = task_facts(system, &t.thread)? else {
             continue;
         };
@@ -593,6 +602,7 @@ fn task_parties(system: &System) -> Result<Vec<Party>, ApiError> {
             from: facts.from,
             from_me: facts.from_me,
             lists: facts.lists,
+            space: space.map(|w| w.shown().to_owned()),
         });
     }
     Ok(out)
@@ -612,6 +622,10 @@ struct TaskDetail {
     assignees: Vec<Who>,
     description: String,
     connector: String,
+    /// The workspace the task's account is in: its name and what the page
+    /// calls it. Only its projects may take the task (invariant 31).
+    workspace: Option<String>,
+    space: Option<String>,
     messages: u64,
     first_at: Option<String>,
     last_at: Option<String>,
@@ -631,6 +645,8 @@ async fn task(State(system): Shared, Path(id): Path<String>) -> Result<Response,
     let Some(facts) = task_facts(&system, &thread)? else {
         return Ok(not_found("the task itself has not arrived"));
     };
+    let defs = crate::executors::definitions(&system.store)?;
+    let space = crate::executors::workspace_of(&defs, &thread.source);
     let row = system
         .store
         .task_overview()?
@@ -646,6 +662,8 @@ async fn task(State(system): Shared, Path(id): Path<String>) -> Result<Response,
         from: facts.from,
         from_me: facts.from_me,
         assignees: facts.assignees,
+        workspace: space.map(|w| w.name.clone()),
+        space: space.map(|w| w.shown().to_owned()),
         description: facts.description,
         connector: thread.source.connector.as_str().to_owned(),
         messages: row.as_ref().map_or(0, |t| t.messages),
@@ -715,6 +733,7 @@ fn more_parties(system: &System) -> Result<Vec<Party>, ApiError> {
             from: None,
             from_me: false,
             lists: Vec::new(),
+            space: None,
         });
     }
     // Installed agents are parties too (design 06 v0.5, design 11): the
@@ -739,6 +758,7 @@ fn more_parties(system: &System) -> Result<Vec<Party>, ApiError> {
             from: None,
             from_me: false,
             lists: Vec::new(),
+            space: None,
         });
     }
     Ok(out)
@@ -800,6 +820,7 @@ async fn chats(State(system): Shared) -> Result<Json<Vec<Party>>, ApiError> {
                     from: None,
                     from_me: false,
                     lists: Vec::new(),
+                    space: None,
                 }
             } else {
                 let g = &groups[i];
@@ -827,12 +848,13 @@ async fn chats(State(system): Shared) -> Result<Json<Vec<Party>>, ApiError> {
                     from: None,
                     from_me: false,
                     lists: Vec::new(),
+                    space: None,
                 }
             }
         })
         .collect::<Vec<_>>();
     out.extend(more_parties(&system)?);
-    out.extend(task_parties(&system)?);
+    out.extend(task_parties(&system, None)?);
     out.sort_by_key(|p| std::cmp::Reverse(p.last_ms));
     Ok(Json(out))
 }
@@ -1637,7 +1659,7 @@ async fn accounts(State(system): Shared) -> Json<AccountsView> {
 }
 
 /// Anything that goes wrong reading, rendered as JSON so the page can say so.
-struct ApiError(anyhow::Error);
+pub(crate) struct ApiError(anyhow::Error);
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
@@ -2316,7 +2338,7 @@ mod tests {
         };
         crate::ingest::task(store, &system.raw_files, "ou_me", &record).unwrap();
 
-        let Ok(rows) = task_parties(&system) else {
+        let Ok(rows) = task_parties(&system, None) else {
             panic!("the tasks could not be listed")
         };
         let row = &rows[0];
@@ -2332,5 +2354,46 @@ mod tests {
             .map(|w| (w.name.as_str(), w.me))
             .collect();
         assert_eq!(named, [("Boss", false), ("me@example.com", true)]);
+    }
+
+    /// A space's home shows the tasks its accounts brought, and no others
+    /// (design 06 v0.14, design 14).
+    #[test]
+    fn a_space_shows_only_the_tasks_its_accounts_brought() {
+        let (_dir, system) = crate::system::test_system();
+        let store = &system.store;
+        crate::executors::file_definition(
+            store,
+            "workspace",
+            "name = \"dpt\"\ntitle = \"DPT\"\naccounts = [\"lark:ou_me\"]\n",
+        )
+        .unwrap();
+        for (account, key) in [("ou_me", "task:g1"), ("ou_else", "task:g2")] {
+            let record = TaskRecord {
+                external_id: key.into(),
+                thread_key: key.into(),
+                title: key.into(),
+                status: "todo".into(),
+                created: "2026-11-01T00:00:00+00:00".into(),
+                updated: "2026-11-01T01:00:00+00:00".into(),
+                raw: b"{}".to_vec(),
+                ..Default::default()
+            };
+            crate::ingest::task(store, &system.raw_files, account, &record).unwrap();
+        }
+        let titles = |only| -> Vec<(String, Option<String>)> {
+            let Ok(rows) = task_parties(&system, only) else {
+                panic!("the tasks could not be listed")
+            };
+            let mut v: Vec<_> = rows.into_iter().map(|p| (p.name, p.space)).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(
+            titles(Some("dpt")),
+            [("task:g1".to_owned(), Some("DPT".to_owned()))]
+        );
+        assert!(titles(Some("personal")).is_empty());
+        assert_eq!(titles(None).len(), 2, "Chats still shows every task");
     }
 }

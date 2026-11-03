@@ -24,6 +24,8 @@ pub struct Request {
     /// Whether the user says the task is public. Their words are personal
     /// unless they say so; only they can lower a level (design 02).
     pub public: bool,
+    /// The thread the work comes from, such as a Lark task, if any.
+    pub source: Option<String>,
 }
 
 /// Why a draft was refused.
@@ -68,6 +70,13 @@ pub fn draft(system: &System, request: &Request) -> Result<Action, DraftError> {
     let roles: Vec<_> = defs.roles.iter().map(|(r, _)| r.clone()).collect();
     if let Err(e) = recipe.fits(project, &roles) {
         return refused(e.to_string());
+    }
+    // Invariant 31: what came from an account goes only to its own
+    // workspace's executors.
+    if let Some(source) = &request.source
+        && let Err(why) = super::check_source(&system.store, project, source)
+    {
+        return refused(why);
     }
     if !recipe.finish.propose.is_empty() && project.github.is_none() {
         // Not refused: the commits stay in the mirror. Said on the card.
@@ -123,6 +132,7 @@ pub fn draft(system: &System, request: &Request) -> Result<Action, DraftError> {
         roles,
         level: if request.public { "public" } else { "personal" }.to_owned(),
         executors,
+        source: request.source.clone(),
     };
     Ok(system.actions.propose_by_user(
         &system.store,
@@ -160,7 +170,18 @@ pub fn facts(system: &System, effect: &Effect) -> Vec<Fact> {
             level,
             ..
         } => {
+            let defs = super::definitions(&system.store).ok();
+            let space = defs.as_ref().and_then(|d| {
+                d.projects
+                    .iter()
+                    .find(|(p, _)| &p.name == project)
+                    .and_then(|(p, _)| d.workspaces.iter().find(|(w, _)| w.name == p.workspace))
+                    .map(|(w, _)| w.shown().to_owned())
+            });
             let mut out = vec![fact("Project", project.clone())];
+            if let Some(space) = space {
+                out.push(fact("Workspace", space));
+            }
             let recipe = system
                 .store
                 .definition("recipe", recipe_hash)

@@ -33,6 +33,13 @@ pub const RECIPE_FILES: &[(&str, &str)] = &[
     ("change-plan", include_str!("../builtin/change-plan.toml")),
 ];
 
+/// The built-in workspace files, by name (design 14): `personal`, with no
+/// accounts, where a project goes unless it says otherwise.
+pub const WORKSPACE_FILES: &[(&str, &str)] = &[(
+    crate::workspace::PERSONAL,
+    "name = \"personal\"\ntitle = \"Personal\"\n",
+)];
+
 /// The built-in roles.
 ///
 /// # Panics
@@ -71,6 +78,14 @@ mod tests {
         }
         for (name, recipe) in RECIPE_FILES.iter().map(|(n, _)| *n).zip(recipes()) {
             assert_eq!(name, recipe.name);
+        }
+        for (name, text) in WORKSPACE_FILES {
+            let w = crate::workspace::Workspace::parse(text).unwrap();
+            assert_eq!(*name, w.name);
+            assert!(
+                w.accounts.is_empty(),
+                "the built-in workspace has no accounts"
+            );
         }
         let names: Vec<String> = roles().into_iter().map(|r| r.name).collect();
         for recipe in recipes() {

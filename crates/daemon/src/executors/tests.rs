@@ -143,6 +143,7 @@ fn request(recipe: &str, task: &str, public: bool) -> super::draft::Request {
         recipe: recipe.into(),
         task: task.into(),
         public,
+        source: None,
     }
 }
 
@@ -739,5 +740,205 @@ async fn work_waiting_for_an_answer_can_be_stopped() {
         .unwrap()
         .is_err(),
         "a stopped work takes no answer"
+    );
+}
+
+/// A Lark task from account `ou_me`, as the connector delivers it; its
+/// thread's id.
+fn lark_task(system: &System) -> String {
+    let record = genatrix_connector::protocol::TaskRecord {
+        external_id: "task:g1".into(),
+        thread_key: "task:g1".into(),
+        title: "Fix the login page".into(),
+        status: "todo".into(),
+        created: "2026-11-01T00:00:00+00:00".into(),
+        updated: "2026-11-01T01:00:00+00:00".into(),
+        raw: b"{}".to_vec(),
+        ..Default::default()
+    };
+    crate::ingest::task(&system.store, &system.raw_files, "ou_me", &record).unwrap();
+    let source = genatrix_model::Source::new(genatrix_model::Connector::Lark, "ou_me", "task:g1");
+    system
+        .store
+        .find_thread(&source)
+        .unwrap()
+        .expect("the task's thread")
+        .id
+        .to_string()
+}
+
+/// The demo project again, moved to another workspace.
+fn move_demo(f: &Fixture, workspace: &str) {
+    let text = f
+        .system
+        .store
+        .active_definitions("project")
+        .unwrap()
+        .into_iter()
+        .find(|d| d.name == "demo")
+        .unwrap()
+        .text;
+    super::file_definition(
+        &f.system.store,
+        "project",
+        &format!("workspace = \"{workspace}\"\n{text}"),
+    )
+    .unwrap();
+}
+
+/// Invariant 30, where the core files definitions: an account in one
+/// workspace cannot join another; a project's workspace must exist; a
+/// workspace with projects in it stays.
+#[test]
+fn an_account_has_one_workspace_and_a_project_one_that_exists() {
+    let f = fixture(false);
+    let store = &f.system.store;
+    super::file_definition(
+        store,
+        "workspace",
+        "name = \"dpt\"\naccounts = [\"lark:ou_me\"]\n",
+    )
+    .unwrap();
+    let again = super::file_definition(
+        store,
+        "workspace",
+        "name = \"mine\"\naccounts = [\"lark:ou_me\"]\n",
+    );
+    assert!(again.is_err(), "the account is dpt's already");
+    // dpt's own new version may keep it.
+    super::file_definition(
+        store,
+        "workspace",
+        "name = \"dpt\"\ntitle = \"DPT\"\naccounts = [\"lark:ou_me\"]\n",
+    )
+    .unwrap();
+
+    let text = store.active_definitions("project").unwrap()[0].text.clone();
+    assert!(
+        super::file_definition(
+            store,
+            "project",
+            &format!("workspace = \"nowhere\"\n{text}")
+        )
+        .is_err(),
+        "a project's workspace must be on file"
+    );
+    move_demo(&f, "dpt");
+    assert!(
+        super::retire_definition(store, "workspace", "dpt").is_err(),
+        "demo is still in it"
+    );
+}
+
+/// Invariant 31, when drafted: work from a task goes only to a project in
+/// the workspace of the task's account; an account in no workspace gives
+/// its content to no executor.
+#[test]
+fn work_from_a_task_goes_only_to_its_own_workspace() {
+    let f = fixture(false);
+    let thread = lark_task(&f.system);
+    let from_task = |public| super::draft::Request {
+        source: Some(thread.clone()),
+        ..request("implement", "Fix the login page", public)
+    };
+
+    let Err(super::draft::DraftError::Refused(why)) =
+        super::draft::draft(&f.system, &from_task(true))
+    else {
+        panic!("an account in no workspace gives nothing")
+    };
+    assert!(why.contains("no workspace"), "{why}");
+
+    super::file_definition(
+        &f.system.store,
+        "workspace",
+        "name = \"dpt\"\naccounts = [\"lark:ou_me\"]\n",
+    )
+    .unwrap();
+    let Err(super::draft::DraftError::Refused(why)) =
+        super::draft::draft(&f.system, &from_task(true))
+    else {
+        panic!("demo is in personal, the task in dpt")
+    };
+    assert!(why.contains("dpt"), "{why}");
+
+    move_demo(&f, "dpt");
+    let a = super::draft::draft(&f.system, &from_task(true)).unwrap();
+    let Effect::Dispatch { source, .. } = &a.effect else {
+        panic!("a dispatch")
+    };
+    assert_eq!(source.as_deref(), Some(thread.as_str()));
+}
+
+/// Invariant 31, when the work starts: the account left the workspace
+/// after the card was approved, so the work does not run.
+#[tokio::test]
+async fn work_whose_task_left_the_workspace_does_not_start() {
+    let f = fixture(false);
+    let thread = lark_task(&f.system);
+    super::file_definition(
+        &f.system.store,
+        "workspace",
+        "name = \"dpt\"\naccounts = [\"lark:ou_me\"]\n",
+    )
+    .unwrap();
+    move_demo(&f, "dpt");
+    let a = super::draft::draft(
+        &f.system,
+        &super::draft::Request {
+            source: Some(thread),
+            ..request("implement", "Fix the login page", true)
+        },
+    )
+    .unwrap();
+    approve(&f.system, &a.id);
+    super::file_definition(&f.system.store, "workspace", "name = \"dpt\"\n").unwrap();
+    assert_eq!(super::run::start_approved(&f.system).unwrap(), 1);
+    for _ in 0..100 {
+        let now = f
+            .system
+            .actions
+            .get(&f.system.store, &a.id)
+            .unwrap()
+            .unwrap();
+        if let genatrix_agent::action::Status::Failed { detail } = &now.status {
+            assert!(detail.contains("no workspace"), "{detail}");
+            assert!(
+                f.host.seen.lock().unwrap().is_empty(),
+                "no executor was started"
+            );
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("the work should have been refused");
+}
+
+/// Invariant 32 for GitHub: a workspace's own token, then the default,
+/// never another workspace's.
+#[test]
+fn a_workspace_pushes_with_its_own_token_or_else_the_default() {
+    assert_eq!(
+        super::github::accounts_tried("dpt"),
+        ["token:dpt".to_owned(), "token".to_owned()]
+    );
+}
+
+/// Each executor session is told which workspace's sign-in to use.
+#[tokio::test]
+async fn an_executor_is_started_with_its_projects_workspace() {
+    let f = fixture(false);
+    super::file_definition(&f.system.store, "workspace", "name = \"dpt\"\n").unwrap();
+    move_demo(&f, "dpt");
+    *f.host.turns.lock().unwrap() = VecDeque::from(vec![turn("done")]);
+    let a = super::draft::draft(&f.system, &request("review-only", "Look it over.", true)).unwrap();
+    approve(&f.system, &a.id);
+    super::run::start_approved(&f.system).unwrap();
+    until_done(&f.system, &a.id).await;
+    let seen = f.host.seen.lock().unwrap();
+    assert!(!seen.is_empty());
+    assert!(
+        seen.iter()
+            .all(|(s, _)| s.executor.sign_in.as_deref() == Some("dpt"))
     );
 }

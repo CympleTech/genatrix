@@ -34,6 +34,11 @@ pub enum ExecAction {
     Login {
         /// The executor, as named in executors.toml.
         executor: String,
+        /// Keep the sign-in for this workspace's work only (design 14).
+        /// Without it, it is the default, used by every workspace that has
+        /// none of its own.
+        #[arg(long)]
+        workspace: Option<String>,
     },
 }
 
@@ -110,9 +115,18 @@ pub enum WorkAction {
 pub enum GithubAction {
     /// Keep a token for pushes and pull requests. Asks for it; checks it
     /// with GitHub; keeps it in the keychain.
-    Login,
+    Login {
+        /// Keep it for this workspace's projects only. Without it, it is
+        /// the default, used by every workspace that has none of its own.
+        #[arg(long)]
+        workspace: Option<String>,
+    },
     /// Forget the token.
-    Logout,
+    Logout {
+        /// The workspace's own token, not the default.
+        #[arg(long)]
+        workspace: Option<String>,
+    },
 }
 
 /// The commands `genatrix exec setup` runs, in order.
@@ -392,12 +406,26 @@ pub fn exec(exec: &super::Exec, action: ExecAction) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        ExecAction::Login { executor } => {
+        ExecAction::Login {
+            executor,
+            workspace,
+        } => {
             let Some(e) = config.executor(&executor) else {
                 anyhow::bail!("no executor `{executor}` in executors.toml");
             };
+            if let Some(w) = &workspace
+                && genatrix_dispatch::DefinitionError::is_bad_name(w)
+            {
+                anyhow::bail!("`{w}` is not a workspace's name");
+            }
             if let Some(var) = &e.token_env {
-                return login_with_token(&e.name, var);
+                return login_with_token(&e.name, var, workspace.as_deref());
+            }
+            if workspace.is_some() {
+                anyhow::bail!(
+                    "{executor} keeps its own login, one for its user; only an executor that \
+                     signs in with a token can have one per workspace"
+                );
             }
             if e.login.is_empty() {
                 anyhow::bail!("executors.toml gives no login command for `{executor}`");
@@ -437,7 +465,7 @@ fn token_is_plain(token: &str) -> bool {
 /// Ask for a sign-in token and leave it in the executor's user's home,
 /// readable by that user only. It goes to `sudo` on standard input, never
 /// on a command line.
-fn login_with_token(name: &str, var: &str) -> anyhow::Result<()> {
+fn login_with_token(name: &str, var: &str, workspace: Option<&str>) -> anyhow::Result<()> {
     println!("{name} signs in with a long-lived token, made as yourself:");
     println!();
     println!("  claude setup-token");
@@ -449,13 +477,16 @@ fn login_with_token(name: &str, var: &str) -> anyhow::Result<()> {
     if !token_is_plain(token) {
         anyhow::bail!("that does not look like a token; nothing was stored");
     }
+    // `$1` is the workspace's directory under `~/.genatrix`, or nothing
+    // for the default.
     let mut child = Command::new("/usr/bin/sudo")
         .args(["-n", "-H", "-u", EXEC_USER, "--", "/bin/sh", "-c"])
         .arg(
-            "umask 077 && mkdir -p \"$HOME/.genatrix\" && cat > \"$HOME/.genatrix/$0.env.tmp\" \
-             && mv \"$HOME/.genatrix/$0.env.tmp\" \"$HOME/.genatrix/$0.env\"",
+            "umask 077 && d=\"$HOME/.genatrix${1:+/$1}\" && mkdir -p \"$d\" \
+             && cat > \"$d/$0.env.tmp\" && mv \"$d/$0.env.tmp\" \"$d/$0.env\"",
         )
         .arg(name)
+        .arg(workspace.unwrap_or_default())
         .stdin(std::process::Stdio::piped())
         .spawn()?;
     child
@@ -466,11 +497,19 @@ fn login_with_token(name: &str, var: &str) -> anyhow::Result<()> {
     if !child.wait()?.success() {
         anyhow::bail!("could not store the token as {EXEC_USER}; run `genatrix exec setup` first");
     }
-    println!("Stored. {name} starts signed in from the next step on.");
+    match workspace {
+        Some(w) => println!(
+            "Stored for workspace `{w}`. Its work starts {name} signed in from the next step on."
+        ),
+        None => println!(
+            "Stored. {name} starts signed in from the next step on, in every workspace without \
+             a sign-in of its own."
+        ),
+    }
     Ok(())
 }
 
-/// Carry out `genatrix project|recipe|role`.
+/// Carry out `genatrix workspace|project|recipe|role`.
 pub fn definitions(system: &System, kind: &str, action: DefinitionAction) -> anyhow::Result<()> {
     match action {
         DefinitionAction::Add { file } => {
@@ -480,9 +519,21 @@ pub fn definitions(system: &System, kind: &str, action: DefinitionAction) -> any
             if kind == "project" {
                 let p = genatrix_dispatch::project::Project::parse(&text)?;
                 println!(
-                    "Its code may be seen by: {} (each sends what it is given to its vendor).",
+                    "It is in workspace `{}`. Its code may be seen by: {} (each sends what it is given to its vendor).",
+                    p.workspace,
                     p.executors.join(", ")
                 );
+            }
+            if kind == "workspace" {
+                let w = genatrix_dispatch::workspace::Workspace::parse(&text)?;
+                if w.accounts.is_empty() {
+                    println!("It has no accounts: nothing they bring goes to its executors.");
+                } else {
+                    println!(
+                        "What these accounts bring may go to its projects' executors, and to no others: {}",
+                        w.accounts.join(", ")
+                    );
+                }
             }
         }
         DefinitionAction::List => {
@@ -492,7 +543,7 @@ pub fn definitions(system: &System, kind: &str, action: DefinitionAction) -> any
             }
         }
         DefinitionAction::Remove { name } => {
-            if system.store.retire_definition(kind, &name)? {
+            if super::retire_definition(&system.store, kind, &name)? {
                 println!("{kind} `{name}` is no longer used");
             } else {
                 println!("no {kind} `{name}`");
@@ -520,6 +571,7 @@ pub fn work(system: &System, action: WorkAction) -> anyhow::Result<()> {
                     recipe,
                     task,
                     public,
+                    source: None,
                 },
             )?;
             println!("Drafted {}. Approve it on the approvals page.", a.id);
@@ -617,22 +669,48 @@ pub fn work(system: &System, action: WorkAction) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A workspace named on the command line must be on file.
+fn known_workspace(system: &System, workspace: Option<&str>) -> anyhow::Result<()> {
+    let Some(name) = workspace else {
+        return Ok(());
+    };
+    super::seed(&system.store)?;
+    if super::definitions(&system.store)?
+        .workspaces
+        .iter()
+        .any(|(w, _)| w.name == name)
+    {
+        Ok(())
+    } else {
+        anyhow::bail!("there is no workspace `{name}`")
+    }
+}
+
 /// Carry out `genatrix github`.
 pub async fn github(system: Arc<System>, action: GithubAction) -> anyhow::Result<()> {
-    use super::github::{ACCOUNT, SERVICE};
+    use super::github::{SERVICE, account_for};
     let chain = crate::keychain::Keychain::named(SERVICE);
     match action {
-        GithubAction::Login => {
+        GithubAction::Login { workspace } => {
+            known_workspace(&system, workspace.as_deref())?;
             println!("A fine-grained token with Contents and Pull requests (read and write) on");
             println!("the repositories your projects name is enough.");
             let token = rpassword::prompt_password("GitHub token: ")?;
             let token = token.trim().to_owned();
             let login = super::github::whoami(&system, &token).await?;
-            chain.store(ACCOUNT, &token)?;
-            println!("Signed in as {login}. The token is in the keychain.");
+            chain.store(&account_for(workspace.as_deref()), &token)?;
+            match &workspace {
+                Some(w) => println!(
+                    "Signed in as {login}, for workspace `{w}`. The token is in the keychain."
+                ),
+                None => println!(
+                    "Signed in as {login}, for every workspace without a token of its own. \
+                     The token is in the keychain."
+                ),
+            }
         }
-        GithubAction::Logout => {
-            if chain.forget(ACCOUNT)? {
+        GithubAction::Logout { workspace } => {
+            if chain.forget(&account_for(workspace.as_deref()))? {
                 println!("The token is gone from the keychain.");
             } else {
                 println!("There was no token.");

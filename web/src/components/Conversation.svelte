@@ -275,7 +275,10 @@
       {#if task.due}<span>{t('task.due')} <b>{task.due}</b></span>{/if}
       <span><b>{Math.max(0, task.messages - 1)}</b> {t('task.comments')}</span>
       {#if task.url}<a class="promise-chip has" href={task.url} target="_blank" rel="noreferrer">{t('task.open')}</a>{/if}
+      {#if task.space}<span class="role space-chip">{task.space}</span>{/if}
+      {#if task.workspace}<button type="button" class="promise-chip has" onclick={() => task && go(`/spaces/${task.workspace}?task=${task.id}`)}>{t('task.dispatch')}</button>{/if}
     </div>
+    {#if !task.workspace}<p class="note task-note">{t('task.nospace')}</p>{/if}
   {/if}
 
   {#if expanded && task}

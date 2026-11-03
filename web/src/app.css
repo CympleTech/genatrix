@@ -499,6 +499,20 @@
   }
   .avatar.small { @apply h-7 w-7 text-[11px]; }
   .role { @apply rounded-full border-0 px-2 py-0.5 text-[11px] font-medium; background: var(--surface-2); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+  /* Design 14: which workspace an account or a task is in. */
+  .space-chip { @apply mr-1.5 align-middle; }
+  .account-name .space-chip { @apply ml-1.5 mr-0; }
+  .task-note { @apply mx-4 mt-1; }
+  /* Design 06 v0.14: spaces. */
+  .space-cards .row { @apply p-0; }
+  .space-card { @apply flex w-full flex-col items-start gap-1 rounded-xl px-4 py-3 text-left; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+  .space-card:hover { background: var(--surface); }
+  .space-title { @apply text-[16px] font-semibold; }
+  .space-counts { @apply flex flex-wrap items-center gap-2 text-[13px]; }
+  .badge-soft { @apply rounded-full px-2 py-0.5 text-[12px] font-medium; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+  .badge-soft.on { color: var(--public); }
+  .space-head { @apply mb-2 mt-1 text-[20px] font-semibold; }
+  .space-made .field-label { @apply mt-3 block; }
   .role.removable { cursor: pointer; }
   .role.removable:hover { text-decoration: line-through; color: var(--secret); }
   .role-input { @apply min-h-[28px] min-w-[100px] border-0 bg-transparent text-[13px]; }

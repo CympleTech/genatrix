@@ -16,6 +16,9 @@ use crate::{DefinitionError, check_name};
 pub struct Project {
     /// Its name.
     pub name: String,
+    /// The workspace it belongs to (design 14). Every project is in one.
+    #[serde(default = "default_workspace")]
+    pub workspace: String,
     /// The repository on this machine, read by the core to refresh the
     /// mirror. Never given to an executor.
     pub repo: String,
@@ -43,6 +46,10 @@ pub struct Project {
     pub bundle_cap_mb: u32,
 }
 
+fn default_workspace() -> String {
+    crate::workspace::PERSONAL.to_owned()
+}
+
 fn default_base() -> String {
     "main".to_owned()
 }
@@ -62,6 +69,7 @@ impl Project {
     /// Check what the schema cannot.
     pub fn validate(&self) -> Result<(), DefinitionError> {
         check_name("project", &self.name)?;
+        check_name("workspace", &self.workspace)?;
         if self.repo.trim().is_empty() {
             return Err(DefinitionError::Invalid("repo is empty".into()));
         }
@@ -146,6 +154,10 @@ commands = ["cargo test --workspace"]
     fn a_project_reads_with_its_defaults() {
         let p = Project::parse(GOOD).unwrap();
         assert_eq!(p.base, "main");
+        assert_eq!(
+            p.workspace, "personal",
+            "a project is in the personal workspace unless it says"
+        );
         assert!(!p.network);
         assert!(
             !p.delegate_personal,

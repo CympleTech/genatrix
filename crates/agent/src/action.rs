@@ -113,6 +113,12 @@ pub enum Effect {
         level: String,
         /// Each executor the recipe hands the work to, with its vendor.
         executors: Vec<(String, String)>,
+        /// The thread the work came from, such as a Lark task, when it came
+        /// from one: its account must be in the project's workspace, checked
+        /// when drafted and again when the work starts (design 14,
+        /// invariant 31).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
     },
     /// Push a dispatch's commits to a branch of their own (design 13).
     /// Approval binds to the tip commit: later commits need a new approval.
@@ -898,7 +904,11 @@ mod tests {
             roles: vec![("backend".into(), "b".into())],
             level: "public".into(),
             executors: vec![("claude-code".into(), "anthropic".into())],
+            source: None,
         };
+        // A dispatch drafted before workspaces reads the same, with no source.
+        let older = serde_json::to_string(&dispatch).unwrap();
+        assert!(!older.contains("source"), "{older}");
         assert!(!dispatch.runs_in_a_connector());
         assert!(
             dispatch.editable(),

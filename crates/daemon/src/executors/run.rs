@@ -76,6 +76,7 @@ fn pinned(system: &System, effect: &Effect) -> Result<Pinned, String> {
         roles,
         level,
         executors,
+        source,
         ..
     } = effect
     else {
@@ -90,6 +91,11 @@ fn pinned(system: &System, effect: &Effect) -> Result<Pinned, String> {
             .ok_or_else(|| format!("the {kind} this was approved with is no longer on file"))
     };
     let project = Project::parse(&text("project", project_hash)?).map_err(|e| e.to_string())?;
+    // Invariant 31, again: the account may have changed workspace since
+    // the card was approved.
+    if let Some(source) = source {
+        super::check_source(&system.store, &project, source)?;
+    }
     let recipe = Recipe::parse(&text("recipe", recipe_hash)?).map_err(|e| e.to_string())?;
     let mut role_defs = Vec::new();
     for (_, hash) in roles {
@@ -583,6 +589,7 @@ async fn work(
                 name: entry.name.clone(),
                 command: entry.command.clone(),
                 path: Some(entry.path.clone()),
+                sign_in: Some(pins.project.workspace.clone()),
             },
             isolation: iso.clone(),
             scope: Scope {

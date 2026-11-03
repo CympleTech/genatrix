@@ -22,8 +22,49 @@ use crate::system::System;
 
 /// The keychain service and account the token is kept under.
 pub const SERVICE: &str = "Genatrix GitHub";
-/// The account within it.
+/// The account within it for the default token, the one that belongs to
+/// no workspace.
 pub const ACCOUNT: &str = "token";
+
+/// The keychain account a workspace's own token is under, or the default's
+/// for none (design 14).
+#[must_use]
+pub fn account_for(workspace: Option<&str>) -> String {
+    workspace.map_or_else(|| ACCOUNT.to_owned(), |w| format!("{ACCOUNT}:{w}"))
+}
+
+/// Where a workspace's work looks for a token, in order: its own, then
+/// the default. Never another workspace's (invariant 32).
+#[must_use]
+pub fn accounts_tried(workspace: &str) -> [String; 2] {
+    [account_for(Some(workspace)), account_for(None)]
+}
+
+/// The token a workspace's work pushes with, and which keychain account
+/// it came from.
+pub fn token_for(workspace: &str) -> anyhow::Result<Option<String>> {
+    let chain = Keychain::named(SERVICE);
+    for account in accounts_tried(workspace) {
+        if let Some(token) = chain.read(&account)? {
+            return Ok(Some(token));
+        }
+    }
+    Ok(None)
+}
+
+/// The workspace a project is in now, by its name; `personal` when the
+/// project is no longer on file.
+fn workspace_of_project(system: &System, project: &str) -> String {
+    super::definitions(&system.store)
+        .ok()
+        .and_then(|d| {
+            d.projects
+                .into_iter()
+                .find(|(p, _)| p.name == project)
+                .map(|(p, _)| p.workspace)
+        })
+        .unwrap_or_else(|| genatrix_dispatch::workspace::PERSONAL.to_owned())
+}
 
 /// The token, if the user signed in.
 pub fn token() -> Option<String> {
@@ -55,22 +96,10 @@ pub async fn execute_approved(system: &Arc<System>) -> anyhow::Result<usize> {
     if approved.is_empty() {
         return Ok(0);
     }
-    let token = match stored_token() {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            tracing::info!("approved GitHub work waits: run `genatrix github login`");
-            return Ok(0);
-        }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "approved GitHub work waits: the GitHub token is in the keychain but this \
-                 process may not read it; start the core from a terminal on the desktop, \
-                 not over SSH or inside tmux"
-            );
-            return Ok(0);
-        }
-    };
+    // Each workspace's work goes with its own token, or the default one
+    // (invariant 32); each looked up once.
+    let mut tokens: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
     let mut done = 0;
     // Pushes first, so a pull request approved with its push goes after it.
     let (pushes, prs): (Vec<_>, Vec<_>) = approved
@@ -82,6 +111,40 @@ pub async fn execute_approved(system: &Arc<System>) -> anyhow::Result<usize> {
         {
             continue;
         }
+        let project = match &action.effect {
+            Effect::PushBranch { project, .. } => project.clone(),
+            Effect::OpenPullRequest { dispatch, .. } => system
+                .store
+                .get_dispatch(dispatch)?
+                .map(|d| d.project)
+                .unwrap_or_default(),
+            _ => continue,
+        };
+        let workspace = workspace_of_project(system, &project);
+        if !tokens.contains_key(&workspace) {
+            match token_for(&workspace) {
+                Ok(t) => {
+                    tokens.insert(workspace.clone(), t);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "approved GitHub work waits: the GitHub token is in the keychain but this \
+                         process may not read it; start the core from a terminal on the desktop, \
+                         not over SSH or inside tmux"
+                    );
+                    return Ok(done);
+                }
+            }
+        }
+        let token = tokens.get(&workspace).cloned().flatten();
+        let Some(token) = token else {
+            tracing::info!(
+                %workspace,
+                "approved GitHub work waits: run `genatrix github login --workspace {workspace}` or `genatrix github login`"
+            );
+            continue;
+        };
         let Some((action, version, exec_token)) = system.actions.take(
             &system.store,
             &system.ledger,

@@ -678,6 +678,24 @@ mod tests {
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
         let r = call(&app, HERE, "POST", "/api/work/define", None, Some(project)).await;
         assert_eq!(r.status(), StatusCode::OK);
+        // Design 14, invariant 33: a workspace decides which executors an
+        // account's content may reach; the same rule.
+        let space = serde_json::json!({
+            "kind": "workspace",
+            "text": "name = \"dpt\"\naccounts = [\"lark:ou_x\"]\n"
+        });
+        let r = call(
+            &app,
+            LAN,
+            "POST",
+            "/api/work/define",
+            Some(&phone),
+            Some(space.clone()),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        let r = call(&app, HERE, "POST", "/api/work/define", None, Some(space)).await;
+        assert_eq!(r.status(), StatusCode::OK);
         let r = call(&app, LAN, "GET", "/api/work", Some(&phone), None).await;
         assert_eq!(r.status(), StatusCode::OK);
         let r = call(

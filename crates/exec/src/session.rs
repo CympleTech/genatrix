@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::acp::{self, AUTH_REQUIRED, Client, Incoming, METHOD_NOT_FOUND};
 use crate::isolation::Isolation;
-use crate::wire::{EVENT_TEXT, End, Event, FromHost, Start, cut};
+use crate::wire::{EVENT_TEXT, End, Event, Executor, FromHost, Start, cut};
 
 /// How long a cancelled session gets to wind down before it is ended.
 const WIND_DOWN: Duration = Duration::from_secs(10);
@@ -43,6 +43,51 @@ pub fn admit(ticket: &str, text: &str, executor: &str, key: &str) -> Result<(), 
     Ok(())
 }
 
+/// Whether a name can go into a path as it is.
+fn plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// The command that starts the executor, before isolation wraps it.
+///
+/// It `cd`s into the workspace as the executor's user: the host itself may
+/// not be allowed into it. The path, the search path and the names are
+/// arguments, never shell text.
+///
+/// A sign-in token left by `genatrix exec login` in the executor's user's
+/// home is read there, by that user: the host never holds it. A
+/// workspace's own, `~/.genatrix/<workspace>/<executor>.env`, comes first;
+/// then the default, `~/.genatrix/<executor>.env`. Never another
+/// workspace's (design 14, invariant 32).
+fn launch(executor: &Executor, workspace: &str) -> Result<Vec<String>, String> {
+    if !plain_name(&executor.name) {
+        return Err("an executor's name is letters, digits, - and _".into());
+    }
+    let sign_in = executor.sign_in.clone().unwrap_or_default();
+    if !sign_in.is_empty() && !plain_name(&sign_in) {
+        return Err("a workspace's name is letters, digits, - and _".into());
+    }
+    let mut argv = vec![
+        "/bin/sh".to_owned(),
+        "-c".to_owned(),
+        "cd \"$0\" || exit 1; if [ -n \"$1\" ]; then PATH=\"$1\"; export PATH; fi; \
+         t=\"$HOME/.genatrix/$2.env\"; \
+         if [ -n \"$3\" ] && [ -r \"$HOME/.genatrix/$3/$2.env\" ]; then t=\"$HOME/.genatrix/$3/$2.env\"; fi; \
+         if [ -n \"$HOME\" ] && [ -r \"$t\" ]; then set -a; . \"$t\"; set +a; fi; \
+         shift 3; exec \"$@\""
+            .to_owned(),
+        workspace.to_owned(),
+        executor.path.clone().unwrap_or_default(),
+        executor.name.clone(),
+        sign_in,
+    ];
+    argv.extend(executor.command.iter().cloned());
+    Ok(argv)
+}
+
 /// Run one session to its end. `out` gets every event and permission
 /// answer; the returned [`End`] is the last word. Nothing reaches the
 /// executor unless [`admit`] passes first.
@@ -54,38 +99,10 @@ pub async fn run(
     if let Err(e) = admit(&start.ticket, &start.text, &start.executor.name, &start.key) {
         return failed("refused", e);
     }
-    let workspace = start.scope.workspace.clone();
-    // `cd` into the workspace as the executor's user: the host itself may
-    // not be allowed into it. The path and the search path are arguments,
-    // never shell text.
-    //
-    // A sign-in token left by `genatrix exec login` in the executor's
-    // user's home, `~/.genatrix/<executor>.env`, is read there, by that
-    // user: the host never holds it.
-    if !start
-        .executor
-        .name
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    {
-        return failed(
-            "refused",
-            "an executor's name is letters, digits, - and _".into(),
-        );
-    }
-    let mut argv = vec![
-        "/bin/sh".to_owned(),
-        "-c".to_owned(),
-        "cd \"$0\" || exit 1; if [ -n \"$1\" ]; then PATH=\"$1\"; export PATH; fi; \
-         t=\"$HOME/.genatrix/$2.env\"; if [ -n \"$HOME\" ] && [ -r \"$t\" ]; then set -a; . \"$t\"; set +a; fi; \
-         shift 2; exec \"$@\""
-            .to_owned(),
-        workspace.clone(),
-        start.executor.path.clone().unwrap_or_default(),
-        start.executor.name.clone(),
-    ];
-    argv.extend(start.executor.command.iter().cloned());
-    let argv = start.isolation.wrap(&argv);
+    let argv = match launch(&start.executor, &start.scope.workspace) {
+        Ok(argv) => start.isolation.wrap(&argv),
+        Err(e) => return failed("refused", e),
+    };
     let isolated = matches!(start.isolation, Isolation::User { .. });
     let env = if isolated {
         vec![(
@@ -501,6 +518,53 @@ fn failed(stop: &str, error: String) -> End {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Invariant 32: a workspace's own sign-in first, then the default,
+    /// never another workspace's.
+    #[test]
+    fn an_executor_signs_in_as_its_workspace_or_else_the_default() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join(".genatrix");
+        std::fs::create_dir_all(dir.join("dpt")).unwrap();
+        std::fs::create_dir_all(dir.join("other")).unwrap();
+        std::fs::write(dir.join("claude-code.env"), "TOKEN=default\n").unwrap();
+        std::fs::write(dir.join("dpt/claude-code.env"), "TOKEN=dpt\n").unwrap();
+        std::fs::write(dir.join("other/claude-code.env"), "TOKEN=other\n").unwrap();
+        let token = |sign_in: Option<&str>| {
+            let executor = Executor {
+                name: "claude-code".into(),
+                command: vec!["/bin/sh".into(), "-c".into(), "printf %s \"$TOKEN\"".into()],
+                path: None,
+                sign_in: sign_in.map(str::to_owned),
+            };
+            let argv = launch(&executor, &home.path().to_string_lossy()).unwrap();
+            let out = std::process::Command::new(&argv[0])
+                .args(&argv[1..])
+                .env_clear()
+                .env("HOME", home.path())
+                .env("PATH", "/usr/bin:/bin")
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap()
+        };
+        assert_eq!(token(Some("dpt")), "dpt");
+        assert_eq!(
+            token(Some("personal")),
+            "default",
+            "none of its own: the default"
+        );
+        assert_eq!(token(None), "default");
+        let bad = Executor {
+            name: "claude-code".into(),
+            command: vec![],
+            path: None,
+            sign_in: Some("../other".into()),
+        };
+        assert!(
+            launch(&bad, "/w").is_err(),
+            "a workspace name cannot reach another's file"
+        );
+    }
 
     #[test]
     fn a_shell_wrapped_command_is_judged_by_what_it_runs() {

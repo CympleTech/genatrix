@@ -26,6 +26,10 @@ pub struct Executor {
     /// is set inside the executor's own shell.
     #[serde(default)]
     pub path: Option<String>,
+    /// The workspace whose sign-in it uses, if it has one of its own
+    /// (design 14, invariant 32).
+    #[serde(default)]
+    pub sign_in: Option<String>,
 }
 
 /// Everything one session needs.

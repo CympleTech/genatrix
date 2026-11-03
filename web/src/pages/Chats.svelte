@@ -119,7 +119,7 @@
                 {:else if p.last_at}<span class="party-when">{p.last_at.slice(5)}</span>{/if}
               </span>
               <span class="party-last">
-                {#if p.from}<b>{p.from_me ? t('chat.you') : p.from}</b>{/if}{#if p.lists?.length}{p.from ? ' · ' : ''}{p.lists.join(' · ')}{/if}
+                {#if p.space}<span class="role space-chip">{p.space}</span>{/if}{#if p.from}<b>{p.from_me ? t('chat.you') : p.from}</b>{/if}{#if p.lists?.length}{p.from ? ' · ' : ''}{p.lists.join(' · ')}{/if}
               </span>
               {#if p.last_text && p.messages > 1}<span class="party-last faint">{#if p.last_author}{p.last_mine ? t('chat.you') : p.last_author}: {/if}{p.last_text}</span>{/if}
             </span>

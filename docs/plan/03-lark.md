@@ -7,7 +7,7 @@ Design 05 v0.3, "飞书（Lark）：你负责的任务", awaiting review. The ai
 | Step | What | State |
 |---|---|---|
 | L1 | Read-only connector: the tasks assigned to you and their comments reach the timeline, the digest and search | Built and tested with a stand-in for Lark. Not yet run against a real tenant |
-| L2 | A project names the Lark task lists it takes work from. A new task in one of them becomes a dispatch draft, never a dispatch. Design 13's "新 Item" trigger, and the ruling on company content (a per-project switch: this project's own tasks and code may go to its executors) | Not started; design 13 first |
+| L2 | Builds on workspaces (design 14, plan 04): the Lark account is in a workspace, and a project there names the Lark task lists it takes work from. A new task in one of them becomes a dispatch draft, never a dispatch. Design 13's "新 Item" trigger, and the ruling on company content (a per-project switch: this project's own tasks and code may go to its executors) | Not started; design 13 first |
 | L3 | Write-back: comment the pull request link on the task, mark it done. Each is an approved action; the app gains write permissions only then | Not started |
 
 ## L1 as built
@@ -39,5 +39,5 @@ crates/daemon              accounts (`[lark]` in accounts.toml), ingest (task, c
 1. In the Lark developer console (open.larksuite.com/app), create a custom app.
 2. Under Permissions, add `task:task:read`, `task:comment:read`, `task:tasklist:read`, `contact:contact.base:readonly`, `contact:user.base:readonly` and `offline_access`. Names need both contact permissions: the first lets the user lookup be called as the user, the second puts the name in its answer. Publish a version and have the admin approve it.
 3. `genatrix --data-dir ~/.genatrix-dev account --add-lark cli_...`, then paste the App Secret, open the link and confirm. Or use Settings → Sign in to Lark on the Mac.
-4. Restart `serve`. On Settings the account should go from connecting to live. The tasks should then show up in the conversation with whoever assigned them, marked "Lark task".
+4. Restart `serve`. On Settings the account should go from connecting to live. The tasks should then show up under Chats → Work.
 5. If it fails, read the account's line on Settings first. Lark's error code names the missing permission or the step that failed.

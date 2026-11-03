@@ -46,8 +46,9 @@ pub fn routes() -> axum::Router<Arc<System>> {
 }
 
 #[derive(Serialize)]
-struct ProjectView {
+pub(crate) struct ProjectView {
     name: String,
+    workspace: String,
     github: Option<String>,
     base: String,
     executors: Vec<String>,
@@ -86,7 +87,7 @@ struct ExecutorView {
 }
 
 #[derive(Serialize)]
-struct DispatchView {
+pub(crate) struct DispatchView {
     id: String,
     project: String,
     recipe: String,
@@ -99,6 +100,21 @@ struct DispatchView {
     detail: Option<String>,
     started_ms: i64,
     ended_ms: Option<i64>,
+}
+
+impl From<genatrix_dispatch::project::Project> for ProjectView {
+    fn from(p: genatrix_dispatch::project::Project) -> Self {
+        Self {
+            workspace: p.workspace,
+            name: p.name,
+            github: p.github,
+            base: p.base,
+            executors: p.executors,
+            commands: p.commands,
+            network: p.network,
+            delegate_personal: p.delegate_personal,
+        }
+    }
 }
 
 impl From<genatrix_store::DispatchRow> for DispatchView {
@@ -122,6 +138,8 @@ impl From<genatrix_store::DispatchRow> for DispatchView {
 
 #[derive(Serialize)]
 struct Overview {
+    /// The workspaces, in the order filed (design 14).
+    workspaces: Vec<WorkspaceView>,
     projects: Vec<ProjectView>,
     recipes: Vec<RecipeView>,
     roles: Vec<RoleView>,
@@ -130,6 +148,13 @@ struct Overview {
     github: bool,
     /// Whether this request is from this machine, where projects are filed.
     local: bool,
+}
+
+#[derive(Serialize)]
+struct WorkspaceView {
+    name: String,
+    title: String,
+    accounts: Vec<String>,
 }
 
 fn word<T: Serialize>(v: &T) -> String {
@@ -150,19 +175,16 @@ async fn overview(State(system): Shared, Extension(caller): Extension<Caller>) -
     };
     let config = system.exec.config();
     Json(Overview {
-        projects: defs
-            .projects
+        workspaces: defs
+            .workspaces
             .into_iter()
-            .map(|(p, _)| ProjectView {
-                name: p.name,
-                github: p.github,
-                base: p.base,
-                executors: p.executors,
-                commands: p.commands,
-                network: p.network,
-                delegate_personal: p.delegate_personal,
+            .map(|(w, _)| WorkspaceView {
+                title: w.shown().to_owned(),
+                name: w.name,
+                accounts: w.accounts,
             })
             .collect(),
+        projects: defs.projects.into_iter().map(|(p, _)| p.into()).collect(),
         recipes: defs
             .recipes
             .into_iter()
@@ -213,6 +235,9 @@ struct DraftBody {
     task: String,
     #[serde(default)]
     public: bool,
+    /// The thread the work comes from, such as a Lark task.
+    #[serde(default)]
+    source: Option<String>,
 }
 
 async fn draft_work(State(system): Shared, Json(body): Json<DraftBody>) -> Response {
@@ -221,6 +246,7 @@ async fn draft_work(State(system): Shared, Json(body): Json<DraftBody>) -> Respo
         recipe: body.recipe,
         task: body.task,
         public: body.public,
+        source: body.source,
     };
     match draft::draft(&system, &request) {
         Ok(a) => {
@@ -258,7 +284,7 @@ async fn define(
     if caller != Caller::Local {
         return refuse(
             StatusCode::FORBIDDEN,
-            "projects, recipes and roles are filed on the computer Genatrix runs on",
+            "workspaces, projects, recipes and roles are filed on the computer Genatrix runs on",
         );
     }
     match crate::executors::file_definition(&system.store, &body.kind, &body.text) {
@@ -332,7 +358,17 @@ async fn one(
         }),
         Err(e) => return broke(&e),
     };
+    // The space the work's project is in, so the page can go back to it.
+    let workspace = crate::executors::definitions(&system.store)
+        .ok()
+        .and_then(|d| {
+            d.projects
+                .into_iter()
+                .find(|(p, _)| p.name == row.project)
+                .map(|(p, _)| p.workspace)
+        });
     Json(serde_json::json!({
+        "workspace": workspace,
         "push_again": push_again,
         "question": question,
         "dispatch": DispatchView::from(row),

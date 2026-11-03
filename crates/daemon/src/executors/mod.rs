@@ -32,6 +32,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use genatrix_dispatch::project::Project;
 use genatrix_dispatch::recipe::Recipe;
 use genatrix_dispatch::role::Role;
+use genatrix_dispatch::workspace::Workspace;
 use genatrix_exec::isolation::Isolation;
 use serde::{Deserialize, Serialize};
 
@@ -291,6 +292,8 @@ impl Exec {
 
 /// The definitions on file, read.
 pub struct Definitions {
+    /// Workspaces (design 14).
+    pub workspaces: Vec<(Workspace, String)>,
     /// Projects.
     pub projects: Vec<(Project, String)>,
     /// Roles.
@@ -299,11 +302,13 @@ pub struct Definitions {
     pub recipes: Vec<(Recipe, String)>,
 }
 
-/// Put the built-in roles and recipes on file where nothing of that name
-/// is. A role or recipe the user filed under the same name stays theirs.
+/// Put the built-in workspace, roles and recipes on file where nothing of
+/// that name is in use. One the user filed under the same name stays
+/// theirs; a built-in they removed comes back.
 pub fn seed(store: &genatrix_store::Store) -> anyhow::Result<()> {
     let now = chrono::Utc::now().timestamp_millis();
     for (kind, files) in [
+        ("workspace", genatrix_dispatch::builtin::WORKSPACE_FILES),
         ("role", genatrix_dispatch::builtin::ROLE_FILES),
         ("recipe", genatrix_dispatch::builtin::RECIPE_FILES),
     ] {
@@ -339,6 +344,7 @@ pub fn definitions(store: &genatrix_store::Store) -> anyhow::Result<Definitions>
         Ok(out)
     }
     Ok(Definitions {
+        workspaces: read(store, "workspace", Workspace::parse)?,
         projects: read(store, "project", Project::parse)?,
         roles: read(store, "role", Role::parse)?,
         recipes: read(store, "recipe", Recipe::parse)?,
@@ -354,9 +360,33 @@ pub fn file_definition(
     kind: &str,
     text: &str,
 ) -> anyhow::Result<(String, String)> {
+    seed(store)?;
     let name = match kind {
+        "workspace" => {
+            // Invariant 30: an account belongs to one workspace at most.
+            let workspace = Workspace::parse(text)?;
+            let others: Vec<Workspace> = definitions(store)?
+                .workspaces
+                .into_iter()
+                .map(|(w, _)| w)
+                .collect();
+            genatrix_dispatch::workspace::fits(&workspace, &others)?;
+            workspace.name
+        }
         "project" => {
+            // Invariant 30: a project is in exactly one workspace, and it is
+            // one on file.
             let project = Project::parse(text)?;
+            if !definitions(store)?
+                .workspaces
+                .iter()
+                .any(|(w, _)| w.name == project.workspace)
+            {
+                anyhow::bail!(
+                    "there is no workspace `{}`; file it first with `genatrix workspace add`",
+                    project.workspace
+                );
+            }
             check_repo(&project)?;
             project.name
         }
@@ -373,6 +403,68 @@ pub fn file_definition(
         chrono::Utc::now().timestamp_millis(),
     )?;
     Ok((name, hash))
+}
+
+/// Stop using a definition. A workspace that projects still name stays:
+/// every project is in one that exists (invariant 30). Returns whether there
+/// was one of that name.
+pub fn retire_definition(
+    store: &genatrix_store::Store,
+    kind: &str,
+    name: &str,
+) -> anyhow::Result<bool> {
+    if kind == "workspace" {
+        let users: Vec<String> = definitions(store)?
+            .projects
+            .into_iter()
+            .filter(|(p, _)| p.workspace == name)
+            .map(|(p, _)| p.name)
+            .collect();
+        if !users.is_empty() {
+            anyhow::bail!(
+                "projects {} are in workspace `{name}`; move or remove them first",
+                users.join(", ")
+            );
+        }
+    }
+    Ok(store.retire_definition(kind, name)?)
+}
+
+/// Whether the thread a dispatch came from may go to `project`'s
+/// executors: its account must be in the project's workspace, as the
+/// workspaces stand now (design 14, invariant 31). The words are for the
+/// card or the dispatch's record.
+pub fn check_source(
+    store: &genatrix_store::Store,
+    project: &Project,
+    thread: &str,
+) -> Result<(), String> {
+    let id: genatrix_model::ThreadId = thread
+        .parse()
+        .map_err(|_| "the work's source is not a thread".to_owned())?;
+    let thread = store
+        .get_thread(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "the thread the work came from is gone".to_owned())?;
+    let defs = definitions(store).map_err(|e| e.to_string())?;
+    let workspaces: Vec<Workspace> = defs.workspaces.into_iter().map(|(w, _)| w).collect();
+    let key = genatrix_dispatch::workspace::account_key(
+        thread.source.connector.as_str(),
+        &thread.source.account,
+    );
+    genatrix_dispatch::workspace::may_delegate(&workspaces, project, &key)
+        .map_err(|e| e.to_string())
+}
+
+/// The workspace a source account belongs to, by its connector and
+/// account id, if any.
+#[must_use]
+pub fn workspace_of<'a>(
+    defs: &'a Definitions,
+    source: &genatrix_model::Source,
+) -> Option<&'a Workspace> {
+    let key = genatrix_dispatch::workspace::account_key(source.connector.as_str(), &source.account);
+    defs.workspaces.iter().map(|(w, _)| w).find(|w| w.has(&key))
 }
 
 /// A project's repository must be there, be a git repository, and have

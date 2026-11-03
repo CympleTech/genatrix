@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use crate::error::{Error, Result};
 
 /// Highest migration this build knows.
-pub const SCHEMA_VERSION: i64 = 17;
+pub const SCHEMA_VERSION: i64 = 18;
 
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_init.sql")),
@@ -29,6 +29,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (15, include_str!("../migrations/0015_category.sql")),
     (16, include_str!("../migrations/0016_dispatch.sql")),
     (17, include_str!("../migrations/0017_dispatch_reply.sql")),
+    (18, include_str!("../migrations/0018_workspace.sql")),
 ];
 
 pub(crate) fn current_version(conn: &Connection) -> Result<i64> {
@@ -61,6 +62,43 @@ pub(crate) fn run(conn: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Migration 18 builds the definition table again to admit workspaces;
+    /// every definition on file stays, active or not.
+    #[test]
+    fn admitting_workspaces_keeps_every_definition() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for (version, sql) in MIGRATIONS.iter().filter(|(v, _)| *v <= 17) {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", version).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO definition (kind, name, hash, text, added_ms, active)
+                 VALUES ('project', 'p', 'h1', 'old', 1, 0), ('project', 'p', 'h2', 'new', 2, 1);",
+        )
+        .unwrap();
+        run(&mut conn).unwrap();
+        let rows: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM definition WHERE name = 'p'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 2);
+        conn.execute(
+            "INSERT INTO definition (kind, name, hash, text, added_ms) VALUES ('workspace', 'w', 'h3', 't', 3)",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO definition (kind, name, hash, text, added_ms) VALUES ('other', 'x', 'h4', 't', 4)",
+                [],
+            )
+            .is_err()
+        );
+    }
 
     /// Migration 17 builds the dispatch tables again to widen a CHECK. Foreign
     /// keys are on while it runs; it must keep every row, and leave the steps

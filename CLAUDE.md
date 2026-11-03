@@ -50,7 +50,7 @@ the step machine, the permission scope) and touches nothing; `crates/exec`
 is the executor host, `genatrix-exec`, which drives Claude Code or Codex
 over ACP as the system user `_genatrix_exec`; `crates/connectors/github` is
 `genatrix-github`, one sandboxed process per approved push or pull request.
-The core's side is `crates/daemon/src/executors/`.
+The core's side is `crates/daemon/src/executors/`. Workspaces (design 14) group accounts and projects: `crates/dispatch/src/workspace.rs` decides which items may go to which executors.
 
 `assets/brand/` holds the logo and its renderings; `assets/brand/README.md`
 says which file goes where. The page's icons in `web/public/` and the app

@@ -21,6 +21,7 @@ mod junk;
 pub mod local;
 mod quiet;
 mod setup;
+mod spaces;
 mod work;
 
 use std::future::IntoFuture as _;
@@ -73,6 +74,7 @@ pub async fn serve(system: Arc<System>, serving: &Serving) -> anyhow::Result<()>
         .merge(quiet::routes())
         .merge(local::routes())
         .merge(work::routes())
+        .merge(spaces::routes())
         // Every other path is the page: the app routes on the client side,
         // so a link to /approvals or /pair?code=... opens on the right screen.
         .fallback(get(index))

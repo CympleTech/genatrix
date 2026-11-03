@@ -10,7 +10,7 @@
   // the accounts and is told where to go.
   interface AccountView {
     kind: 'mail' | 'telegram' | 'lark'; id: string; name: string; detail: string;
-    can_send: boolean; state: string; text: string;
+    can_send: boolean; state: string; text: string; workspace?: string;
   }
   interface SetupView { local: boolean; accounts: AccountView[]; telegram: boolean }
 
@@ -157,7 +157,7 @@
         <li class="account-row">
           <span class="account-icon"><Icon name={a.kind === 'lark' ? 'task' : a.kind} size={18} /></span>
           <span class="account-body">
-            <span class="account-name">{a.name}</span>
+            <span class="account-name">{a.name}{#if a.workspace}<span class="role space-chip">{a.workspace}</span>{/if}</span>
             <span class="account-state {stateClass(a.state)}">{a.text}</span>
           </span>
           {#if view.local}

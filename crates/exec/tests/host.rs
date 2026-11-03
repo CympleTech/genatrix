@@ -39,6 +39,7 @@ fn start(workspace: &str, text: &str) -> Start {
             name: "fake".into(),
             command: vec![FAKE.into()],
             path: Some("/usr/bin:/bin".into()),
+            sign_in: None,
         },
         isolation: Isolation::SameUserForTests,
         scope: Scope {

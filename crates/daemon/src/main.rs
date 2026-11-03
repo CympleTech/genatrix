@@ -152,6 +152,12 @@ enum Command {
         #[command(subcommand)]
         action: executors::terminal::ExecAction,
     },
+    /// Workspaces: the accounts and projects of one area of work
+    /// (design 14).
+    Workspace {
+        #[command(subcommand)]
+        action: executors::terminal::DefinitionAction,
+    },
     /// Projects executors may work on.
     Project {
         #[command(subcommand)]
@@ -288,6 +294,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Exec { action } => {
             executors::terminal::exec(&executors::Exec::load(&config)?, action)
+        }
+        Command::Workspace { action } => {
+            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
+            executors::terminal::definitions(&system, "workspace", action)
         }
         Command::Project { action } => {
             let system = System::open(config.clone(), ticket_key(&config, false)?)?;

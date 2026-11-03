@@ -29,7 +29,7 @@
 <section class="pane">
   <p class="note">{t('approvals.note')}</p>
   {#if waiting}
-    <p class="note"><button type="button" class="linkish" onclick={() => go('/work')}>{t('approvals.waiting', { n: waiting })} →</button></p>
+    <p class="note"><button type="button" class="linkish" onclick={() => go('/spaces')}>{t('approvals.waiting', { n: waiting })} →</button></p>
   {/if}
   {#if error}<Empty text={error} error />
   {:else if !pending}<Empty text={t('loading')} />

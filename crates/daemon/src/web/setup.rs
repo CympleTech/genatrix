@@ -58,6 +58,9 @@ struct AccountView {
     /// The sync state's name, and the same in one line.
     state: String,
     text: String,
+    /// The workspace it belongs to, as the page names it (design 14).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -106,6 +109,7 @@ async fn view(
             can_send: a.smtp_host.is_some(),
             state,
             text,
+            workspace: None,
         });
     }
     for a in list.telegram.values() {
@@ -122,6 +126,7 @@ async fn view(
             can_send: true,
             state,
             text,
+            workspace: None,
         });
     }
     for a in list.lark.values() {
@@ -138,7 +143,15 @@ async fn view(
             can_send: false,
             state,
             text,
+            workspace: None,
         });
+    }
+    let spaces: Vec<_> = crate::executors::definitions(&system.store)
+        .map(|d| d.workspaces.into_iter().map(|(w, _)| w).collect())
+        .unwrap_or_default();
+    for a in &mut accounts {
+        a.workspace = genatrix_dispatch::workspace::owner(&spaces, &format!("{}:{}", a.kind, a.id))
+            .map(|w| w.shown().to_owned());
     }
     Ok(Json(SetupView {
         local: caller == Caller::Local,

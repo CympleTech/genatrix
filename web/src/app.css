@@ -503,6 +503,21 @@
   .space-chip { @apply mr-1.5 align-middle; }
   .account-name .space-chip { @apply ml-1.5 mr-0; }
   .task-note { @apply mx-4 mt-1; }
+
+  /* Design 06 v0.7: the admin passphrase, asked for one request. */
+  .passphrase-scrim { @apply fixed inset-0 z-[60]; background: rgba(20, 25, 24, 0.28); }
+  .passphrase-sheet {
+    @apply fixed inset-x-3 top-[18vh] z-[70] mx-auto grid max-w-[420px] gap-3 rounded-card border border-line bg-surface p-5;
+    box-shadow: var(--shadow), 0 20px 50px -20px rgba(0,0,0,0.35);
+  }
+  .passphrase-sheet input { @apply w-full; }
+  .admin-news {
+    @apply mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-card border border-line bg-surface px-4 py-3 text-[14px];
+    box-shadow: inset 3px 0 0 var(--line-strong);
+  }
+  .admin-news.bad { box-shadow: inset 3px 0 0 var(--accent); }
+  .admin-news span { @apply flex-1; min-width: 12rem; }
+  .device .role { @apply ml-1.5; }
   /* Design 06 v0.14: spaces. */
   .space-cards .row { @apply p-0; }
   .space-card { @apply flex w-full flex-col items-start gap-1 rounded-xl px-4 py-3 text-left; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
@@ -766,4 +781,16 @@
   .progress span { @apply block h-full rounded-full transition-[width]; background: var(--ink); }
   .pair-form label { @apply grid gap-1 text-[13px] text-muted; }
   .pair-form input { @apply text-[18px]; }
+  .setup-form label.quiet-toggle { @apply flex items-center gap-2; white-space: normal; }
+  .setup-form textarea { @apply rounded-control border border-line bg-surface px-3 py-2 text-[15px] text-ink; font-family: var(--font-mono); }
+  .setup-form .field-note { @apply m-0 text-[12px] leading-[1.5]; color: var(--faint); }
+  .setup-form .linkish { @apply justify-self-start text-[13px]; }
+  .pick-list { @apply m-0 flex list-none flex-col p-0 rounded-control bg-surface; border: 1px solid var(--line); }
+  .pick-list li + li { border-top: 1px solid var(--line); }
+  .pick-list label { @apply flex cursor-pointer items-center gap-3 px-3 py-2.5 text-[15px] text-ink; }
+  .pick-list label.off { @apply cursor-default; opacity: .55; }
+  .setup-form input[type="checkbox"] { @apply m-0 h-4 min-h-0 w-4 flex-none border-0 p-0; accent-color: var(--accent-fill); }
+  .pick-body { @apply flex min-w-0 flex-col; }
+  .pick-name { @apply truncate; }
+  .pick-body .faint { @apply text-[12px]; }
 }

@@ -3,9 +3,11 @@
 //! Design: `docs/design/06-interface.md`, "形态". A code is made on this
 //! machine and lives a few minutes; a phone that presents it gets a device
 //! secret in a cookie and is a paired device from then on. Codes are made
-//! only by this machine (loopback with the local key, see [`super::local`]),
-//! used once, and there is only ever one live code, so
-//! guessing is a six-digit lottery with one ticket per five minutes.
+//! by this machine (loopback with the local key, see [`super::local`]) or by
+//! an admin device with the admin passphrase (design 02, invariant 11), used
+//! once, and there is only ever one live code, so guessing is a six-digit
+//! lottery with one ticket per five minutes. A device paired this way is an
+//! ordinary one: the admin role is granted on this machine only.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -81,18 +83,25 @@ struct Started {
     reachable_at: Vec<String>,
 }
 
-/// Make a pairing code. Loopback only: pairing starts on the machine.
+/// Make a pairing code: on this machine, or from an admin device with the
+/// passphrase.
 async fn start(
     State(system): State<Arc<System>>,
     Extension(caller): Extension<Caller>,
     Extension(serving): Extension<super::Serving>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
-    if caller != Caller::Local {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "pairing starts on the machine Genatrix runs on" })),
-        )
-            .into_response();
+    if let Err(no) = super::admin::high(
+        &system,
+        &caller,
+        &headers,
+        "pair_code",
+        "",
+        "pairing starts on the machine Genatrix runs on, or on an admin device",
+    )
+    .await
+    {
+        return no;
     }
     let code = system.pairing.start();
     Json(Started {
@@ -117,6 +126,8 @@ struct DeviceView {
     created_at: String,
     last_seen: Option<String>,
     revoked_at: Option<String>,
+    /// An admin device (design 06 v0.7).
+    admin: bool,
     /// The device making this request.
     this: bool,
 }
@@ -147,6 +158,7 @@ async fn pair(State(system): State<Arc<System>>, Json(body): Json<PairBody>) -> 
         created_at: chrono::Utc::now().to_rfc3339(),
         last_seen: None,
         revoked_at: None,
+        admin: false,
     };
     if let Err(e) = system.store.insert_device(&device) {
         return (
@@ -176,6 +188,7 @@ fn view(d: &genatrix_store::Device, this: bool) -> DeviceView {
         created_at: d.created_at.clone(),
         last_seen: d.last_seen.clone(),
         revoked_at: d.revoked_at.clone(),
+        admin: d.admin,
         this,
     }
 }

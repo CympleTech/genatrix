@@ -3,9 +3,11 @@
 //! Design: `docs/design/09-install-recover-migrate.md` ("先落地的是设置页"),
 //! `docs/design/05-connectors.md` ("在界面上接入"), `docs/design/04-model-layer.md`
 //! ("模型下载"), and `docs/design/02-trust-boundary.md`, invariant 12: adding,
-//! signing in to and removing accounts is accepted from loopback only. A
-//! paired phone can see how every account is doing; it cannot type a
-//! password into a page that may reach the core over plain HTTP.
+//! signing in to and removing accounts are high-privilege requests, from
+//! this machine or from an admin device with the admin passphrase (design
+//! 06 v0.7). An ordinary paired phone sees how every account is doing and
+//! changes nothing. Downloading models, exporting and deleting everything
+//! stay with this machine: they act on its disk.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -28,12 +30,16 @@ fn refuse(status: StatusCode, message: impl Into<String>) -> Response {
     (status, Json(serde_json::json!({ "error": message.into() }))).into_response()
 }
 
-/// Invariant 12: credentials are typed on the machine Genatrix runs on.
+/// What an ordinary device is told when it asks to change an account.
+const NOBODY: &str =
+    "accounts are added and removed on the computer Genatrix runs on, or from an admin device";
+
+/// Models, export and erasing everything act on this machine's disk.
 fn local_only(caller: &Caller) -> Option<Response> {
     (*caller != Caller::Local).then(|| {
         refuse(
             StatusCode::FORBIDDEN,
-            "accounts are added and removed on the computer Genatrix runs on",
+            "this is done on the computer Genatrix runs on",
         )
     })
 }
@@ -65,8 +71,10 @@ struct AccountView {
 
 #[derive(Serialize)]
 struct SetupView {
-    /// This request comes from the machine itself, so the forms work.
+    /// This request comes from the machine itself.
     local: bool,
+    /// The account forms work here: this machine, or an admin device.
+    manage: bool,
     accounts: Vec<AccountView>,
     /// Whether this build can sign in to Telegram at all.
     telegram: bool,
@@ -155,6 +163,7 @@ async fn view(
     }
     Ok(Json(SetupView {
         local: caller == Caller::Local,
+        manage: super::admin::can_manage(&system, &caller),
         accounts,
         telegram: genatrix_connector_telegram::Credentials::available(),
     }))
@@ -173,9 +182,19 @@ struct MailBody {
 async fn add_mail(
     State(system): State<Arc<System>>,
     Extension(caller): Extension<Caller>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<MailBody>,
 ) -> Response {
-    if let Some(no) = local_only(&caller) {
+    if let Err(no) = super::admin::high(
+        &system,
+        &caller,
+        &headers,
+        "add_mailbox",
+        body.address.trim(),
+        NOBODY,
+    )
+    .await
+    {
         return no;
     }
     let address = body.address.trim().to_lowercase();
@@ -227,9 +246,12 @@ struct StepBody {
 async fn telegram_start(
     State(system): State<Arc<System>>,
     Extension(caller): Extension<Caller>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<PhoneBody>,
 ) -> Response {
-    if let Some(no) = local_only(&caller) {
+    if let Err(no) =
+        super::admin::high(&system, &caller, &headers, "start_telegram", "", NOBODY).await
+    {
         return no;
     }
     let phone: String = body
@@ -284,7 +306,7 @@ async fn telegram_code(
     Extension(caller): Extension<Caller>,
     Json(body): Json<StepBody>,
 ) -> Response {
-    if let Some(no) = local_only(&caller) {
+    if let Err(no) = super::admin::manager(&system, &caller, NOBODY) {
         return no;
     }
     let Some((at, mut flow)) = take_flow(&system, &body.flow).await else {
@@ -312,7 +334,7 @@ async fn telegram_password(
     Extension(caller): Extension<Caller>,
     Json(body): Json<StepBody>,
 ) -> Response {
-    if let Some(no) = local_only(&caller) {
+    if let Err(no) = super::admin::manager(&system, &caller, NOBODY) {
         return no;
     }
     let Some((at, mut flow)) = take_flow(&system, &body.flow).await else {
@@ -340,9 +362,19 @@ struct RemoveBody {
 async fn remove(
     State(system): State<Arc<System>>,
     Extension(caller): Extension<Caller>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<RemoveBody>,
 ) -> Response {
-    if let Some(no) = local_only(&caller) {
+    if let Err(no) = super::admin::high(
+        &system,
+        &caller,
+        &headers,
+        "remove_account",
+        &body.id,
+        NOBODY,
+    )
+    .await
+    {
         return no;
     }
     match setup::remove(&system, body.kind, &body.id).await {
@@ -518,10 +550,12 @@ struct LarkStartBody {
 async fn lark_start(
     State(system): State<Arc<System>>,
     Extension(caller): Extension<Caller>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<LarkStartBody>,
 ) -> Response {
     use genatrix_connector_lark::{Brand, Secret, auth};
-    if let Some(no) = local_only(&caller) {
+    if let Err(no) = super::admin::high(&system, &caller, &headers, "start_lark", "", NOBODY).await
+    {
         return no;
     }
     let app_id = body.app_id.trim().to_owned();
@@ -577,7 +611,7 @@ async fn lark_poll(
     Json(body): Json<LarkPollBody>,
 ) -> Response {
     use genatrix_connector_lark::auth::{self, Poll};
-    if let Some(no) = local_only(&caller) {
+    if let Err(no) = super::admin::manager(&system, &caller, NOBODY) {
         return no;
     }
     let flow = system

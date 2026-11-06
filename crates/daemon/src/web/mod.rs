@@ -14,6 +14,7 @@
 //! `web/README.md` for the front-end side.
 
 mod access;
+mod admin;
 mod agents;
 mod api;
 mod devices;
@@ -33,6 +34,7 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::get;
 
+pub use admin::AdminGate;
 pub use devices::Pairing;
 pub use local::Local;
 
@@ -68,6 +70,7 @@ pub async fn serve(system: Arc<System>, serving: &Serving) -> anyhow::Result<()>
         .route("/icon-512.png", get(icon_512))
         .merge(api::routes())
         .merge(devices::routes())
+        .merge(admin::routes())
         .merge(setup::routes())
         .merge(agents::routes())
         .merge(junk::routes())

@@ -114,11 +114,9 @@ struct Home {
     record: Vec<Done>,
     /// Whose GitHub token its work pushes with: `own`, `default` or `none`.
     github: &'static str,
-    /// Whether this request is from this machine, where a space changes.
-    local: bool,
-    /// The workspace file as filed, for changing it on this machine.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    text: Option<String>,
+    /// Whether the space can be changed from here: this machine, or an
+    /// admin device (design 06 v0.7).
+    manage: bool,
 }
 
 /// One space's home.
@@ -154,17 +152,7 @@ async fn one(
         .into_iter()
         .filter(|t| t.status == Some("todo"))
         .collect();
-    let local = caller == Caller::Local;
-    let text = if local {
-        system
-            .store
-            .active_definitions("workspace")?
-            .into_iter()
-            .find(|d| d.name == space.name)
-            .map(|d| d.text)
-    } else {
-        None
-    };
+    let manage = super::admin::can_manage(&system, &caller);
     Ok(Json(Home {
         name: space.name.clone(),
         title: space.shown().to_owned(),
@@ -185,8 +173,7 @@ async fn one(
             })
             .collect(),
         github: github_sign_in(&space.name),
-        local,
-        text,
+        manage,
     })
     .into_response())
 }

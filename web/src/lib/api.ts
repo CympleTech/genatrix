@@ -1,3 +1,4 @@
+import { writable } from 'svelte/store';
 import { lang } from './i18n';
 
 // The core's JSON interface. Every call goes to the same origin; a paired
@@ -5,9 +6,11 @@ import { lang } from './i18n';
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  body: any;
+  constructor(status: number, message: string, body: any = null) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -17,9 +20,38 @@ async function read(response: Response): Promise<any> {
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
   if (!response.ok) {
     const message = (body && body.error) || response.statusText || `HTTP ${response.status}`;
-    throw new ApiError(response.status, message);
+    throw new ApiError(response.status, message, body);
   }
   return body;
+}
+
+// Design 06 v0.7: a high-privilege request from an admin device carries the
+// admin passphrase, that once. The core asks for it by answering
+// `need: "passphrase"`; the page asks you, sends it with the one retry and
+// keeps it nowhere. The dialog in App.svelte answers this.
+export interface PassphraseAsk { why: string; answer: (p: string | null) => void }
+export const passphraseAsk = writable<PassphraseAsk | null>(null);
+function askPassphrase(why: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    passphraseAsk.set({ why, answer: (p) => { passphraseAsk.set(null); resolve(p); } });
+  });
+}
+const PASSPHRASE_HEADER = 'x-genatrix-passphrase';
+
+// A request that may be high-privilege: sent as it is, and again with the
+// passphrase while the core asks for one and you give one.
+export async function send<T = any>(path: string, init: RequestInit): Promise<T> {
+  const headers = new Headers(init.headers);
+  for (let i = 0; ; i++) {
+    try {
+      return await read(await fetch(path, { ...init, credentials: 'same-origin', headers }));
+    } catch (e: any) {
+      if (!(e instanceof ApiError) || e.body?.need !== 'passphrase' || i >= 5) throw e;
+      const given = await askPassphrase(i === 0 ? '' : e.message);
+      if (!given) throw new ApiError(e.status, e.message, e.body);
+      headers.set(PASSPHRASE_HEADER, given);
+    }
+  }
 }
 
 // The core speaks the page's language where it writes words itself, such
@@ -31,12 +63,11 @@ export async function get<T = any>(path: string): Promise<T> {
 }
 
 export async function post<T = any>(path: string, body: unknown = {}): Promise<T> {
-  return read(await fetch(path, {
+  return send<T>(path, {
     method: 'POST',
-    credentials: 'same-origin',
     headers: { 'content-type': 'application/json', ...langHeader },
     body: JSON.stringify(body),
-  }));
+  });
 }
 
 // --- shapes the core sends (crates/daemon/src/web/api.rs) ---
@@ -94,7 +125,7 @@ export interface WorkOverview {
   workspaces: Workspace[]; projects: WorkProject[]; recipes: WorkRecipe[];
   roles: { name: string; title: string; may: string[] }[];
   executors: { name: string; vendor: string }[];
-  dispatches: Dispatch[]; github: boolean; local: boolean;
+  dispatches: Dispatch[]; github: boolean; manage: boolean;
 }
 export interface WorkStep {
   seq: number; step: string; round: number; role: string; executor: string; state: string;
@@ -134,20 +165,24 @@ export interface Status {
   bytes_left_device: number; bytes_on_disk: number; data_dir: string;
   model: { state: string; [k: string]: unknown }; model_text: string;
   embedded: number; summarized: number; judged: number; pending_actions: number;
+  admin_last?: AdminLine;
 }
+/** A high-privilege request, or a wrong admin passphrase (design 06 v0.7). */
+export interface AdminLine { seq: number; at: string; act: string; subject?: string; by: string; device?: string; outcome: 'allowed' | 'wrong_passphrase' | 'locked' }
+export interface AdminView { here: boolean; admin: boolean; manage: boolean; passphrase_set: boolean; locked: boolean; failures: number; recent: AdminLine[] }
 export interface Call {
   at: string; purpose: string; level: string; target: string; location: string;
   decision: string; items: number; payload: string | null;
 }
 export interface RunLine { id: string; at: string; task: string; max_steps: number; end: string; steps: number; reason: string }
 export interface ActionEvent { at: string; action: string; event: string; by: string; kind: string; version: number; detail: string }
-export interface Ledger { headline: string; entries: number; verified: boolean; calls: Call[]; runs: RunLine[]; actions: ActionEvent[] }
+export interface Ledger { headline: string; entries: number; verified: boolean; calls: Call[]; runs: RunLine[]; actions: ActionEvent[]; admin: AdminLine[] }
 export interface RunStep { at: string; kind: string; body: any }
 export interface AskReply {
   run_id: string; answer: string; cited: SourceRef[]; steps: string[];
   actions: Action[]; stopped: boolean; answered: string;
 }
-export interface Device { id: string; name: string; created_at: string; last_seen: string | null; revoked_at: string | null; this: boolean }
+export interface Device { id: string; name: string; created_at: string; last_seen: string | null; revoked_at: string | null; admin: boolean; this: boolean }
 
 export interface ChatMessage {
   id: string; day: string; time: string; ms: number; mine: boolean; connector: string;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { get, langHeader, type AgentCard, type AgentPreview, type Risk } from '../lib/api';
+  import { get, post, send, langHeader, type AgentCard, type AgentPreview, type Risk } from '../lib/api';
   import { t } from '../lib/i18n';
   import { bytes, cardValue } from '../lib/format';
   import { go } from '../lib/router';
@@ -7,8 +7,9 @@
 
   // Design 11, "安装" and "审查与管理": what a package may do, in words,
   // before anything of it runs for real; a trial on recent items; then the
-  // user's word. Installing and uninstalling happen on this machine only
-  // (design 02, invariant 18); a paired phone sees the list and can pause.
+  // user's word. Installing and uninstalling happen on this machine or an
+  // admin device, with the admin passphrase (design 02, invariant 18; design
+  // 06 v0.7); an ordinary paired phone sees the list and can pause.
   let agents = $state<AgentCard[] | null>(null);
   let local = $state(false);
   let error = $state('');
@@ -22,7 +23,7 @@
   async function load() {
     try {
       agents = await get<AgentCard[]>('/api/agents');
-      local = (await get<{ local: boolean }>('/api/setup')).local;
+      local = (await get<{ manage: boolean }>('/api/setup')).manage;
     } catch (e: any) { error = e.message; }
   }
   $effect(() => { load(); });
@@ -32,13 +33,10 @@
     if (!f) return;
     reading = true; error = ''; notice = ''; preview = null;
     try {
-      const r = await fetch('/api/agents/preview', {
-        method: 'POST', credentials: 'same-origin',
+      preview = await send<AgentPreview>('/api/agents/preview', {
+        method: 'POST',
         headers: { 'content-type': 'application/wasm', ...langHeader }, body: await f.arrayBuffer(),
       });
-      const body = await r.json().catch(() => null);
-      if (!r.ok) throw new Error(body?.error || r.statusText);
-      preview = body;
     } catch (e: any) { error = e.message; }
     reading = false;
     if (file) file.value = '';
@@ -47,12 +45,7 @@
     if (!preview) return;
     installing = true; error = '';
     try {
-      const r = await fetch('/api/agents/install', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'content-type': 'application/json', ...langHeader }, body: JSON.stringify({ hash: preview.hash }),
-      });
-      const body = await r.json().catch(() => null);
-      if (!r.ok) throw new Error(body?.error || r.statusText);
+      await post('/api/agents/install', { hash: preview.hash });
       notice = t('agents.installed', { name: preview.name });
       preview = null;
       await load();
@@ -63,9 +56,7 @@
     if (what === 'uninstall' && confirming !== a.id) { confirming = a.id; return; }
     confirming = '';
     try {
-      const r = await fetch(`/api/agent/${a.id}/${what}`, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: '{}' });
-      const body = await r.json().catch(() => null);
-      if (!r.ok) throw new Error(body?.error || r.statusText);
+      const body = await post<any>(`/api/agent/${a.id}/${what}`, {});
       if (what === 'uninstall') notice = t('agents.removed', { name: a.name });
       if (what === 'pause' && body?.withdrawn) notice = t('agents.withdrawn', { n: body.withdrawn });
       await load();

@@ -16,6 +16,8 @@
   import Spaces from './pages/Spaces.svelte';
   import { get as fetchJson } from './lib/api';
   import Icon from './components/Icon.svelte';
+  import PassphraseDialog from './components/PassphraseDialog.svelte';
+  import { adminLine } from './lib/admin';
 
   startPolling();
 
@@ -67,6 +69,19 @@
   }
   function nav(path: string) { more = false; go(path); }
 
+  // Design 06 v0.7: every high-privilege request, and every wrong admin
+  // passphrase, is shown on every device until you have seen it there.
+  const SEEN = 'genatrix.admin.seen';
+  let seen = $state(0);
+  try { seen = Number(localStorage.getItem(SEEN) ?? 0); } catch { /* no storage: shown once a visit */ }
+  const adminNews = $derived($status?.admin_last && $status.admin_last.seq > seen ? $status.admin_last : null);
+  function dismissAdmin() {
+    if (!adminNews) return;
+    seen = adminNews.seq;
+    try { localStorage.setItem(SEEN, String(seen)); } catch { /* the banner comes back next visit */ }
+  }
+  const adminWhen = (at: string) => new Date(at).toLocaleString();
+
   const statusLine = $derived.by(() => {
     const s = $status;
     if (!s) return $statusError || t('loading');
@@ -95,6 +110,13 @@
   </nav>
 
   <main>
+    {#if adminNews}
+      <div class="admin-news" class:bad={adminNews.outcome !== 'allowed'} role="status">
+        <span>{adminLine(adminNews)} · <time>{adminWhen(adminNews.at)}</time></span>
+        <button type="button" class="linkish" onclick={() => { dismissAdmin(); go('/records'); }}>{t('admin.news.see')}</button>
+        <button type="button" class="linkish" onclick={dismissAdmin}>{t('admin.news.ok')}</button>
+      </div>
+    {/if}
     {#if $unauthorized && section !== 'pair'}
       <section class="pane">
         <p class="headline">{t('unauthorized')}</p>
@@ -139,3 +161,5 @@
     <div class="scrim" onclick={() => (more = false)} role="presentation"></div>
   {/if}
 </div>
+
+<PassphraseDialog />

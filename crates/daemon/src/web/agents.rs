@@ -2,9 +2,11 @@
 //! do before it is installed, its trial run, install, its conversation and
 //! its record, pause, export, uninstall.
 //!
-//! Installing, like adding an account, is accepted from this machine only
-//! until management devices exist (design 02, invariants 12 and 18; design
-//! 06 v0.7 allows a management device later, and this is stricter).
+//! Installing and uninstalling, like adding an account, are high-privilege
+//! requests: from this machine, or from an admin device with the admin
+//! passphrase (design 02, invariants 12 and 18; design 06 v0.7). Reading a
+//! package and trying it, before the install, needs an admin device but not
+//! the passphrase again: nothing of it is kept.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,14 +35,9 @@ fn refuse(status: StatusCode, message: impl Into<String>) -> Response {
     (status, Json(serde_json::json!({ "error": message.into() }))).into_response()
 }
 
-fn local_only(caller: &Caller) -> Option<Response> {
-    (*caller != Caller::Local).then(|| {
-        refuse(
-            StatusCode::FORBIDDEN,
-            "agents are installed and removed on the computer Genatrix runs on",
-        )
-    })
-}
+/// What an ordinary device is told.
+const NOBODY: &str =
+    "agents are installed and removed on the computer Genatrix runs on, or from an admin device";
 
 fn failed(e: &anyhow::Error) -> Response {
     refuse(StatusCode::BAD_REQUEST, e.to_string())
@@ -159,7 +156,7 @@ async fn preview(
     body: Bytes,
 ) -> Response {
     let lang = language(&headers);
-    if let Some(no) = local_only(&caller) {
+    if let Err(no) = super::admin::manager(&system, &caller, NOBODY) {
         return no;
     }
     let package = match Package::read(body.to_vec()) {
@@ -196,9 +193,12 @@ struct InstallBody {
 async fn install(
     State(system): State<Arc<System>>,
     Extension(caller): Extension<Caller>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<InstallBody>,
 ) -> Response {
-    if let Some(no) = local_only(&caller) {
+    if let Err(no) =
+        super::admin::high(&system, &caller, &headers, "install_agent", "", NOBODY).await
+    {
         return no;
     }
     let Some(bytes) = system.agents.take_staged(&body.hash) else {
@@ -396,9 +396,12 @@ async fn export(State(system): State<Arc<System>>, Path(id): Path<String>) -> Re
 async fn uninstall(
     State(system): State<Arc<System>>,
     Extension(caller): Extension<Caller>,
+    headers: axum::http::HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
-    if let Some(no) = local_only(&caller) {
+    if let Err(no) =
+        super::admin::high(&system, &caller, &headers, "uninstall_agent", &id, NOBODY).await
+    {
         return no;
     }
     match life::uninstall(&system, &id) {

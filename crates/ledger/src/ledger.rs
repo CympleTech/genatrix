@@ -40,6 +40,9 @@ pub mod kind {
     pub const ACTION_DECISION: &str = "action_decision";
     /// An action was executed, or execution failed or is unknown.
     pub const ACTION_EXECUTION: &str = "action_execution";
+    /// A high-privilege request, or a wrong admin passphrase (design 06
+    /// v0.7: every one is shown to every device and on the record page).
+    pub const ADMIN: &str = "admin";
 }
 
 /// One ledger entry.

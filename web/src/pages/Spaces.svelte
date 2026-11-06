@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { get, post, type Dispatch, type Party, type WorkOverview, type WorkProject } from '../lib/api';
+  import { get, type Dispatch, type Party, type WorkOverview, type WorkProject } from '../lib/api';
   import { t } from '../lib/i18n';
   import { go, route } from '../lib/router';
   import Empty from '../components/Empty.svelte';
   import WorkForm from '../components/WorkForm.svelte';
+  import SpaceForm from '../components/SpaceForm.svelte';
+  import ProjectForm from '../components/ProjectForm.svelte';
 
   // Design 06 v0.14, design 14: a space is where work is done and its
   // record kept. It is a view over the one base, cut by the space's
@@ -17,7 +19,7 @@
   interface Home {
     name: string; title: string; accounts: AccountLine[]; projects: WorkProject[];
     todo: Party[]; active: Dispatch[]; record: Done[];
-    github: 'own' | 'default' | 'none'; local: boolean; text?: string;
+    github: 'own' | 'default' | 'none'; manage: boolean;
   }
 
   let cards = $state<Card[] | null>(null);
@@ -25,8 +27,8 @@
   let work = $state<WorkOverview | null>(null);
   let error = $state('');
   let notice = $state('');
-  let spaceText = $state('');
-  let projectText = $state('');
+  // Which form is open: adding a space, adding a project, changing this space.
+  let open = $state<'' | 'space' | 'project' | 'edit'>('');
 
   async function load() {
     error = '';
@@ -36,27 +38,23 @@
         const [h, w] = await Promise.all([get<Home>(`/api/spaces/${which}`), get<WorkOverview>('/api/work')]);
         if (name !== which) return;
         home = h; work = w;
-        spaceText = h.text ?? '';
-        if (!projectText) projectText = `name = "my-app"\nworkspace = "${h.name}"\nrepo = "~/code/my-app"\ngithub = "me/my-app"\nexecutors = ["claude-code", "codex"]\ncommands = ["npm test"]`;
       } else {
         cards = await get<Card[]>('/api/spaces');
         work = await get<WorkOverview>('/api/work');
       }
     } catch (e: any) { error = e.message; }
   }
-  $effect(() => { home = null; projectText = ''; name; load(); });
+  $effect(() => { home = null; open = ''; name; load(); });
 
   const fromTask = $derived($route.query.get('task'));
 
-  async function file(kind: 'workspace' | 'project', text: string) {
-    error = ''; notice = '';
-    try {
-      await post('/api/work/define', { kind, text });
-      notice = t('work.filed');
-      if (kind === 'project') projectText = '';
-      await load();
-    } catch (e: any) { error = e.message; }
+  async function filed(what: 'space' | 'project' | 'edit', saved: string) {
+    open = ''; error = '';
+    notice = t(what === 'project' ? 'projectform.added' : what === 'space' ? 'spaceform.added' : 'work.filed', { name: saved });
+    if (what === 'space') { go('/spaces/' + saved); return; }
+    await load();
   }
+  const thisSpace = $derived(work?.workspaces.find((w) => w.name === home?.name) ?? null);
 
   // The built-in space's title is the page's own word for it.
   const titled = (n: string, title: string) => (n === 'personal' && title === 'Personal' ? t('spaces.personal') : title);
@@ -88,11 +86,15 @@
         {/each}
       </ol>
       {#if work && !work.github}<p class="note">{t('work.github.off')}</p>{/if}
-      {#if work?.local}
-        <h2 class="group-title">{t('spaces.add')}</h2>
-        <p class="note">{t('work.add_space.note')}</p>
-        <textarea class="notes" bind:value={spaceText} placeholder={'name = "company"\ntitle = "Company"\naccounts = ["lark:ou_…", "mail:me@company.com"]'}></textarea>
-        <div class="chooser"><button type="button" class="choose" disabled={!spaceText.trim()} onclick={() => file('workspace', spaceText)}>{t('work.file')}</button></div>
+      {#if work?.manage}
+        {#if open === 'space'}
+          <h2 class="group-title">{t('spaces.add')}</h2>
+          <p class="note">{t('work.add_space.note')}</p>
+          <SpaceForm spaces={work.workspaces} onfiled={(n) => filed('space', n)} />
+          <div class="chooser"><button type="button" class="choose lowers" onclick={() => (open = '')}>{t('accounts.cancel')}</button></div>
+        {:else}
+          <div class="chooser"><button type="button" class="choose primary" onclick={() => { open = 'space'; notice = ''; }}>+ {t('spaces.add')}</button></div>
+        {/if}
       {/if}
     {/if}
 
@@ -178,15 +180,23 @@
         <p class="note">{t('spaces.github.' + home.github)}</p>
       </div>
 
-      {#if home.local}
-        <h3 class="group-title">{t('work.add_project')}</h3>
-        <p class="note">{t('work.add_project.note')}</p>
-        <textarea class="notes" bind:value={projectText}></textarea>
-        <div class="chooser"><button type="button" class="choose" disabled={!projectText.trim()} onclick={() => file('project', projectText)}>{t('work.file')}</button></div>
-        <h3 class="group-title">{t('spaces.edit')}</h3>
-        <p class="note">{t('work.add_space.note')}</p>
-        <textarea class="notes" bind:value={spaceText}></textarea>
-        <div class="chooser"><button type="button" class="choose" disabled={!spaceText.trim()} onclick={() => file('workspace', spaceText)}>{t('work.file')}</button></div>
+      {#if home.manage && work}
+        {#if open === 'project'}
+          <h3 class="group-title">{t('work.add_project')}</h3>
+          <p class="note">{t('work.add_project.note')}</p>
+          <ProjectForm space={home.name} executors={work.executors} taken={work.projects.map((p) => p.name)} onfiled={(n) => filed('project', n)} />
+          <div class="chooser"><button type="button" class="choose lowers" onclick={() => (open = '')}>{t('accounts.cancel')}</button></div>
+        {:else if open === 'edit' && thisSpace}
+          <h3 class="group-title">{t('spaces.edit')}</h3>
+          <p class="note">{t('work.add_space.note')}</p>
+          <SpaceForm existing={thisSpace} spaces={work.workspaces} onfiled={(n) => filed('edit', n)} />
+          <div class="chooser"><button type="button" class="choose lowers" onclick={() => (open = '')}>{t('accounts.cancel')}</button></div>
+        {:else}
+          <div class="chooser">
+            <button type="button" class="choose primary" onclick={() => { open = 'project'; notice = ''; }}>+ {t('work.add_project')}</button>
+            {#if thisSpace}<button type="button" class="choose" onclick={() => { open = 'edit'; notice = ''; }}>{t('spaces.edit')}</button>{/if}
+          </div>
+        {/if}
       {/if}
     {/if}
   {/if}

@@ -46,6 +46,9 @@ pub struct System {
     pub agents: crate::agents::Agents,
     /// The live pairing code, if any (design 06, "形态").
     pub pairing: crate::web::Pairing,
+    /// One admin passphrase check at a time, so the count of wrong tries
+    /// cannot be outrun by asking many times at once.
+    pub admin: crate::web::AdminGate,
     /// The key that makes a request this machine's (design 02, invariant 11).
     pub local: crate::web::Local,
     /// Executors: their configuration, the host, the running dispatches
@@ -220,6 +223,7 @@ impl System {
             actions: crate::actions::Actions::default(),
             agents: crate::agents::Agents::new(agents_dir, master.clone()),
             pairing: crate::web::Pairing::default(),
+            admin: crate::web::AdminGate::default(),
             local: crate::web::Local::load_or_create(&local_key)?,
             exec,
             ticket_key,

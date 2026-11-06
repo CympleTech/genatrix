@@ -1697,6 +1697,10 @@ struct Status {
     /// every few seconds and this is the one number it needs that often.
     /// Today is expensive; nothing should poll it.
     pending_actions: u64,
+    /// The latest high-privilege request, shown on every device (design 06
+    /// v0.7): someone adding an account from elsewhere does not go unseen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    admin_last: Option<super::admin::AdminLine>,
 }
 
 async fn status(State(system): Shared) -> Result<Json<Status>, ApiError> {
@@ -1716,6 +1720,7 @@ async fn status(State(system): Shared) -> Result<Json<Status>, ApiError> {
         bytes_left_device: slow.bytes_left_device,
         bytes_on_disk: slow.bytes_on_disk,
         data_dir: system.config.data_dir.display().to_string(),
+        admin_last: super::admin::last(&system),
     }))
 }
 
@@ -1963,6 +1968,9 @@ struct LedgerView {
     runs: Vec<RunLine>,
     /// Every step an action took, newest first (design 06, "动作记录").
     actions: Vec<ActionEvent>,
+    /// High-privilege requests and wrong admin passphrases, newest first
+    /// (design 06 v0.7).
+    admin: Vec<super::admin::AdminLine>,
 }
 
 #[derive(Serialize)]
@@ -2046,6 +2054,7 @@ async fn ledger(State(system): Shared) -> Result<Json<LedgerView>, ApiError> {
         calls,
         runs: runs(&system)?,
         actions: action_events(&system)?,
+        admin: super::admin::recent(&system, 200),
     }))
 }
 

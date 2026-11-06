@@ -1,6 +1,6 @@
 <script lang="ts">
   import qrcode from 'qrcode-generator';
-  import { get, post, type Device } from '../lib/api';
+  import { get, post, type AdminView, type Device } from '../lib/api';
   import { languageChoice, setLanguage, t, type LangChoice } from '../lib/i18n';
   import { bytes } from '../lib/format';
   import { status } from '../lib/status';
@@ -17,7 +17,36 @@
   let qr = $state('');
 
   async function loadDevices() {
-    try { devices = await get<Device[]>('/api/devices'); } catch (e: any) { error = e.message; devices = []; }
+    try {
+      [devices, admin] = await Promise.all([get<Device[]>('/api/devices'), get<AdminView>('/api/admin')]);
+    } catch (e: any) { error = e.message; devices = devices ?? []; }
+  }
+
+  // Design 06 v0.7: admin devices. The role and the passphrase are set
+  // here, on the machine Genatrix runs on; an admin device is asked for the
+  // passphrase on each high-privilege change, and five wrong ones lock it.
+  let admin = $state<AdminView | null>(null);
+  let pass1 = $state('');
+  let pass2 = $state('');
+  let adminNote = $state('');
+  let adminError = $state('');
+  async function setPassphrase() {
+    adminError = ''; adminNote = '';
+    if (pass1 !== pass2) { adminError = t('admin.mismatch'); return; }
+    try {
+      await post('/api/admin/passphrase', { passphrase: pass1 });
+      pass1 = ''; pass2 = '';
+      adminNote = t('admin.set.done');
+      await loadDevices();
+    } catch (e: any) { adminError = e.message; }
+  }
+  async function unlock() {
+    adminError = '';
+    try { await post('/api/admin/unlock', {}); await loadDevices(); } catch (e: any) { adminError = e.message; }
+  }
+  async function role(d: Device, on: boolean) {
+    error = '';
+    try { await post(`/api/device/${d.id}/admin`, { admin: on }); await loadDevices(); } catch (e: any) { error = e.message; }
   }
   async function startPairing() {
     pairError = '';
@@ -31,7 +60,7 @@
       const q = qrcode(0, 'M');
       q.addData(url); q.make();
       qr = q.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
-    } catch (e: any) { pairError = e.status === 403 ? t('settings.pair.local') : e.message; }
+    } catch (e: any) { pairError = e.status === 403 && !e.body?.need && !e.body?.locked ? t('settings.pair.local') : e.message; }
   }
   async function revoke(id: string) {
     try { await post(`/api/device/${id}/revoke`, {}); await loadDevices(); } catch (e: any) { error = e.message; }
@@ -88,12 +117,38 @@
   <ul class="devices">
     {#each devices ?? [] as d (d.id)}
       <li class="device" class:revoked={!!d.revoked_at}>
-        <span class="device-name">{d.name}{d.this ? ` · ${t('settings.thisdevice')}` : ''}</span>
+        <span class="device-name">{d.name}{d.this ? ` · ${t('settings.thisdevice')}` : ''}{#if d.admin}<span class="role">{t('admin.role')}</span>{/if}</span>
         <span class="faint">{d.revoked_at ? t('settings.revoked', { at: d.revoked_at.slice(0, 16).replace('T', ' ') }) : d.last_seen ? t('settings.lastseen', { at: d.last_seen.slice(0, 16).replace('T', ' ') }) : t('settings.neverseen')}</span>
+        {#if !d.revoked_at && admin?.here}
+          {#if d.admin}<button type="button" class="choose lowers" onclick={() => role(d, false)}>{t('admin.ungrant')}</button>
+          {:else}<button type="button" class="choose" disabled={!admin.passphrase_set} onclick={() => role(d, true)}>{t('admin.grant')}</button>{/if}
+        {/if}
         {#if !d.revoked_at}<button type="button" class="choose lowers" onclick={() => revoke(d.id)}>{t('settings.revoke')}</button>{/if}
       </li>
     {/each}
   </ul>
+  {#if admin}
+    <h3 class="group-title">{t('admin.title')}</h3>
+    {#if admin.locked}
+      <p class="note error">{t('admin.locked')}</p>
+      {#if admin.here}<div class="chooser"><button type="button" class="choose primary" onclick={unlock}>{t('admin.unlock')}</button></div>{/if}
+    {/if}
+    {#if admin.here}
+      <p class="note">{admin.passphrase_set ? t('admin.note.here.set') : t('admin.note.here.unset')}</p>
+      <div class="setup-form">
+        <label>{admin.passphrase_set ? t('admin.change') : t('admin.passphrase')}<input type="password" autocomplete="new-password" bind:value={pass1} /></label>
+        <label>{t('admin.again')}<input type="password" autocomplete="new-password" bind:value={pass2} /></label>
+        <div class="chooser"><button type="button" class="choose" disabled={pass1.length < 10 || !pass2} onclick={setPassphrase}>{admin.passphrase_set ? t('admin.change.go') : t('admin.set.go')}</button></div>
+        <p class="field-note">{t('admin.length')}</p>
+      </div>
+    {:else if admin.admin}
+      <p class="note">{t('admin.note.admin')}</p>
+    {:else}
+      <p class="note">{t('admin.note.ordinary')}</p>
+    {/if}
+    {#if adminError}<p class="note error">{adminError}</p>{/if}
+    {#if adminNote}<p class="note ok-note">{adminNote}</p>{/if}
+  {/if}
   <div class="pairing">
     <button type="button" class="choose primary" onclick={startPairing}>{t('settings.pair')}</button>
     {#if pairError}<span class="error">{pairError}</span>{/if}

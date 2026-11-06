@@ -157,6 +157,8 @@ mod tests {
         let router = axum::Router::new()
             .merge(super::super::api::routes())
             .merge(super::super::devices::routes())
+            .merge(super::super::admin::routes())
+            .merge(super::super::spaces::routes())
             .merge(super::super::setup::routes())
             .merge(super::super::agents::routes())
             .merge(super::super::junk::routes())
@@ -187,7 +189,23 @@ mod tests {
         cookie: Option<&str>,
         body: Option<serde_json::Value>,
     ) -> axum::response::Response {
+        call_as(app, from, method, path, cookie, body, None).await
+    }
+
+    /// `call`, with the admin passphrase in its header.
+    async fn call_as(
+        app: &Client,
+        from: SocketAddr,
+        method: &str,
+        path: &str,
+        cookie: Option<&str>,
+        body: Option<serde_json::Value>,
+        passphrase: Option<&str>,
+    ) -> axum::response::Response {
         let mut request = HttpRequest::builder().method(method).uri(path);
+        if let Some(p) = passphrase {
+            request = request.header(super::super::admin::HEADER, p);
+        }
         if from == HERE {
             request = request.header(super::super::local::HEADER, &app.key);
         }
@@ -625,6 +643,373 @@ mod tests {
         let phone = paired_cookie(&app).await;
         let r = call(&app, LAN, "POST", "/api/local/link", Some(&phone), None).await;
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// Design 02, invariants 11 and 12; design 06 v0.7: the admin role is
+    /// granted here only; an admin device does high-privilege work with the
+    /// passphrase each time; five wrong ones lock remote administration until
+    /// this machine unlocks it; every request is on the record.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // one admin device's whole life, in order
+    async fn an_admin_device_works_with_the_passphrase_and_wrong_ones_lock_it() {
+        const PASS: &str = "a long admin passphrase";
+        let (_dir, system) = crate::system::test_system();
+        let app = app(&system);
+        let laptop = paired_cookie(&app).await;
+        let phone = paired_cookie(&app).await;
+        let devices = json(call(&app, HERE, "GET", "/api/devices", None, None).await).await;
+        let id_of = |cookie: &str| {
+            cookie
+                .split_once('=')
+                .unwrap()
+                .1
+                .split_once('.')
+                .unwrap()
+                .0
+                .to_owned()
+        };
+        let laptop_id = id_of(&laptop);
+        assert!(
+            devices
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|d| d["admin"] == false)
+        );
+        let path = format!("/api/device/{laptop_id}/admin");
+
+        // The role and the passphrase are set here, never from a device.
+        let yes = serde_json::json!({"admin": true});
+        let r = call(&app, LAN, "POST", &path, Some(&laptop), Some(yes.clone())).await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN, "not by itself");
+        let r = call(&app, HERE, "POST", &path, None, Some(yes.clone())).await;
+        assert_eq!(r.status(), StatusCode::CONFLICT, "a passphrase first");
+        let set = |p: &str| serde_json::json!({"passphrase": p});
+        let r = call(
+            &app,
+            LAN,
+            "POST",
+            "/api/admin/passphrase",
+            Some(&laptop),
+            Some(set(PASS)),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        let r = call(
+            &app,
+            HERE,
+            "POST",
+            "/api/admin/passphrase",
+            None,
+            Some(set("short")),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        let r = call(
+            &app,
+            HERE,
+            "POST",
+            "/api/admin/passphrase",
+            None,
+            Some(set(PASS)),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let stored = system.store.admin_state().unwrap().passphrase.unwrap();
+        assert!(!stored.contains(PASS), "a hash, never the passphrase");
+        let r = call(&app, HERE, "POST", &path, None, Some(yes)).await;
+        assert_eq!(r.status(), StatusCode::OK);
+
+        // Filing a workspace from the admin device: the passphrase each time.
+        let space = serde_json::json!({
+            "kind": "workspace",
+            "text": "name = \"dpt\"\naccounts = [\"lark:ou_x\"]\n"
+        });
+        let r = call(
+            &app,
+            LAN,
+            "POST",
+            "/api/work/define",
+            Some(&laptop),
+            Some(space.clone()),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            json(r).await["need"],
+            "passphrase",
+            "the page is asked for it"
+        );
+        let r = call_as(
+            &app,
+            LAN,
+            "POST",
+            "/api/work/define",
+            Some(&laptop),
+            Some(space.clone()),
+            Some("wrong one"),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        assert_eq!(json(r).await["left"], 4);
+        let r = call_as(
+            &app,
+            LAN,
+            "POST",
+            "/api/work/define",
+            Some(&laptop),
+            Some(space.clone()),
+            Some(PASS),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        // The right one starts the count again.
+        assert_eq!(system.store.admin_state().unwrap().failures, 0);
+        // An ordinary device gets nowhere, passphrase or not, and is not asked.
+        let r = call_as(
+            &app,
+            LAN,
+            "POST",
+            "/api/work/define",
+            Some(&phone),
+            Some(space.clone()),
+            Some(PASS),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        assert!(json(r).await["need"].is_null());
+        let seen = json(call(&app, LAN, "GET", "/api/setup", Some(&laptop), None).await).await;
+        assert_eq!(
+            (seen["local"].clone(), seen["manage"].clone()),
+            (false.into(), true.into())
+        );
+        let seen = json(call(&app, LAN, "GET", "/api/setup", Some(&phone), None).await).await;
+        assert_eq!(seen["manage"], false);
+
+        // It may pair a new device; that device is an ordinary one.
+        let r = call_as(
+            &app,
+            LAN,
+            "POST",
+            "/api/pair/start",
+            Some(&laptop),
+            None,
+            Some(PASS),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let code = json(r).await["code"].as_str().unwrap().to_owned();
+        let r = call(
+            &app,
+            LAN,
+            "POST",
+            "/api/pair",
+            None,
+            Some(serde_json::json!({"code": code})),
+        )
+        .await;
+        assert_eq!(json(r).await["admin"], false);
+        // It may not make itself or another an admin, nor make sign-in links.
+        let r = call_as(
+            &app,
+            LAN,
+            "POST",
+            "/api/local/link",
+            Some(&laptop),
+            None,
+            Some(PASS),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+
+        // Five wrong passphrases in a row lock it, the right one included.
+        for _ in 0..5 {
+            let r = call_as(
+                &app,
+                LAN,
+                "POST",
+                "/api/pair/start",
+                Some(&laptop),
+                None,
+                Some("guess"),
+            )
+            .await;
+            assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        }
+        let r = call_as(
+            &app,
+            LAN,
+            "POST",
+            "/api/pair/start",
+            Some(&laptop),
+            None,
+            Some(PASS),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        assert_eq!(json(r).await["locked"], true);
+        let seen = json(call(&app, LAN, "GET", "/api/admin", Some(&laptop), None).await).await;
+        assert_eq!(
+            (seen["locked"].clone(), seen["manage"].clone()),
+            (true.into(), false.into())
+        );
+        // This machine is not locked out, and only it unlocks.
+        let r = call(&app, HERE, "POST", "/api/pair/start", None, None).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let r = call(&app, LAN, "POST", "/api/admin/unlock", Some(&laptop), None).await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        let r = call(&app, HERE, "POST", "/api/admin/unlock", None, None).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let r = call_as(
+            &app,
+            LAN,
+            "POST",
+            "/api/pair/start",
+            Some(&laptop),
+            None,
+            Some(PASS),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+
+        // Every device sees the latest, and the record has each one.
+        let status = json(call(&app, LAN, "GET", "/api/status", Some(&phone), None).await).await;
+        assert_eq!(status["admin_last"]["act"], "pair_code");
+        assert_eq!(status["admin_last"]["outcome"], "allowed");
+        let record = json(call(&app, LAN, "GET", "/api/ledger", Some(&phone), None).await).await;
+        let outcomes: Vec<&str> = record["admin"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["outcome"].as_str().unwrap())
+            .collect();
+        assert!(outcomes.contains(&"wrong_passphrase") && outcomes.contains(&"locked"));
+        assert!(
+            record["admin"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|l| !l.to_string().contains(PASS))
+        );
+
+        // Revoked, it is nothing, and no longer an admin.
+        let r = call(
+            &app,
+            HERE,
+            "POST",
+            &format!("/api/device/{laptop_id}/revoke"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert!(!system.store.get_device(&laptop_id).unwrap().unwrap().admin);
+    }
+
+    /// Design 06 v0.7: what an admin device may do with the passphrase is
+    /// the list in invariant 12; the later steps of a sign-in it started do
+    /// not ask again; models, export and erasing stay with this machine.
+    #[tokio::test]
+    async fn an_admin_device_manages_accounts_and_agents_but_not_this_machines_disk() {
+        const PASS: &str = "a long admin passphrase";
+        let (_dir, system) = crate::system::test_system();
+        let app = app(&system);
+        let laptop = paired_cookie(&app).await;
+        let id = laptop
+            .split_once('=')
+            .unwrap()
+            .1
+            .split_once('.')
+            .unwrap()
+            .0
+            .to_owned();
+        let r = call(
+            &app,
+            HERE,
+            "POST",
+            "/api/admin/passphrase",
+            None,
+            Some(serde_json::json!({"passphrase": PASS})),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let r = call(
+            &app,
+            HERE,
+            "POST",
+            &format!("/api/device/{id}/admin"),
+            None,
+            Some(serde_json::json!({"admin": true})),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+
+        // Through the gate, each is refused on its merits, not its origin.
+        for (path, body, merits) in [
+            (
+                "/api/setup/mail",
+                serde_json::json!({"address": "not an address", "password": "x"}),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "/api/agents/install",
+                serde_json::json!({"hash": "x"}),
+                StatusCode::CONFLICT,
+            ),
+            (
+                "/api/setup/lark/start",
+                serde_json::json!({"app_id": "nope", "app_secret": "x"}),
+                StatusCode::BAD_REQUEST,
+            ),
+        ] {
+            let r = call(&app, LAN, "POST", path, Some(&laptop), Some(body.clone())).await;
+            assert_eq!(
+                r.status(),
+                StatusCode::FORBIDDEN,
+                "{path} without the passphrase"
+            );
+            let r = call_as(
+                &app,
+                LAN,
+                "POST",
+                path,
+                Some(&laptop),
+                Some(body),
+                Some(PASS),
+            )
+            .await;
+            assert_eq!(r.status(), merits, "{path}");
+        }
+        // The next steps of a sign-in: no passphrase again.
+        for (path, body) in [
+            (
+                "/api/setup/telegram/code",
+                serde_json::json!({"flow": "x", "code": "1"}),
+            ),
+            ("/api/setup/lark/poll", serde_json::json!({"flow": "x"})),
+        ] {
+            let r = call(&app, LAN, "POST", path, Some(&laptop), Some(body)).await;
+            assert_eq!(r.status(), StatusCode::GONE, "{path}");
+        }
+        // This machine's disk is this machine's.
+        for (path, body) in [
+            ("/api/model/download", serde_json::json!({})),
+            ("/api/erase", serde_json::json!({"confirm": "DELETE"})),
+            ("/api/export", serde_json::json!({})),
+        ] {
+            let r = call_as(
+                &app,
+                LAN,
+                "POST",
+                path,
+                Some(&laptop),
+                Some(body),
+                Some(PASS),
+            )
+            .await;
+            assert_eq!(r.status(), StatusCode::FORBIDDEN, "{path}");
+        }
+        assert!(system.config.data_dir.exists());
     }
 
     /// Design 13: a project decides which vendors see a repository, so only

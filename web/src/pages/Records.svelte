@@ -5,6 +5,7 @@
   import LevelMark from '../components/LevelMark.svelte';
   import RunRecord from '../components/RunRecord.svelte';
   import Empty from '../components/Empty.svelte';
+  import { adminLine } from '../lib/admin';
 
   let view = $state<Ledger | null>(null);
   let error = $state('');
@@ -54,6 +55,21 @@
             <span class="thread">{ev.action}</span>
           </div>
           {#if ev.detail}<p class="preview static">{ev.detail}</p>{/if}
+        </li>
+      {/each}
+    </ol>
+
+    <!-- Design 06 v0.7: every high-privilege request and every wrong admin
+         passphrase, whoever made it. -->
+    <h2 class="group-title">{t('records.admin')}</h2>
+    {#if !view.admin.length}<Empty text={t('records.noadmin')} />{/if}
+    <ol class="rows panel compact">
+      {#each view.admin as a (a.seq)}
+        <li class="row">
+          <div class="meta">
+            <time>{new Date(a.at).toLocaleString()}</time>
+            <span class="who" class:error={a.outcome !== 'allowed'}>{adminLine(a)}</span>
+          </div>
         </li>
       {/each}
     </ol>

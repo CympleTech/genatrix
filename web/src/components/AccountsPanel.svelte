@@ -12,7 +12,7 @@
     kind: 'mail' | 'telegram' | 'lark'; id: string; name: string; detail: string;
     can_send: boolean; state: string; text: string; workspace?: string;
   }
-  interface SetupView { local: boolean; accounts: AccountView[]; telegram: boolean }
+  interface SetupView { local: boolean; manage: boolean; accounts: AccountView[]; telegram: boolean }
 
   let view = $state<SetupView | null>(null);
   let error = $state('');
@@ -160,7 +160,7 @@
             <span class="account-name">{a.name}{#if a.workspace}<span class="role space-chip">{a.workspace}</span>{/if}</span>
             <span class="account-state {stateClass(a.state)}">{a.text}</span>
           </span>
-          {#if view.local}
+          {#if view.manage}
             <button type="button" class="choose lowers" onclick={() => remove(a)}>
               {confirming === a.kind + a.id ? t('accounts.confirmRemove') : t('accounts.remove')}
             </button>
@@ -169,7 +169,7 @@
       {/each}
     </ul>
 
-    {#if !view.local}
+    {#if !view.manage}
       <p class="note">{t('accounts.onlyHere')}</p>
     {:else}
       <div class="chooser">

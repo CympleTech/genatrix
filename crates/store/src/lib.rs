@@ -16,6 +16,7 @@
 #![forbid(unsafe_code)]
 
 mod action;
+mod admin;
 mod agent;
 mod annotation;
 mod blob;
@@ -42,6 +43,7 @@ mod time;
 mod vector;
 
 pub use action::{ActionColumns, StoredAction};
+pub use admin::{ADMIN_TRIES, AdminState};
 pub use agent::{AgentRun, AgentState, StoredAgent};
 pub use category::{QUIET, QuietSender};
 pub use cursor::StoredCursor;

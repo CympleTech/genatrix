@@ -146,8 +146,9 @@ struct Overview {
     executors: Vec<ExecutorView>,
     dispatches: Vec<DispatchView>,
     github: bool,
-    /// Whether this request is from this machine, where projects are filed.
-    local: bool,
+    /// Whether definitions can be filed from here: this machine, or an
+    /// admin device (design 06 v0.7).
+    manage: bool,
 }
 
 #[derive(Serialize)]
@@ -223,7 +224,7 @@ async fn overview(State(system): Shared, Extension(caller): Extension<Caller>) -
             .collect(),
         dispatches: dispatches.into_iter().map(Into::into).collect(),
         github: crate::executors::github::token().is_some(),
-        local: caller == Caller::Local,
+        manage: super::admin::can_manage(&system, &caller),
     })
     .into_response()
 }
@@ -273,21 +274,66 @@ async fn suggest(State(system): Shared, Json(body): Json<SuggestBody>) -> Respon
 #[derive(Deserialize)]
 struct DefineBody {
     kind: String,
-    text: String,
+    /// The definition file, as the command line files it.
+    #[serde(default)]
+    text: Option<String>,
+    /// Or a workspace or project as the page's form fills it in: the core
+    /// writes the file, so the user never writes TOML (design 06 v0.16).
+    #[serde(default)]
+    fields: Option<serde_json::Value>,
 }
 
+/// The file a form's fields stand for. Only workspaces and projects have a
+/// form; roles and recipes are filed as text.
+fn written(kind: &str, fields: serde_json::Value) -> Result<String, String> {
+    let text = match kind {
+        "workspace" => serde_json::from_value::<genatrix_dispatch::workspace::Workspace>(fields)
+            .map_err(|e| e.to_string())
+            .and_then(|w| toml::to_string(&w).map_err(|e| e.to_string()))?,
+        "project" => serde_json::from_value::<genatrix_dispatch::project::Project>(fields)
+            .map_err(|e| e.to_string())
+            .and_then(|p| toml::to_string(&p).map_err(|e| e.to_string()))?,
+        other => return Err(format!("`{other}` has no form; file it as text")),
+    };
+    Ok(text)
+}
+
+/// File a definition. A workspace decides which executors an account's
+/// content may reach, a project which vendors see a repository: both are
+/// high-privilege requests (design 14, invariant 33; design 02, invariant
+/// 12), from this machine or an admin device with the passphrase.
 async fn define(
     State(system): Shared,
     Extension(caller): Extension<Caller>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<DefineBody>,
 ) -> Response {
-    if caller != Caller::Local {
-        return refuse(
-            StatusCode::FORBIDDEN,
-            "workspaces, projects, recipes and roles are filed on the computer Genatrix runs on",
-        );
+    if let Err(no) = super::admin::high(
+        &system,
+        &caller,
+        &headers,
+        "file_definition",
+        body.kind.trim(),
+        "workspaces, projects, recipes and roles are filed on the computer Genatrix runs on, or from an admin device",
+    )
+    .await
+    {
+        return no;
     }
-    match crate::executors::file_definition(&system.store, &body.kind, &body.text) {
+    let text = match (body.text, body.fields) {
+        (Some(text), None) => text,
+        (None, Some(fields)) => match written(&body.kind, fields) {
+            Ok(text) => text,
+            Err(why) => return refuse(StatusCode::BAD_REQUEST, why),
+        },
+        _ => {
+            return refuse(
+                StatusCode::BAD_REQUEST,
+                "give the text or the fields, one of them",
+            );
+        }
+    };
+    match crate::executors::file_definition(&system.store, &body.kind, &text) {
         Ok((name, hash)) => Json(serde_json::json!({"name": name, "hash": hash})).into_response(),
         Err(e) => refuse(StatusCode::BAD_REQUEST, e.to_string()),
     }
@@ -494,5 +540,44 @@ async fn level(
         }
         Err(DraftError::Refused(why)) => refuse(StatusCode::BAD_REQUEST, why),
         Err(DraftError::Other(e)) => broke(&e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::written;
+
+    /// The page's form becomes the same file the command line files, and
+    /// a title with quotes in it cannot break out of its field.
+    #[test]
+    fn a_form_is_written_as_the_file_it_stands_for() {
+        let text = written(
+            "workspace",
+            serde_json::json!({
+                "name": "dpt", "title": "DPT \"main\"\naccounts = [\"x:y\"]",
+                "accounts": ["lark:ou_1"],
+            }),
+        )
+        .unwrap();
+        let back: genatrix_dispatch::workspace::Workspace = toml::from_str(&text).unwrap();
+        assert_eq!(back.accounts, ["lark:ou_1"]);
+        assert!(back.title.starts_with("DPT \"main\""));
+
+        let text = written(
+            "project",
+            serde_json::json!({
+                "name": "app", "workspace": "dpt", "repo": "~/code/app",
+                "github": "me/app", "base": "main", "executors": ["claude-code"],
+                "commands": ["npm test"], "network": false, "delegate_personal": false,
+                "bundle_cap_mb": 20,
+            }),
+        )
+        .unwrap();
+        let back = genatrix_dispatch::project::Project::parse(&text).unwrap();
+        assert_eq!(back.workspace, "dpt");
+        assert_eq!(back.commands, ["npm test"]);
+
+        assert!(written("project", serde_json::json!({"name": "app"})).is_err());
+        assert!(written("recipe", serde_json::json!({})).is_err());
     }
 }

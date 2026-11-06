@@ -11,6 +11,7 @@
 
 mod accounts;
 mod actions;
+mod admin_cli;
 mod agents;
 mod caller;
 mod config;
@@ -183,6 +184,15 @@ enum Command {
         #[command(subcommand)]
         action: executors::terminal::GithubAction,
     },
+    /// Admin devices (design 06 v0.7): the passphrase, which paired devices
+    /// are admin devices, and the lock after five wrong passphrases.
+    Admin {
+        /// The port the core listens on.
+        #[arg(long, default_value_t = 7717)]
+        port: u16,
+        #[command(subcommand)]
+        action: admin_cli::AdminAction,
+    },
     /// Open the page in the browser on this machine, signed in as this
     /// machine. A browser on 127.0.0.1 is not this machine by its address
     /// alone (design 02, invariant 11).
@@ -318,6 +328,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Github { action } => {
             let system = System::open(config.clone(), ticket_key(&config, false)?)?;
             executors::terminal::github(std::sync::Arc::new(system), action).await
+        }
+        Command::Admin { port, action } => {
+            admin_cli::run(&config.local_key_path(), port, action).await
         }
         Command::Open { port, print } => open::open(&config.local_key_path(), port, print).await,
         Command::Serve { bind, port } => serve(&config, &web::Serving { bind, port }).await,

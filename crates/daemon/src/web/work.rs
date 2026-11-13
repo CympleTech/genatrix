@@ -36,6 +36,7 @@ pub fn routes() -> axum::Router<Arc<System>> {
         .route("/api/work", get(overview))
         .route("/api/work/draft", post(draft_work))
         .route("/api/work/define", post(define))
+        .route("/api/work/branches", post(branches))
         .route("/api/work/suggest", post(suggest))
         .route("/api/work/{id}", get(one))
         .route("/api/work/{id}/diff", get(diff))
@@ -63,6 +64,9 @@ struct StepView {
     role: String,
     executor: String,
     produces: String,
+    /// Where a document step's answer is filed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -199,6 +203,7 @@ async fn overview(State(system): Shared, Extension(caller): Extension<Caller>) -
                         role: s.role.clone(),
                         executor: s.executor.clone(),
                         produces: word(&s.produces),
+                        file: s.file.clone(),
                     })
                     .collect(),
                 name: r.name,
@@ -239,6 +244,9 @@ struct DraftBody {
     /// The thread the work comes from, such as a Lark task.
     #[serde(default)]
     source: Option<String>,
+    /// Who does each step, where the user chose: step id to executor.
+    #[serde(default)]
+    assign: std::collections::BTreeMap<String, String>,
 }
 
 async fn draft_work(State(system): Shared, Json(body): Json<DraftBody>) -> Response {
@@ -248,6 +256,7 @@ async fn draft_work(State(system): Shared, Json(body): Json<DraftBody>) -> Respo
         task: body.task,
         public: body.public,
         source: body.source,
+        assign: body.assign,
     };
     match draft::draft(&system, &request) {
         Ok(a) => {
@@ -340,6 +349,39 @@ async fn define(
 }
 
 #[derive(Deserialize)]
+struct BranchesBody {
+    repo: String,
+}
+
+/// A repository's local branches, for the project form's base branch. It
+/// reads a path on this machine, so only who may add a project may ask.
+async fn branches(
+    State(system): Shared,
+    Extension(caller): Extension<Caller>,
+    Json(body): Json<BranchesBody>,
+) -> Response {
+    if let Err(no) = super::admin::manager(
+        &system,
+        &caller,
+        "projects are added on the computer Genatrix runs on, or from an admin device",
+    ) {
+        return no;
+    }
+    let path = crate::executors::expand(body.repo.trim());
+    if !path.is_dir() {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            format!("`{}` does not exist on this computer", path.display()),
+        );
+    }
+    match tokio::task::spawn_blocking(move || crate::executors::branches(&path)).await {
+        Ok(Ok(b)) => Json(b).into_response(),
+        Ok(Err(e)) => refuse(StatusCode::BAD_REQUEST, e.to_string()),
+        Err(e) => refuse(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
 struct After {
     #[serde(default)]
     seq: i64,
@@ -404,6 +446,25 @@ async fn one(
         }),
         Err(e) => return broke(&e),
     };
+    // The push and the pull request this work offered, whatever became of
+    // them: shown with the work, so finishing is not mistaken for being on
+    // GitHub, and a push GitHub refused says why where it is seen.
+    let offers: Vec<_> = match system.actions.list(&system.store, None, 500) {
+        Ok(list) => list
+            .iter()
+            .filter(|a| match &a.effect {
+                genatrix_agent::Effect::PushBranch { dispatch, .. }
+                | genatrix_agent::Effect::OpenPullRequest { dispatch, .. } => dispatch == &id,
+                _ => false,
+            })
+            .map(|a| {
+                let nonce = matches!(a.status, genatrix_agent::action::Status::Pending)
+                    .then(|| system.actions.nonce_for(&a.id));
+                super::api::action_view(&system, a, nonce)
+            })
+            .collect(),
+        Err(e) => return broke(&e),
+    };
     // The space the work's project is in, so the page can go back to it.
     let workspace = crate::executors::definitions(&system.store)
         .ok()
@@ -417,6 +478,7 @@ async fn one(
         "workspace": workspace,
         "push_again": push_again,
         "question": question,
+        "offers": offers,
         "dispatch": DispatchView::from(row),
         "steps": steps.into_iter().map(|s| StepRecord {
             verdict: s.verdict.as_deref().and_then(|v| serde_json::from_str(v).ok()),

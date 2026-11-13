@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { get, post, type Action, type TaskDetail, type WorkProject, type WorkRecipe } from '../lib/api';
   import { t } from '../lib/i18n';
   import { go } from '../lib/router';
@@ -9,8 +10,9 @@
   // any other: the card below the form is the one the approvals page shows.
   // Work from a task carries the task along, and the core checks its
   // account is in this space, when drafted and again when it starts.
-  let { projects, recipes, fromTask = null, here }: {
-    projects: WorkProject[]; recipes: WorkRecipe[]; fromTask?: string | null; here: string;
+  let { projects, recipes, executors = [], fromTask = null, here }: {
+    projects: WorkProject[]; recipes: WorkRecipe[]; executors?: { name: string; vendor: string }[];
+    fromTask?: string | null; here: string;
   } = $props();
 
   let project = $state('');
@@ -22,6 +24,9 @@
   let error = $state('');
   let notice = $state('');
   let source = $state<TaskDetail | null>(null);
+  // From a task, the task itself goes as written and you only add to it.
+  let extra = $state('');
+  const fromSource = $derived(source ? [source.name, source.description, source.url ?? ''].filter((x) => x.trim()).join('\n\n') : '');
 
   $effect(() => {
     if (!projects.some((p) => p.name === project)) project = projects[0]?.name ?? '';
@@ -31,23 +36,45 @@
   });
   $effect(() => {
     const which = fromTask;
-    source = null;
+    source = null; extra = '';
     if (!which) return;
     get<TaskDetail>(`/api/task/${which}`).then((d) => {
-      source = d;
-      task = [d.name, d.description, d.url ?? ''].filter((x) => x.trim()).join('\n\n');
+      if (fromTask === which) source = d;
     }).catch((e: any) => { error = e.message; });
   });
 
   const chosenProject = $derived(projects.find((p) => p.name === project) ?? null);
   const chosenRecipe = $derived(recipes.find((r) => r.name === recipe) ?? null);
 
+  // Design 13 v0.5: who does each step is yours to choose, among the
+  // executors the project lets see its code. The recipe's choice is where
+  // each starts; a step whose executor the project does not allow starts
+  // on the first one it does.
+  const choices = $derived((chosenProject?.executors ?? []).filter((n) => !executors.length || executors.some((e) => e.name === n)));
+  const vendorOf = (n: string) => executors.find((e) => e.name === n)?.vendor ?? '';
+  let assign = $state<Record<string, string>>({});
+  $effect(() => {
+    const next: Record<string, string> = {};
+    const before = untrack(() => assign);
+    for (const st of chosenRecipe?.steps ?? []) {
+      const kept = before[st.id];
+      next[st.id] = kept && choices.includes(kept) ? kept : choices.includes(st.executor) ? st.executor : (choices[0] ?? st.executor);
+    }
+    assign = next;
+  });
+  const stepWord = (id: string) => { const k = `work.step.${id}`; const w = t(k); return w === k ? id : w; };
+
+  // What goes to the executor: the task, then what you added, under a heading.
+  const text = $derived(fromTask
+    ? [fromSource, extra.trim() ? `${t('work.extra.heading')}\n${extra.trim()}` : ''].filter(Boolean).join('\n\n')
+    : task);
+
   async function draft() {
     drafting = true; error = ''; notice = ''; drafted = null;
     try {
-      drafted = await post<Action>('/api/work/draft', { project, recipe, task, public: isPublic, source: fromTask });
+      drafted = await post<Action>('/api/work/draft', { project, recipe, task: text, public: isPublic, source: fromTask, assign });
       notice = t('work.drafted');
-      task = '';
+      task = ''; extra = '';
       if (fromTask) go(here, true);
     } catch (e: any) { error = e.message; }
     drafting = false;
@@ -95,16 +122,45 @@
         {/each}
       </div>
       {#if chosenRecipe}
-        <p class="field-note">{chosenRecipe.steps.map((s) => `${s.id} (${s.role}, ${s.executor})`).join(' → ')}{chosenRecipe.rounds ? ` · ≤ ${chosenRecipe.rounds}` : ''}</p>
+        <ol class="step-picks">
+          {#each chosenRecipe.steps as st, i (st.id)}
+            <li>
+              <span class="step-n">{i + 1}</span>
+              <span class="step-name">{stepWord(st.id)}<span class="faint"> · {st.role}</span>{#if st.produces === 'document' && st.file}<span class="step-file">{t('work.step.file', { file: st.file })}</span>{/if}</span>
+              {#if choices.length}
+                <select bind:value={assign[st.id]} aria-label={t('work.step.who', { step: st.id })}>
+                  {#each choices as c (c)}<option value={c}>{c}{vendorOf(c) ? ` · ${vendorOf(c)}` : ''}</option>{/each}
+                </select>
+              {:else}<span class="faint">{st.executor}</span>{/if}
+            </li>
+          {/each}
+        </ol>
+        <p class="field-note">{t('work.step.note')}{chosenRecipe.rounds ? ` ${t('work.step.rounds', { n: chosenRecipe.rounds })}` : ''}</p>
       {/if}
     </div>
-    <label>{t('work.task')}
-      <textarea class="draft" bind:value={task} placeholder={t('work.task.placeholder')}></textarea>
-    </label>
+    {#if fromTask}
+      <div class="field">
+        <span class="field-label">{t('work.task.from')}</span>
+        {#if source}
+          <div class="task-quote">
+            <p class="task-quote-title">{source.name}</p>
+            {#if source.description.trim()}<p class="task-quote-body">{source.description}</p>{/if}
+            {#if source.url}<a href={source.url} target="_blank" rel="noopener noreferrer">{t('work.task.open')}</a>{/if}
+          </div>
+        {:else}<p class="field-note">{t('loading')}</p>{/if}
+      </div>
+      <label>{t('work.extra')}
+        <textarea class="draft" bind:value={extra} placeholder={t('work.extra.placeholder')}></textarea>
+      </label>
+    {:else}
+      <label>{t('work.task')}
+        <textarea class="draft" bind:value={task} placeholder={t('work.task.placeholder')}></textarea>
+      </label>
+    {/if}
     <label class="quiet-toggle"><input type="checkbox" bind:checked={isPublic} /> {t('work.public')}</label>
     <div class="chooser">
-      <button type="button" class="choose primary" disabled={drafting || !task.trim() || !project} onclick={draft}>{drafting ? t('work.drafting') : t('work.draft')}</button>
-      <button type="button" class="choose" disabled={suggesting || !task.trim()} onclick={suggest}>{suggesting ? t('work.suggesting') : t('work.suggest')}</button>
+      <button type="button" class="choose primary" disabled={drafting || !text.trim() || !project || (!!fromTask && !source)} onclick={draft}>{drafting ? t('work.drafting') : t('work.draft')}</button>
+      {#if !fromTask}<button type="button" class="choose" disabled={suggesting || !task.trim()} onclick={suggest}>{suggesting ? t('work.suggesting') : t('work.suggest')}</button>{/if}
     </div>
     <!-- What pressing a button did shows here, beside the button. -->
     <div aria-live="polite">

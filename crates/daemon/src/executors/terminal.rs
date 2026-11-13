@@ -73,13 +73,20 @@ pub enum WorkAction {
         /// Say the task is not private, so it may go to executors as it is.
         #[arg(long)]
         public: bool,
+        /// Give a step to another executor than the recipe names, as
+        /// `step=executor`, such as `--step plan=claude-code`. Repeatable.
+        #[arg(long = "step", value_name = "STEP=EXECUTOR")]
+        steps: Vec<String>,
     },
     /// The latest dispatches.
     List,
-    /// One dispatch: its steps and what the executors said.
+    /// One dispatch: its steps and what each concluded.
     Show {
         /// The dispatch's id.
         id: String,
+        /// Also every piece the executors streamed, as it came.
+        #[arg(long)]
+        verbose: bool,
     },
     /// Offer a failed push again: the same commit to the same branch, as a
     /// new action that waits for your approval.
@@ -562,8 +569,16 @@ pub fn work(system: &System, action: WorkAction) -> anyhow::Result<()> {
             recipe,
             task,
             public,
+            steps,
         } => {
             super::seed(&system.store)?;
+            let mut assign = std::collections::BTreeMap::new();
+            for s in steps {
+                let Some((step, executor)) = s.split_once('=') else {
+                    anyhow::bail!("`--step {s}`: write it as step=executor");
+                };
+                assign.insert(step.trim().to_owned(), executor.trim().to_owned());
+            }
             let a = super::draft::draft(
                 system,
                 &super::draft::Request {
@@ -572,6 +587,7 @@ pub fn work(system: &System, action: WorkAction) -> anyhow::Result<()> {
                     task,
                     public,
                     source: None,
+                    assign,
                 },
             )?;
             println!("Drafted {}. Approve it on the approvals page.", a.id);
@@ -588,7 +604,7 @@ pub fn work(system: &System, action: WorkAction) -> anyhow::Result<()> {
                 );
             }
         }
-        WorkAction::Show { id } => {
+        WorkAction::Show { id, verbose } => {
             let Some(d) = system.store.get_dispatch(&id)? else {
                 anyhow::bail!("no dispatch {id}");
             };
@@ -619,9 +635,16 @@ pub fn work(system: &System, action: WorkAction) -> anyhow::Result<()> {
                 if let Some(c) = &s.commit_id {
                     println!("  commit {c}");
                 }
+                // What the step concluded, whole: the events below are the
+                // pieces it was streamed in.
+                if let Some(a) = s.answer.as_deref().filter(|a| !a.trim().is_empty()) {
+                    println!("\n{}\n", a.trim());
+                }
             }
-            for e in system.store.dispatch_events(&id, None, 500)? {
-                println!("  [{}] {}: {}", e.seq, e.kind, e.text.replace('\n', " "));
+            if verbose {
+                for e in system.store.dispatch_events(&id, None, 5000)? {
+                    println!("  [{}] {}: {}", e.seq, e.kind, e.text.replace('\n', " "));
+                }
             }
         }
         WorkAction::PushAgain { id } => match super::github::push_again(system, &id)? {

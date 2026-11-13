@@ -112,6 +112,9 @@ struct Home {
     active: Vec<DispatchView>,
     /// Work done, newest first.
     record: Vec<Done>,
+    /// Approvals waiting on this space's work: drafts not yet approved, and
+    /// pushes and pull requests its finished work proposed.
+    approvals: usize,
     /// Whose GitHub token its work pushes with: `own`, `default` or `none`.
     github: &'static str,
     /// Whether the space can be changed from here: this machine, or an
@@ -147,6 +150,20 @@ async fn one(
         .filter(|d| names.contains(&d.project))
         .collect();
     let sent = sent_by_dispatch(&system, &dispatches)?;
+    let ids: BTreeSet<&str> = dispatches.iter().map(|d| d.id.as_str()).collect();
+    let approvals = system
+        .actions
+        .list(&system.store, Some("pending"), 500)?
+        .iter()
+        .filter(|a| match &a.effect {
+            genatrix_agent::Effect::Dispatch { project, .. } => names.contains(project),
+            genatrix_agent::Effect::PushBranch { dispatch, .. }
+            | genatrix_agent::Effect::OpenPullRequest { dispatch, .. } => {
+                ids.contains(dispatch.as_str())
+            }
+            _ => false,
+        })
+        .count();
     let (going, ended): (Vec<_>, Vec<_>) = dispatches.into_iter().partition(|d| active(&d.state));
     let todo: Vec<Party> = task_parties(&system, Some(&space.name))?
         .into_iter()
@@ -172,6 +189,7 @@ async fn one(
                 }
             })
             .collect(),
+        approvals,
         github: github_sign_in(&space.name),
         manage,
     })

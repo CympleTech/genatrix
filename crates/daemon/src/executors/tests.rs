@@ -144,6 +144,7 @@ fn request(recipe: &str, task: &str, public: bool) -> super::draft::Request {
         task: task.into(),
         public,
         source: None,
+        assign: std::collections::BTreeMap::new(),
     }
 }
 
@@ -525,7 +526,11 @@ fn a_project_is_filed_only_with_a_repository_and_its_base_branch() {
     std::fs::create_dir_all(&empty).unwrap();
     assert!(file(&empty).unwrap_err().contains("not a git repository"));
     git(&empty, &["init", "--quiet", "-b", "main"]);
-    assert!(file(&empty).unwrap_err().contains("no branch `main`"));
+    assert!(
+        file(&empty)
+            .unwrap_err()
+            .contains("no branch with a commit")
+    );
     git(&empty, &["config", "user.name", "u"]);
     git(&empty, &["config", "user.email", "u@example.com"]);
     git(
@@ -941,4 +946,242 @@ async fn an_executor_is_started_with_its_projects_workspace() {
         seen.iter()
             .all(|(s, _)| s.executor.sign_in.as_deref() == Some("dpt"))
     );
+}
+
+/// A repository whose `main` lives only on GitHub: the form offers its
+/// local branches, starts from the one checked out, and filing it with
+/// `main` says which branches there are.
+#[test]
+fn a_project_starts_from_a_local_branch_and_is_told_which_there_are() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    git(repo, &["init", "-q", "-b", "dev"]);
+    git(
+        repo,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "x",
+        ],
+    );
+    git(repo, &["branch", "prod"]);
+
+    let b = super::branches(repo).unwrap();
+    assert_eq!(b.all, ["dev", "prod"]);
+    assert_eq!(b.current.as_deref(), Some("dev"));
+    assert_eq!(
+        b.suggested.as_deref(),
+        Some("dev"),
+        "no main: the one checked out"
+    );
+
+    git(repo, &["branch", "main"]);
+    assert_eq!(
+        super::branches(repo).unwrap().suggested.as_deref(),
+        Some("main")
+    );
+    git(repo, &["branch", "-D", "main"]);
+
+    let project = genatrix_dispatch::project::Project::parse(&format!(
+        "name = \"svc\"\nrepo = \"{}\"\nexecutors = [\"claude-code\"]\n",
+        repo.display()
+    ))
+    .unwrap();
+    let said = super::check_repo(&project).unwrap_err().to_string();
+    assert!(said.contains("no local branch `main`"), "{said}");
+    assert!(said.contains("dev, prod"), "{said}");
+
+    assert!(super::branches(&repo.join("nowhere")).is_err());
+}
+
+/// Answered but not yet carried on: it can still be stopped, and is then
+/// not picked up again.
+#[tokio::test]
+async fn answered_work_can_be_stopped_before_it_carries_on() {
+    let f = fixture(false);
+    *f.host.turns.lock().unwrap() = VecDeque::from(vec![turn(
+        "{\"genatrix\": \"ask\", \"question\": \"A or B?\", \"options\": [\"A\", \"B\"]}",
+    )]);
+    let a = super::draft::draft(&f.system, &request("implement", "Do it.", true)).unwrap();
+    approve(&f.system, &a.id);
+    super::run::start_approved(&f.system).unwrap();
+    assert_eq!(until_done(&f.system, &a.id).await.state, "waiting");
+    super::run::answer(
+        &f.system,
+        &a.id,
+        &super::run::Reply {
+            text: "A".into(),
+            public: true,
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert!(super::run::stop_waiting(&f.system, &a.id).unwrap());
+    assert_eq!(
+        f.system.store.get_dispatch(&a.id).unwrap().unwrap().state,
+        "stopped"
+    );
+    assert_eq!(super::run::resume_answered(&f.system).unwrap(), 0);
+}
+
+/// The user picks who does each step when drafting: the card says so, the
+/// run follows it, and an executor the project does not allow is refused.
+#[tokio::test]
+async fn the_user_picks_who_does_each_step() {
+    let f = fixture(false);
+    *f.host.turns.lock().unwrap() = VecDeque::from(vec![turn(
+        "{\"genatrix\": \"ask\", \"question\": \"A or B?\", \"options\": [\"A\", \"B\"]}",
+    )]);
+    let mut asked = request("implement", "Do it.", true);
+    asked.assign.insert("implement".into(), "codex".into());
+    let a = super::draft::draft(&f.system, &asked).unwrap();
+    let Effect::Dispatch {
+        assign, executors, ..
+    } = &a.effect
+    else {
+        panic!("not a dispatch")
+    };
+    assert_eq!(assign.get("implement").map(String::as_str), Some("codex"));
+    assert_eq!(
+        executors
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .collect::<Vec<_>>(),
+        ["codex"],
+        "the card names the executor chosen, not the recipe's"
+    );
+    let facts = super::draft::facts(&f.system, &a.effect);
+    assert!(
+        facts
+            .iter()
+            .any(|x| x.value.contains("implement (") && x.value.contains("codex")),
+        "{facts:?}"
+    );
+
+    approve(&f.system, &a.id);
+    super::run::start_approved(&f.system).unwrap();
+    assert_eq!(until_done(&f.system, &a.id).await.state, "waiting");
+    let steps = f.system.store.dispatch_steps(&a.id).unwrap();
+    assert_eq!(steps[0].executor, "codex");
+
+    // Choosing what the recipe already says changes nothing on the card.
+    let mut same = request("implement", "Do it.", true);
+    same.assign.insert("implement".into(), "claude-code".into());
+    let b = super::draft::draft(&f.system, &same).unwrap();
+    let Effect::Dispatch { assign, .. } = &b.effect else {
+        panic!("not a dispatch")
+    };
+    assert!(assign.is_empty());
+
+    // Not an executor the project allows, and not a step there is.
+    let mut other = request("implement", "Do it.", true);
+    other.assign.insert("implement".into(), "gemini".into());
+    let said = super::draft::draft(&f.system, &other)
+        .unwrap_err()
+        .to_string();
+    assert!(said.contains("does not allow"), "{said}");
+    let mut nowhere = request("implement", "Do it.", true);
+    nowhere.assign.insert("deploy".into(), "codex".into());
+    assert!(super::draft::draft(&f.system, &nowhere).is_err());
+}
+
+/// A plan is a document in the repository: the core files the executor's
+/// answer at the recipe's path, commits it, and offers the push and the
+/// pull request, where the user reviews it like code.
+#[tokio::test]
+async fn a_plan_becomes_a_document_in_a_pull_request() {
+    let f = fixture(false);
+    *f.host.turns.lock().unwrap() = VecDeque::from(vec![turn(
+        "I looked around first.\n\n# Deploy Plan\n\n1. Ship it.\n{\"genatrix\": \"done\", \"summary\": \"wrote the plan\"}",
+    )]);
+    let a =
+        super::draft::draft(&f.system, &request("change-plan", "Plan the deploy.", true)).unwrap();
+    approve(&f.system, &a.id);
+    super::run::start_approved(&f.system).unwrap();
+    let d = until_done(&f.system, &a.id).await;
+    assert_eq!(d.state, "finished", "{d:?}");
+    let tip = d.tip.clone().expect("the document is a commit");
+
+    let mirror = f.root.join("mirrors/demo.git");
+    let day = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let path = format!("docs/plans/{day}-deploy-plan.md");
+    let filed = git(&mirror, &["show", &format!("{tip}:{path}")]);
+    assert_eq!(filed, "# Deploy Plan\n\n1. Ship it.");
+    let subject = git(&mirror, &["log", "-1", "--format=%s", &tip]);
+    assert_eq!(subject, "plan: Deploy Plan");
+
+    let pending = f
+        .system
+        .actions
+        .list(&f.system.store, Some("pending"), 10)
+        .unwrap();
+    assert!(
+        pending
+            .iter()
+            .any(|p| matches!(p.effect, Effect::PushBranch { .. }))
+    );
+    assert!(
+        pending
+            .iter()
+            .any(|p| matches!(p.effect, Effect::OpenPullRequest { .. }))
+    );
+}
+
+/// A built-in the user never changed follows a newer Genatrix; one they
+/// filed themselves under the same name is left alone.
+#[test]
+fn an_older_built_in_is_replaced_but_never_the_users_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let store =
+        genatrix_store::Store::open_in_memory(&genatrix_keys::DbKey::from_bytes([7; 32])).unwrap();
+    let old = "name = \"change-plan\"\ntitle = \"Write a deployment change plan; nothing is deployed\"\n\n[[step]]\nid = \"plan\"\nrole = \"ops\"\nexecutor = \"codex\"\nproduces = \"notes\"\n";
+    assert_eq!(
+        genatrix_dispatch::hash_of(old),
+        genatrix_dispatch::builtin::SUPERSEDED[0].2,
+        "the list names the file as it was shipped"
+    );
+    store
+        .put_definition(
+            "recipe",
+            "change-plan",
+            &genatrix_dispatch::hash_of(old),
+            old,
+            0,
+        )
+        .unwrap();
+    super::seed(&store).unwrap();
+    let now = &super::definitions(&store).unwrap().recipes;
+    let plan = now.iter().find(|(r, _)| r.name == "change-plan").unwrap();
+    assert_eq!(
+        plan.0.steps[0].produces,
+        genatrix_dispatch::recipe::Produces::Document
+    );
+
+    let mine = "name = \"change-plan\"\ntitle = \"Mine\"\n\n[[step]]\nid = \"plan\"\nrole = \"ops\"\nexecutor = \"codex\"\nproduces = \"notes\"\n";
+    store
+        .put_definition(
+            "recipe",
+            "change-plan",
+            &genatrix_dispatch::hash_of(mine),
+            mine,
+            1,
+        )
+        .unwrap();
+    super::seed(&store).unwrap();
+    let now = &super::definitions(&store).unwrap().recipes;
+    assert_eq!(
+        now.iter()
+            .find(|(r, _)| r.name == "change-plan")
+            .unwrap()
+            .0
+            .title,
+        "Mine"
+    );
+    drop(dir);
 }

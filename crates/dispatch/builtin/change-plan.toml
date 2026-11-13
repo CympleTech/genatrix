@@ -1,8 +1,12 @@
 name = "change-plan"
-title = "Write a deployment change plan; nothing is deployed"
+title = "Write a deployment change plan as a document for review; nothing is deployed"
 
 [[step]]
 id = "plan"
 role = "ops"
 executor = "codex"
-produces = "notes"
+produces = "document"
+file = "docs/plans/{date}-{slug}.md"
+
+[finish]
+propose = ["push_branch", "open_pull_request"]

@@ -112,7 +112,7 @@ export interface WorkProject {
 }
 export interface WorkRecipe {
   name: string; title: string; rounds: number | null;
-  steps: { id: string; role: string; executor: string; produces: string }[];
+  steps: { id: string; role: string; executor: string; produces: string; file?: string }[];
 }
 export interface Dispatch {
   id: string; project: string; recipe: string; state: string; level: string; branch: string;
@@ -134,7 +134,7 @@ export interface WorkStep {
 }
 export interface WorkEvent { seq: number; n: number; at_ms: number; kind: string; text: string }
 export interface WorkQuestion { seq: number; question: string; options: string[]; recommend: number | null; progress: string }
-export interface WorkDetail { workspace: string | null; dispatch: Dispatch; steps: WorkStep[]; events: WorkEvent[]; push_again: boolean; question: WorkQuestion | null }
+export interface WorkDetail { workspace: string | null; dispatch: Dispatch; steps: WorkStep[]; events: WorkEvent[]; push_again: boolean; question: WorkQuestion | null; offers: Action[] }
 export type CardValue =
   | { type: 'text'; text: string }
   | { type: 'money'; cents: number; currency: string }

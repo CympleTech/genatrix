@@ -6,9 +6,10 @@
 //! level the text goes at. Everything that would make the work impossible
 //! is refused here, so the card never offers what cannot run.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use genatrix_agent::action::{Action, Effect};
+use genatrix_dispatch::recipe::Recipe;
 
 use crate::system::System;
 
@@ -26,6 +27,9 @@ pub struct Request {
     pub public: bool,
     /// The thread the work comes from, such as a Lark task, if any.
     pub source: Option<String>,
+    /// Who does each step, where the user chose other than the recipe:
+    /// step id to executor name.
+    pub assign: BTreeMap<String, String>,
 }
 
 /// Why a draft was refused.
@@ -63,10 +67,11 @@ pub fn draft(system: &System, request: &Request) -> Result<Action, DraftError> {
     else {
         return refused(format!("there is no project `{}`", request.project));
     };
-    let Some((recipe, recipe_hash)) = defs.recipes.iter().find(|(r, _)| r.name == request.recipe)
+    let Some((filed, recipe_hash)) = defs.recipes.iter().find(|(r, _)| r.name == request.recipe)
     else {
         return refused(format!("there is no recipe `{}`", request.recipe));
     };
+    let (recipe, assign) = &assigned(filed, &request.assign)?;
     let roles: Vec<_> = defs.roles.iter().map(|(r, _)| r.clone()).collect();
     if let Err(e) = recipe.fits(project, &roles) {
         return refused(e.to_string());
@@ -133,6 +138,7 @@ pub fn draft(system: &System, request: &Request) -> Result<Action, DraftError> {
         level: if request.public { "public" } else { "personal" }.to_owned(),
         executors,
         source: request.source.clone(),
+        assign: assign.clone(),
     };
     Ok(system.actions.propose_by_user(
         &system.store,
@@ -142,6 +148,29 @@ pub fn draft(system: &System, request: &Request) -> Result<Action, DraftError> {
         task.to_owned(),
         recipe.title.clone(),
     )?)
+}
+
+/// The recipe with the user's choice of who does each step. Only what
+/// differs from the recipe is kept, so a card says exactly what was changed.
+fn assigned(
+    filed: &Recipe,
+    asked: &BTreeMap<String, String>,
+) -> Result<(Recipe, BTreeMap<String, String>), DraftError> {
+    let assign: BTreeMap<String, String> = asked
+        .iter()
+        .filter(|(id, e)| {
+            filed
+                .steps
+                .iter()
+                .find(|s| &s.id == *id)
+                .is_none_or(|s| &s.executor != *e)
+        })
+        .map(|(id, e)| (id.clone(), e.clone()))
+        .collect();
+    match filed.assigned(&assign) {
+        Ok(r) => Ok((r, assign)),
+        Err(e) => refused(e.to_string()),
+    }
 }
 
 /// One labelled line on a card for executor work.
@@ -168,6 +197,7 @@ pub fn facts(system: &System, effect: &Effect) -> Vec<Fact> {
             recipe_hash,
             executors,
             level,
+            assign,
             ..
         } => {
             let defs = super::definitions(&system.store).ok();
@@ -187,7 +217,8 @@ pub fn facts(system: &System, effect: &Effect) -> Vec<Fact> {
                 .definition("recipe", recipe_hash)
                 .ok()
                 .flatten()
-                .and_then(|d| genatrix_dispatch::recipe::Recipe::parse(&d.text).ok());
+                .and_then(|d| genatrix_dispatch::recipe::Recipe::parse(&d.text).ok())
+                .and_then(|r| r.assigned(assign).ok());
             if let Some(r) = recipe {
                 let steps: Vec<String> = r
                     .steps

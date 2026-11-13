@@ -77,6 +77,7 @@ fn pinned(system: &System, effect: &Effect) -> Result<Pinned, String> {
         level,
         executors,
         source,
+        assign,
         ..
     } = effect
     else {
@@ -96,7 +97,11 @@ fn pinned(system: &System, effect: &Effect) -> Result<Pinned, String> {
     if let Some(source) = source {
         super::check_source(&system.store, &project, source)?;
     }
-    let recipe = Recipe::parse(&text("recipe", recipe_hash)?).map_err(|e| e.to_string())?;
+    // The steps as approved: the recipe on file, with the executors the
+    // user chose for some of them.
+    let recipe = Recipe::parse(&text("recipe", recipe_hash)?)
+        .and_then(|r| r.assigned(assign))
+        .map_err(|e| e.to_string())?;
     let mut role_defs = Vec::new();
     for (_, hash) in roles {
         role_defs.push(Role::parse(&text("role", hash)?).map_err(|e| e.to_string())?);
@@ -333,7 +338,9 @@ pub fn stop_waiting(system: &System, id: &str) -> anyhow::Result<bool> {
     let Some(mut row) = system.store.get_dispatch(id)? else {
         return Ok(false);
     };
-    if row.state != "waiting" {
+    // Waiting for an answer, or answered and not yet picked up again: no
+    // session runs in either, so stopping is marking it and clearing up.
+    if row.state != "waiting" && row.state != "answered" {
         return Ok(false);
     }
     let _ = genatrix_exec::workspace::remove(
@@ -501,7 +508,9 @@ async fn work(
                     id: format!("{}#{}", l.step, l.round),
                     label: match l.produces {
                         Produces::Verdict => "a review of the work so far".into(),
-                        Produces::Notes => format!("what step `{}` wrote", l.step),
+                        Produces::Notes | Produces::Document => {
+                            format!("what step `{}` wrote", l.step)
+                        }
                         Produces::Commits => {
                             format!("what step `{}` said about its changes", l.step)
                         }
@@ -687,6 +696,40 @@ async fn work(
                     }
                 }
             }
+            Produces::Document => {
+                // Design 13 v0.6: the answer becomes a file in the
+                // repository, committed by the core, reviewed in a pull
+                // request like code.
+                let (doc, title) = genatrix_dispatch::report::document(&end.answer);
+                let title = title.unwrap_or_else(|| headline(task));
+                let path = genatrix_dispatch::recipe::document_path(
+                    step.file.as_deref().unwrap_or("docs/{slug}.md"),
+                    &chrono::Local::now().format("%Y-%m-%d").to_string(),
+                    &title,
+                    &row.id,
+                );
+                let message = format!("{}: {title}", step.id);
+                let (iso, ws) = (iso.clone(), ws.clone());
+                let commit = tokio::task::spawn_blocking(move || {
+                    genatrix_exec::workspace::commit_file(
+                        &iso,
+                        &ws,
+                        &path,
+                        doc.as_bytes(),
+                        &message,
+                    )
+                })
+                .await?;
+                match commit {
+                    Ok(c) => record.commit_id = c,
+                    Err(e) => {
+                        record.state = "failed".into();
+                        record.error = Some(e.to_string());
+                        system.store.put_dispatch_step(&record)?;
+                        return Ok(Ending::Failed(format!("step `{}`: {e}", step.id)));
+                    }
+                }
+            }
             Produces::Verdict => {
                 verdict = machine::read_verdict(&end.answer);
                 record.verdict = verdict.as_ref().and_then(|v| serde_json::to_string(v).ok());
@@ -789,7 +832,25 @@ async fn work(
             Vec::new(),
         )?;
     }
-    Ok(Ending::Finished(None))
+    // Finished here is not on GitHub yet; the record says what waits.
+    Ok(Ending::Finished(
+        (!pins.recipe.finish.propose.is_empty()).then(|| {
+            format!(
+                "committed as {}; nothing is on GitHub until you approve the push{}",
+                &received.tip[..received.tip.len().min(10)],
+                if pins
+                    .recipe
+                    .finish
+                    .propose
+                    .contains(&Propose::OpenPullRequest)
+                {
+                    " and the pull request"
+                } else {
+                    ""
+                }
+            )
+        }),
+    ))
 }
 
 /// The commit message for what a step left: its own title and summary,

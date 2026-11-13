@@ -112,6 +112,46 @@ pub fn read_report(answer: &str) -> Report {
     }
 }
 
+/// The document a `document` step wrote, and its title: its answer
+/// without the closing report object, from its first `# ` heading on when
+/// it has one (what it said before that is talk, not the document). The
+/// title is the report's, else the heading's.
+#[must_use]
+pub fn document(answer: &str) -> (String, Option<String>) {
+    let mut cut = answer.len();
+    for (start, _) in answer.match_indices('{') {
+        let mut stream =
+            serde_json::Deserializer::from_str(&answer[start..]).into_iter::<serde_json::Value>();
+        if let Some(Ok(value)) = stream.next()
+            && matches!(
+                value.get("genatrix").and_then(|v| v.as_str()),
+                Some("done" | "ask")
+            )
+        {
+            cut = start;
+        }
+    }
+    let mut text = answer[..cut].trim_end();
+    for fence in ["```json", "```"] {
+        if let Some(t) = text.strip_suffix(fence) {
+            text = t.trim_end();
+            break;
+        }
+    }
+    let heading = text
+        .match_indices("# ")
+        .find(|(i, _)| *i == 0 || text.as_bytes()[i - 1] == b'\n')
+        .map(|(i, _)| i);
+    let body = heading.map_or(text, |i| &text[i..]).trim();
+    let title = match read_report(answer) {
+        Report::Done { title: Some(t), .. } => Some(t),
+        _ => heading.map(|i| one_line(text[i + 2..].lines().next().unwrap_or_default())),
+    };
+    let mut doc = body.to_owned();
+    doc.push('\n');
+    (doc, title)
+}
+
 /// The first line, at most 72 characters: a commit subject.
 fn one_line(text: &str) -> String {
     let line = text
@@ -130,6 +170,16 @@ fn one_line(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_document_is_the_answer_from_its_heading_without_the_report() {
+        let answer = "Let me look first.The repo is empty.\n\n---\n\n# Change Plan — X\n\nStep 1.\n```json\n{\"genatrix\": \"done\", \"summary\": \"wrote it\"}\n```";
+        let (doc, title) = document(answer);
+        assert_eq!(doc, "# Change Plan — X\n\nStep 1.\n");
+        assert_eq!(title.as_deref(), Some("Change Plan — X"));
+        let (doc, title) = document("Just words.");
+        assert_eq!((doc.as_str(), title), ("Just words.\n", None));
+    }
 
     #[test]
     fn done_gives_a_title_and_a_summary() {

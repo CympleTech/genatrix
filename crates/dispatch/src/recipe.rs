@@ -6,7 +6,7 @@
 //! the work runs (proposed invariant 26). The dispatch pins the recipe by
 //! hash, so a recipe edited later does not change work already approved.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,18 @@ pub enum Produces {
     Verdict,
     /// Its closing words: a specification, a plan, a report.
     Notes,
+    /// Its closing words as a document in the repository: Genatrix writes
+    /// them to the step's `file` and commits that, so a plan is reviewed
+    /// like code, in a pull request. The executor changes no files.
+    Document,
+}
+
+impl Produces {
+    /// Whether the step leaves a commit behind.
+    #[must_use]
+    pub const fn commits(self) -> bool {
+        matches!(self, Self::Commits | Self::Document)
+    }
 }
 
 /// One step.
@@ -45,6 +57,54 @@ pub struct Step {
     /// Earlier steps whose output this one is given, besides the task.
     #[serde(default)]
     pub inputs: Vec<String>,
+    /// Where a `document` step's answer is filed, relative to the
+    /// repository's root. `{date}`, `{slug}` and `{id}` are filled in:
+    /// the day, the document's title made into a file name, the dispatch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+}
+
+/// Check a document's path: inside the repository, plain characters only.
+fn check_file(step: &str, file: &str) -> Result<(), DefinitionError> {
+    let plain = file
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.' | b'{' | b'}'));
+    let inside = !file.starts_with('/')
+        && file
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+        && !file.starts_with(".git/")
+        && file != ".git";
+    if plain && inside && file.len() <= 200 {
+        Ok(())
+    } else {
+        Err(DefinitionError::Invalid(format!(
+            "step `{step}`: file `{file}` must be a plain path inside the repository"
+        )))
+    }
+}
+
+/// A document's path with its blanks filled in. The slug is the title's
+/// letters and digits, lowercased; the dispatch id when that leaves nothing.
+#[must_use]
+pub fn document_path(template: &str, date: &str, title: &str, id: &str) -> String {
+    let mut slug = String::new();
+    for c in title.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+        if slug.len() >= 60 {
+            break;
+        }
+    }
+    let slug = slug.trim_matches('-');
+    let id = id.to_lowercase();
+    template
+        .replace("{date}", date)
+        .replace("{slug}", if slug.is_empty() { &id } else { slug })
+        .replace("{id}", &id)
 }
 
 /// A bounded loop between a verdict step and the step that answers it.
@@ -130,6 +190,22 @@ impl Recipe {
             if !seen.insert(step.id.as_str()) {
                 return bad(format!("step `{}` appears twice", step.id));
             }
+            match (&step.file, step.produces) {
+                (Some(f), Produces::Document) => check_file(&step.id, f)?,
+                (None, Produces::Document) => {
+                    return bad(format!(
+                        "step `{}` produces a document but names no file for it",
+                        step.id
+                    ));
+                }
+                (Some(_), _) => {
+                    return bad(format!(
+                        "step `{}` names a file, but only a document step writes one",
+                        step.id
+                    ));
+                }
+                (None, _) => {}
+            }
         }
         if let Some(l) = &self.repeat {
             let (Some(a), Some(b)) = (self.index_of(&l.between[0]), self.index_of(&l.between[1]))
@@ -153,8 +229,8 @@ impl Recipe {
         if p.contains(&Propose::OpenPullRequest) && !p.contains(&Propose::PushBranch) {
             return bad("a pull request needs the branch pushed first".into());
         }
-        if !p.is_empty() && !self.steps.iter().any(|s| s.produces == Produces::Commits) {
-            return bad("nothing to push: no step produces commits".into());
+        if !p.is_empty() && !self.steps.iter().any(|s| s.produces.commits()) {
+            return bad("nothing to push: no step produces commits or a document".into());
         }
         Ok(())
     }
@@ -163,6 +239,25 @@ impl Recipe {
     #[must_use]
     pub fn index_of(&self, id: &str) -> Option<usize> {
         self.steps.iter().position(|s| s.id == id)
+    }
+
+    /// The recipe with some steps given to other executors, as the user
+    /// chose when drafting (design 13 v0.5). Only executors
+    /// change: the steps, their roles and the loop stay as filed. A step the
+    /// recipe does not have is refused.
+    pub fn assigned(&self, assign: &BTreeMap<String, String>) -> Result<Self, DefinitionError> {
+        let mut out = self.clone();
+        for (id, executor) in assign {
+            let Some(step) = out.steps.iter_mut().find(|s| &s.id == id) else {
+                return Err(DefinitionError::Invalid(format!(
+                    "recipe `{}` has no step `{id}`",
+                    self.name
+                )));
+            };
+            check_name("executor", executor)?;
+            step.executor.clone_from(executor);
+        }
+        Ok(out)
     }
 
     /// Check the recipe against a project and the roles there are: every
@@ -193,6 +288,72 @@ mod tests {
 
     fn recipe(text: &str) -> Result<Recipe, DefinitionError> {
         Recipe::parse(text)
+    }
+
+    /// A document step names where its answer goes, inside the repository.
+    #[test]
+    fn a_document_step_is_filed_where_it_says() {
+        let head = "name = \"plan\"\ntitle = \"Plan\"\n[[step]]\nid = \"plan\"\nrole = \"ops\"\nexecutor = \"codex\"\nproduces = \"document\"\n";
+        let ok = recipe(&format!(
+            "{head}file = \"docs/plans/{{date}}-{{slug}}.md\"\n[finish]\npropose = [\"push_branch\", \"open_pull_request\"]\n"
+        ))
+        .unwrap();
+        assert!(ok.steps[0].produces.commits());
+        assert!(recipe(head).is_err(), "a document needs a file");
+        for bad in [
+            "/etc/passwd",
+            "../x.md",
+            "docs/../../x.md",
+            ".git/config",
+            "a b.md",
+            "docs//x.md",
+        ] {
+            assert!(
+                recipe(&format!("{head}file = \"{bad}\"\n")).is_err(),
+                "{bad}"
+            );
+        }
+        let notes = head.replace("document", "notes");
+        assert!(
+            recipe(&format!("{notes}file = \"x.md\"\n")).is_err(),
+            "only a document step writes a file"
+        );
+        assert_eq!(
+            document_path(
+                "docs/plans/{date}-{slug}.md",
+                "2026-11-10",
+                "Change Plan — AI Translation!",
+                "01ABC"
+            ),
+            "docs/plans/2026-11-10-change-plan-ai-translation.md"
+        );
+        assert_eq!(
+            document_path("docs/plans/{slug}.md", "2026-11-10", "部署计划", "01ABC"),
+            "docs/plans/01abc.md"
+        );
+    }
+
+    /// The user picks who does each step; the steps themselves stay.
+    #[test]
+    fn a_step_can_be_given_to_another_executor() {
+        let r = recipe(
+            "name = \"plan\"\ntitle = \"Plan\"\n[[step]]\nid = \"plan\"\nrole = \"ops\"\nexecutor = \"codex\"\nproduces = \"notes\"\n",
+        )
+        .unwrap();
+        let mut assign = BTreeMap::new();
+        assign.insert("plan".to_owned(), "claude-code".to_owned());
+        let mine = r.assigned(&assign).unwrap();
+        assert_eq!(mine.steps[0].executor, "claude-code");
+        assert_eq!(mine.steps[0].role, "ops");
+        assert_eq!(
+            r.steps[0].executor, "codex",
+            "the filed recipe is unchanged"
+        );
+        assign.insert("build".to_owned(), "codex".to_owned());
+        assert!(r.assigned(&assign).is_err(), "no such step");
+        let mut bad = BTreeMap::new();
+        bad.insert("plan".to_owned(), "Not A Name".to_owned());
+        assert!(r.assigned(&bad).is_err());
     }
 
     const BASE: &str = r#"

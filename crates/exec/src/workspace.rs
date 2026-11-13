@@ -33,6 +33,15 @@ pub struct Received {
 }
 
 fn run(isolation: &Isolation, words: &[&str], dir: Option<&Path>) -> Result<Output, GitError> {
+    run_with(isolation, words, dir, None)
+}
+
+fn run_with(
+    isolation: &Isolation,
+    words: &[&str],
+    dir: Option<&Path>,
+    input: Option<&[u8]>,
+) -> Result<Output, GitError> {
     let mut line = vec!["/usr/bin/git".to_owned()];
     if let Some(dir) = dir {
         line.push("-C".to_owned());
@@ -46,10 +55,29 @@ fn run(isolation: &Isolation, words: &[&str], dir: Option<&Path>) -> Result<Outp
     let mut command = Command::new(program);
     command
         .args(rest)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .env("GIT_TERMINAL_PROMPT", "0");
-    command
-        .output()
+    let mut child = command
+        .spawn()
+        .map_err(|e| GitError(format!("could not run git: {e}")))?;
+    if let Some(bytes) = input {
+        use std::io::Write as _;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| GitError("git took no input".into()))?;
+        stdin
+            .write_all(bytes)
+            .map_err(|e| GitError(format!("could not hand git the file: {e}")))?;
+    }
+    child
+        .wait_with_output()
         .map_err(|e| GitError(format!("could not run git: {e}")))
 }
 
@@ -191,6 +219,55 @@ pub fn commit_all(
         &["commit", "--quiet", "--no-verify", "-m", message],
         Some(workspace),
     )?;
+    ok(isolation, &["rev-parse", "HEAD"], Some(workspace)).map(Some)
+}
+
+/// Commit one file with the given contents, as the executor's user, on top
+/// of the workspace's branch: how a document step's answer becomes part of
+/// the work (design 13 v0.6). Only the index and the branch change; the
+/// executor's working files are left as they are. `None` when the file
+/// already says exactly this.
+pub fn commit_file(
+    isolation: &Isolation,
+    workspace: &Path,
+    path: &str,
+    contents: &[u8],
+    message: &str,
+) -> Result<Option<String>, GitError> {
+    let out = run_with(
+        isolation,
+        &["hash-object", "-w", "--stdin"],
+        Some(workspace),
+        Some(contents),
+    )?;
+    if !out.status.success() {
+        return Err(GitError(format!(
+            "git hash-object failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    let blob = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    ok(
+        isolation,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("100644,{blob},{path}"),
+        ],
+        Some(workspace),
+    )?;
+    let staged = run(isolation, &["diff", "--cached", "--quiet"], Some(workspace))?;
+    if staged.status.success() {
+        return Ok(None);
+    }
+    ok(
+        isolation,
+        &["commit", "--quiet", "--no-verify", "-m", message],
+        Some(workspace),
+    )?;
+    // The working copy follows, so a later step sees the document.
+    ok(isolation, &["checkout", "--", path], Some(workspace))?;
     ok(isolation, &["rev-parse", "HEAD"], Some(workspace)).map(Some)
 }
 
@@ -400,6 +477,43 @@ mod tests {
                 .unwrap()
                 .contains("made by the executor")
         );
+    }
+
+    /// A document step: the core writes the answer into the repository as
+    /// one file and commits it; it leaves like any other commit.
+    #[test]
+    fn a_document_is_committed_as_one_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo(dir.path());
+        let mirror = dir.path().join("mirrors/p.git");
+        refresh_mirror(&repo, &mirror, None).unwrap();
+        let me = Isolation::SameUserForTests;
+        let ws = dir.path().join("exec/d2");
+        let base = prepare(&me, &mirror, &ws, "main", "genatrix/d2").unwrap();
+        let doc = "# Plan\n\nThree steps.\n";
+        let tip = commit_file(&me, &ws, "docs/plans/plan.md", doc.as_bytes(), "plan: Plan")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(ws.join("docs/plans/plan.md")).unwrap(),
+            doc,
+            "a later step sees it"
+        );
+        assert_eq!(
+            commit_file(&me, &ws, "docs/plans/plan.md", doc.as_bytes(), "again").unwrap(),
+            None,
+            "the same words again are no new commit"
+        );
+        let got = receive(
+            &mirror,
+            &bundle(&me, &ws, &base, 1 << 20).unwrap().unwrap(),
+            "d2",
+            &base,
+        )
+        .unwrap();
+        assert_eq!(got.tip, tip);
+        assert_eq!(got.commits[0].1, "plan: Plan");
+        assert!(got.stat.contains("docs/plans/plan.md"));
     }
 
     #[test]

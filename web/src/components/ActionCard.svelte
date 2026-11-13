@@ -158,6 +158,8 @@
       {/if}
       {#if error}<span class="error">{error}</span>{/if}
     </div>
+  {:else if current.status === 'failed'}
+    <p class="note error">{t('action.failed.why', { why: current.status_detail ?? '' })}</p>
   {:else if current.status === 'approved'}
     <div class="chooser">
       <span class="note sending">{current.card ? t('action.approved_agent') : t('action.approved')}</span>

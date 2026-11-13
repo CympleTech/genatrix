@@ -33,6 +33,17 @@ pub const RECIPE_FILES: &[(&str, &str)] = &[
     ("change-plan", include_str!("../builtin/change-plan.toml")),
 ];
 
+/// Earlier built-in files, by kind, name and hash, that a newer built-in
+/// replaces when it is still the one in use. A file the user filed under
+/// the same name is never replaced: its hash is not on this list.
+pub const SUPERSEDED: &[(&str, &str, &str)] = &[(
+    "recipe",
+    "change-plan",
+    // Its answer stayed on the work page; now it is a document in the
+    // repository, reviewed in a pull request (design 13 v0.6).
+    "cb7868de135333d7057537931a9d944c0a9a8241006721bbf1a552f1a01952f8",
+)];
+
 /// The built-in workspace files, by name (design 14): `personal`, with no
 /// accounts, where a project goes unless it says otherwise.
 pub const WORKSPACE_FILES: &[(&str, &str)] = &[(

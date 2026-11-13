@@ -13,7 +13,7 @@
   let name = $state('');
   let repo = $state('');
   let github = $state('');
-  let base = $state('main');
+  let base = $state('');
   let chosen = $state<string[]>([]);
   let commands = $state('');
   let network = $state(false);
@@ -38,6 +38,35 @@
   const githubOk = $derived(!github.trim() || /^[\w.-]+\/[\w.-]+$/.test(github.trim()));
   const isTaken = $derived(taken.includes(name));
 
+  // The base branch is picked from the repository's own local branches:
+  // work starts from a local branch, and many repositories have no `main`.
+  let branches = $state<string[] | null>(null);
+  let current = $state<string | null>(null);
+  let repoError = $state('');
+  let asked = '';
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  async function lookUp() {
+    const which = repo.trim();
+    if (!which || which === asked) return;
+    asked = which;
+    try {
+      const b = await post<{ all: string[]; current: string | null; suggested: string | null }>('/api/work/branches', { repo: which });
+      if (repo.trim() !== which) return;
+      branches = b.all; current = b.current; repoError = '';
+      if (!b.all.includes(base)) base = b.suggested ?? '';
+      if (!b.all.length) repoError = t('projectform.branches.none');
+    } catch (err: any) {
+      if (repo.trim() !== which) return;
+      branches = null; current = null; base = ''; repoError = err.message;
+    }
+  }
+  function repoTyped() {
+    if (timer) clearTimeout(timer);
+    branches = null; repoError = '';
+    timer = setTimeout(lookUp, 600);
+  }
+  $effect(() => () => { if (timer) clearTimeout(timer); });
+
   function toggle(n: string, on: boolean) {
     chosen = on ? [...chosen.filter((x) => x !== n), n] : chosen.filter((x) => x !== n);
   }
@@ -50,13 +79,13 @@
         kind: 'project',
         fields: {
           name, workspace: space, repo: repo.trim(),
-          github: github.trim() || null, base: base.trim() || 'main',
+          github: github.trim() || null, base,
           executors: chosen,
           commands: commands.split('\n').map((c) => c.trim()).filter(Boolean),
           network, delegate_personal: personal, bundle_cap_mb: 20,
         },
       });
-      name = ''; repo = ''; github = ''; base = 'main'; commands = ''; network = false; personal = false; nameTouched = false;
+      name = ''; repo = ''; github = ''; base = ''; branches = null; asked = ''; commands = ''; network = false; personal = false; nameTouched = false;
       onfiled(r.name);
     } catch (err: any) { error = err.message; }
     busy = false;
@@ -65,9 +94,17 @@
 
 <form class="setup-form" onsubmit={save}>
   <label>{t('projectform.repo')}
-    <input bind:value={repo} placeholder="~/code/my-app" autocapitalize="off" autocomplete="off" spellcheck="false" required />
-    <span class="field-note">{t('projectform.repo.note')}</span>
+    <input bind:value={repo} oninput={repoTyped} onblur={lookUp} placeholder="~/code/my-app" autocapitalize="off" autocomplete="off" spellcheck="false" required />
+    {#if repoError}<span class="field-note error">{repoError}</span>{:else}<span class="field-note">{t('projectform.repo.note')}</span>{/if}
   </label>
+  {#if branches?.length}
+    <label>{t('projectform.base')}
+      <select bind:value={base}>
+        {#each branches as b (b)}<option value={b}>{b}{b === current ? ` · ${t('projectform.base.current')}` : ''}</option>{/each}
+      </select>
+      <span class="field-note">{t('projectform.base.note')}</span>
+    </label>
+  {/if}
   <label>{t('projectform.github')}
     <input bind:value={github} placeholder="me/my-app" autocapitalize="off" autocomplete="off" spellcheck="false" />
     <span class="field-note">{githubOk ? t('projectform.github.note') : t('projectform.github.bad')}</span>
@@ -100,15 +137,12 @@
 
   <button type="button" class="linkish" onclick={() => (more = !more)}>{more ? t('projectform.less') : t('projectform.more')}</button>
   {#if more}
-    <label>{t('projectform.base')}
-      <input bind:value={base} autocapitalize="off" autocomplete="off" spellcheck="false" />
-    </label>
     <label class="quiet-toggle"><input type="checkbox" bind:checked={network} /> {t('projectform.network')}</label>
     <label class="quiet-toggle"><input type="checkbox" bind:checked={personal} /> {t('projectform.personal')}</label>
   {/if}
 
   {#if error}<p class="note error">{error}</p>{/if}
   <div class="chooser">
-    <button type="submit" class="choose primary" disabled={busy || !repo.trim() || !nameOk || isTaken || !githubOk || !chosen.length}>{busy ? t('spaceform.saving') : t('projectform.add')}</button>
+    <button type="submit" class="choose primary" disabled={busy || !repo.trim() || !base || !nameOk || isTaken || !githubOk || !chosen.length}>{busy ? t('spaceform.saving') : t('projectform.add')}</button>
   </div>
 </form>

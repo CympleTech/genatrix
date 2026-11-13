@@ -119,6 +119,10 @@ pub enum Effect {
         /// invariant 31).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<String>,
+        /// Steps the user gave to another executor than the recipe names,
+        /// by step id. Approved with the rest: the run follows it.
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        assign: std::collections::BTreeMap<String, String>,
     },
     /// Push a dispatch's commits to a branch of their own (design 13).
     /// Approval binds to the tip commit: later commits need a new approval.
@@ -905,10 +909,12 @@ mod tests {
             level: "public".into(),
             executors: vec![("claude-code".into(), "anthropic".into())],
             source: None,
+            assign: std::collections::BTreeMap::new(),
         };
         // A dispatch drafted before workspaces reads the same, with no source.
         let older = serde_json::to_string(&dispatch).unwrap();
         assert!(!older.contains("source"), "{older}");
+        assert!(!older.contains("assign"), "{older}");
         assert!(!dispatch.runs_in_a_connector());
         assert!(
             dispatch.editable(),

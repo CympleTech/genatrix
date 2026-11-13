@@ -312,13 +312,21 @@ pub fn seed(store: &genatrix_store::Store) -> anyhow::Result<()> {
         ("role", genatrix_dispatch::builtin::ROLE_FILES),
         ("recipe", genatrix_dispatch::builtin::RECIPE_FILES),
     ] {
-        let existing: Vec<String> = store
+        let existing: Vec<(String, String)> = store
             .active_definitions(kind)?
             .into_iter()
-            .map(|d| d.name)
+            .map(|d| (d.name, d.hash))
             .collect();
         for (name, text) in files {
-            if !existing.iter().any(|n| n == name) {
+            // Filed the first time; replaced later only when what is in use
+            // is an earlier built-in, never a file of the user's.
+            let fresh = match existing.iter().find(|(n, _)| n == name) {
+                None => true,
+                Some((_, hash)) => genatrix_dispatch::builtin::SUPERSEDED
+                    .iter()
+                    .any(|(k, n, h)| *k == kind && n == name && h == hash),
+            };
+            if fresh {
                 store.put_definition(kind, name, &genatrix_dispatch::hash_of(text), text, now)?;
             }
         }
@@ -495,10 +503,18 @@ pub fn check_repo(project: &Project) -> anyhow::Result<()> {
         .output()
         .is_ok_and(|o| o.status.success());
     if !has_base {
+        let there = branches(&repo).map(|b| b.all).unwrap_or_default();
+        if there.is_empty() {
+            anyhow::bail!(
+                "`{}` has no branch with a commit on it; work starts from one",
+                repo.display()
+            );
+        }
         anyhow::bail!(
-            "`{}` has no branch `{}` with a commit on it; work starts from that branch",
+            "`{}` has no local branch `{}`; work starts from a local branch. Its branches: {}",
             repo.display(),
-            project.base
+            project.base,
+            there.join(", ")
         );
     }
     Ok(())
@@ -527,11 +543,62 @@ pub fn recover(system: &System) -> anyhow::Result<usize> {
 /// The project's repository path, with `~` read as the user's home.
 #[must_use]
 pub fn repo_path(project: &Project) -> PathBuf {
-    match project.repo.strip_prefix("~/") {
-        Some(rest) => std::env::var_os("HOME").map_or_else(
-            || PathBuf::from(&project.repo),
-            |h| PathBuf::from(h).join(rest),
-        ),
-        None => PathBuf::from(&project.repo),
+    expand(&project.repo)
+}
+
+/// A path as written in a project, with `~` read as the user's home.
+#[must_use]
+pub fn expand(repo: &str) -> PathBuf {
+    match repo.strip_prefix("~/") {
+        Some(rest) => std::env::var_os("HOME")
+            .map_or_else(|| PathBuf::from(repo), |h| PathBuf::from(h).join(rest)),
+        None => PathBuf::from(repo),
     }
+}
+
+/// A repository's local branches, the one checked out, and the one a new
+/// project would start from: `main` or `master` when there is one, else the
+/// one checked out. Work starts from a local branch, so remote ones are not
+/// offered.
+#[derive(Debug, serde::Serialize)]
+pub struct Branches {
+    pub all: Vec<String>,
+    pub current: Option<String>,
+    pub suggested: Option<String>,
+}
+
+pub fn branches(repo: &std::path::Path) -> anyhow::Result<Branches> {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+    };
+    let listed = git(&["for-each-ref", "--format=%(refname:short)", "refs/heads"])?;
+    if !listed.status.success() {
+        anyhow::bail!("`{}` is not a git repository", repo.display());
+    }
+    let all: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let current = git(&["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .filter(|b| all.contains(b));
+    let suggested = ["main", "master"]
+        .into_iter()
+        .map(str::to_owned)
+        .find(|b| all.contains(b))
+        .or_else(|| current.clone())
+        .or_else(|| all.first().cloned());
+    Ok(Branches {
+        all,
+        current,
+        suggested,
+    })
 }

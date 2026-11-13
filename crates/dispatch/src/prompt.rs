@@ -102,7 +102,7 @@ pub fn compose(
              Genatrix commits what you leave in the workspace when this step ends, and \
              nothing leaves this machine until the user approves it.",
         ),
-        Produces::Verdict | Produces::Notes => out.push_str(
+        Produces::Verdict | Produces::Notes | Produces::Document => out.push_str(
             " Do not change any files in this step. Use `git diff` and `git log` against \
              the starting commit to see the work so far.",
         ),
@@ -143,6 +143,12 @@ pub fn compose(
             "Your whole final answer is the document this step produces. Write it as the \
              document itself, in Markdown.\n",
         ),
+        Produces::Document => out.push_str(
+            "Your final answer is the document this step produces. Write it as the \
+             document itself, in Markdown, beginning with a `# ` title line; Genatrix saves \
+             it as a file in the repository and the user reviews it in a pull request. Say \
+             what you looked at and what you assumed inside the document, not before it.\n",
+        ),
     }
     out.push_str(ASKING);
     out.push_str("\n## Material\n\n");
@@ -175,6 +181,7 @@ mod tests {
             executor: "claude-code".into(),
             produces,
             inputs: vec![],
+            file: None,
         }
     }
 

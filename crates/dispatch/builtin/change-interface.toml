@@ -1,0 +1,8 @@
+name = "change-interface"
+title = "Change an interface; its build waits for your approval as a new version"
+
+[[step]]
+id = "implement"
+role = "frontend"
+executor = "claude-code"
+produces = "commits"

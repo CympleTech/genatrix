@@ -72,6 +72,54 @@ impl Store {
         Ok(())
     }
 
+    /// Record that a person's conversation was deleted at `at`, RFC 3339.
+    pub fn set_person_cleared(&self, person: PersonId, at: &str) -> Result<()> {
+        self.conn().execute(
+            "UPDATE person SET cleared_at = ?2 WHERE id = ?1",
+            params![person.to_string(), at],
+        )?;
+        Ok(())
+    }
+
+    /// Record that a thread's messages were deleted at `at`, RFC 3339.
+    pub fn set_thread_cleared(&self, thread: ThreadId, at: &str) -> Result<()> {
+        self.conn().execute(
+            "UPDATE thread SET cleared_at = ?2 WHERE id = ?1",
+            params![thread.to_string(), at],
+        )?;
+        Ok(())
+    }
+
+    /// When the conversation with the person this handle belongs to was
+    /// last deleted, if ever.
+    pub fn cleared_handle(&self, kind: HandleKind, value: &str) -> Result<Option<String>> {
+        let Some(handle) = self.find_handle(kind, &Handle::normalize(kind, value))? else {
+            return Ok(None);
+        };
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT cleared_at FROM person WHERE id = ?1",
+                [handle.person_id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// When the thread at this source was last cleared, if ever.
+    pub fn cleared_thread(&self, source: &Source) -> Result<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT cleared_at FROM thread WHERE connector = ?1 AND account = ?2 AND external_id = ?3",
+                params![source.connector.as_str(), source.account, source.external_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
     /// Whether the person this handle belongs to is junk.
     pub fn is_junk_handle(&self, kind: HandleKind, value: &str) -> Result<bool> {
         let Some(handle) = self.find_handle(kind, &Handle::normalize(kind, value))? else {

@@ -112,7 +112,7 @@ pub async fn run(
     } else {
         Vec::new()
     };
-    let (client, mut incoming) = match Client::spawn(&argv, &env, isolated) {
+    let (client, mut incoming) = match Client::spawn(&argv, &env, &start.isolation) {
         Ok(c) => c,
         Err(e) => return failed("failed", format!("could not start the executor: {e}")),
     };
@@ -158,17 +158,14 @@ async fn converse(
 
     // Starting up and opening a session may also bring requests; none are
     // expected, and any that come are refused while we wait.
-    let init = match call(
-        client,
-        incoming,
-        start,
-        out,
-        &mut answer,
-        "initialize",
-        acp::initialize_params(),
-    )
-    .await
-    {
+    // Stopping is heard from the first moment, not only once the work has
+    // begun: a core that goes away while the executor starts up does not
+    // leave it starting (design 13 v0.10).
+    let init = tokio::select! {
+        r = call(client, incoming, start, out, &mut answer, "initialize", acp::initialize_params()) => r,
+        _ = &mut *cancel => return stopped_early(),
+    };
+    let init = match init {
         Ok(v) => v,
         Err(e) => return failed("failed", format!("the executor did not start ACP: {e}")),
     };
@@ -182,17 +179,19 @@ async fn converse(
             format!("the executor speaks ACP version {version}; this host speaks 1"),
         );
     }
-    let session = match call(
-        client,
-        incoming,
-        start,
-        out,
-        &mut answer,
-        "session/new",
-        json!({"cwd": start.scope.workspace, "mcpServers": []}),
-    )
-    .await
-    {
+    let session = tokio::select! {
+        r = call(
+            client,
+            incoming,
+            start,
+            out,
+            &mut answer,
+            "session/new",
+            json!({"cwd": start.scope.workspace, "mcpServers": []}),
+        ) => r,
+        _ = &mut *cancel => return stopped_early(),
+    };
+    let session = match session {
         Ok(v) => v,
         Err(e) if e.code == AUTH_REQUIRED => return not_signed_in(start),
         Err(e) => {
@@ -512,6 +511,15 @@ fn failed(stop: &str, error: String) -> End {
         stop: stop.to_owned(),
         answer: String::new(),
         error: Some(error),
+    }
+}
+
+/// Stopped before the work began.
+fn stopped_early() -> End {
+    End {
+        stop: "cancelled".into(),
+        answer: String::new(),
+        error: Some("stopped by the user".into()),
     }
 }
 

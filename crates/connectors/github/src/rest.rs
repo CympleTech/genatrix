@@ -1,4 +1,4 @@
-//! The two calls to GitHub's REST API this connector makes.
+//! The calls to GitHub's REST API this connector makes.
 
 use serde_json::{Value, json};
 
@@ -29,6 +29,37 @@ fn read(mut response: ureq::http::Response<ureq::Body>) -> (u16, Value) {
     let status = response.status().as_u16();
     let body: Value = response.body_mut().read_json().unwrap_or(Value::Null);
     (status, body)
+}
+
+/// One page of a list, read with the token. `what` names the permission
+/// the token needs for it, said when GitHub refuses.
+pub fn get_list(token: &str, path: &str, what: &str) -> Result<Vec<Value>, RestError> {
+    let response = agent()
+        .get(&format!("{API}{path}"))
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "genatrix")
+        .call()
+        .map_err(|e| RestError::Known(format!("could not reach GitHub: {e}")))?;
+    let (status, body) = read(response);
+    let reason = body
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("no reason");
+    match status {
+        200 => body
+            .as_array()
+            .cloned()
+            .ok_or_else(|| RestError::Known("GitHub did not answer with a list".into())),
+        401 => Err(RestError::Known(format!(
+            "GitHub does not accept the token ({reason}); sign in again"
+        ))),
+        403 | 404 => Err(RestError::Known(format!(
+            "GitHub said {status}: {reason}. The token may not reach this repository, or lacks \
+             read access to {what}"
+        ))),
+        _ => Err(RestError::Known(format!("GitHub said {status}: {reason}"))),
+    }
 }
 
 /// The login the token belongs to.

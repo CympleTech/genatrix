@@ -6,8 +6,9 @@
   "description": "The Genatrix interface: one daemon, any device with a browser (design 06).",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "build": "vite build && vite build --mode shell && node scripts/pack-source.mjs",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "node --test --experimental-strip-types --no-warnings test/*.test.ts"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.3",

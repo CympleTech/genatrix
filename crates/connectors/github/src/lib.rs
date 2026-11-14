@@ -1,7 +1,9 @@
-//! The GitHub connector: carries approved executor work out.
+//! The GitHub connector: carries approved executor work out, and reads a
+//! project's open issues and pull requests.
 //!
 //! Design: `docs/design/13-executors.md`, "第三层其实是老规矩：对外效果";
-//! `docs/design/05-connectors.md`, "动作执行".
+//! `docs/design/05-connectors.md`, "动作执行"; reading: design 13 v0.7,
+//! "读 issue 和 PR".
 //!
 //! Executors never hold the user's GitHub credentials. When the user
 //! approves a push, the core starts this program for that one action, in a
@@ -13,9 +15,11 @@
 //!
 //! One-shot rather than a long-running connector like mail: there is
 //! nothing to keep in sync yet, and a process that lives for one action
-//! holds the token for one action.
+//! holds the token for one action. Reading is one-shot too: the core asks
+//! when a space's page is opened, and keeps what comes back in memory.
 
 pub mod git;
+pub mod list;
 pub mod rest;
 
 use serde::{Deserialize, Serialize};
@@ -44,6 +48,13 @@ pub enum Request {
         /// The branch to push to.
         branch: String,
     },
+    /// Read a repository's open issues and pull requests; read only.
+    List {
+        /// The token.
+        token: String,
+        /// `owner/name`.
+        repo: String,
+    },
     /// Open a pull request.
     PullRequest {
         /// The token.
@@ -70,6 +81,11 @@ pub enum Reply {
         /// What to show.
         detail: String,
     },
+    /// What a repository has open, for [`Request::List`].
+    Listed {
+        /// The issues and pull requests.
+        listing: list::Listing,
+    },
     /// Refused before anything was sent.
     Refused {
         /// Why.
@@ -94,6 +110,12 @@ pub fn handle(request: Request) -> Reply {
     match request {
         Request::Whoami { token } => match rest::whoami(&token) {
             Ok(login) => Reply::Done { detail: login },
+            Err(e) => Reply::Failed {
+                detail: e.to_string(),
+            },
+        },
+        Request::List { token, repo } => match list::list(&token, &repo) {
+            Ok(listing) => Reply::Listed { listing },
             Err(e) => Reply::Failed {
                 detail: e.to_string(),
             },

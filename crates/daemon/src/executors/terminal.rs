@@ -711,17 +711,13 @@ fn known_workspace(system: &System, workspace: Option<&str>) -> anyhow::Result<(
 
 /// Carry out `genatrix github`.
 pub async fn github(system: Arc<System>, action: GithubAction) -> anyhow::Result<()> {
-    use super::github::{SERVICE, account_for};
-    let chain = crate::keychain::Keychain::named(SERVICE);
     match action {
         GithubAction::Login { workspace } => {
             known_workspace(&system, workspace.as_deref())?;
             println!("A fine-grained token with Contents and Pull requests (read and write) on");
             println!("the repositories your projects name is enough.");
             let token = rpassword::prompt_password("GitHub token: ")?;
-            let token = token.trim().to_owned();
-            let login = super::github::whoami(&system, &token).await?;
-            chain.store(&account_for(workspace.as_deref()), &token)?;
+            let login = super::github::sign_in(&system, workspace.as_deref(), &token).await?;
             match &workspace {
                 Some(w) => println!(
                     "Signed in as {login}, for workspace `{w}`. The token is in the keychain."
@@ -733,7 +729,7 @@ pub async fn github(system: Arc<System>, action: GithubAction) -> anyhow::Result
             }
         }
         GithubAction::Logout { workspace } => {
-            if chain.forget(&account_for(workspace.as_deref()))? {
+            if super::github::sign_out(&system, workspace.as_deref())? {
                 println!("The token is gone from the keychain.");
             } else {
                 println!("There was no token.");

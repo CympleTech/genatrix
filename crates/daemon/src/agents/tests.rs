@@ -456,6 +456,16 @@ async fn a_proposal_is_approved_and_applied_to_the_space() {
         outcome.result.unwrap().unwrap(),
         "I have seen 0 mails. I proposed keeping your note."
     );
+    // Design 11 v0.2: the view it published is kept, under its manifest's
+    // title, for the interface to read.
+    let view = system
+        .store
+        .agent_view(&agent.id, "seen")
+        .unwrap()
+        .expect("its view");
+    assert_eq!(view.title, "Mail seen");
+    let data: serde_json::Value = serde_json::from_str(&view.data).unwrap();
+    assert_eq!(data["figures"][0]["value"]["number"], 0.0);
     let id = outcome.proposals[0].clone();
     let action = system.actions.get(&system.store, &id).unwrap().unwrap();
     let genatrix_agent::Effect::Agent {
@@ -489,6 +499,15 @@ async fn a_proposal_is_approved_and_applied_to_the_space() {
     );
     // Nothing is carried out twice.
     assert_eq!(execute_approved(Arc::clone(&system)).await.unwrap(), 0);
+    // Uninstalled, its views go with it.
+    crate::agents::life::uninstall(&system, &agent.id).unwrap();
+    assert!(
+        system
+            .store
+            .agent_view(&agent.id, "seen")
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -1,32 +1,38 @@
 <script lang="ts">
-  import { post } from '../lib/api';
+  import { post, type WorkProject } from '../lib/api';
   import { t } from '../lib/i18n';
 
   // Design 06 v0.16, design 13 and 14: a project is added with a form, in
   // the space it belongs to. Which executors may see the code is a box per
   // executor; the commands they may run are one per line. The core writes
-  // the file and checks the repository is there.
-  let { space, executors, taken, onfiled }: {
-    space: string; executors: { name: string; vendor: string }[]; taken: string[]; onfiled: (name: string) => void;
+  // the file and checks the repository is there. Changing a project
+  // (v0.19) is the same form, filled in, with the name fixed: the change is
+  // a new version of the same project, and work already drafted keeps the
+  // version it was drafted with.
+  let { space, executors, taken, existing = null, onfiled }: {
+    space: string; executors: { name: string; vendor: string }[]; taken: string[];
+    existing?: WorkProject | null; onfiled: (name: string) => void;
   } = $props();
 
-  let name = $state('');
-  let repo = $state('');
-  let github = $state('');
-  let base = $state('');
-  let chosen = $state<string[]>([]);
-  let commands = $state('');
-  let network = $state(false);
-  let personal = $state(false);
-  let more = $state(false);
+  // svelte-ignore state_referenced_locally
+  const was = existing;
+  let name = $state(was?.name ?? '');
+  let repo = $state(was?.repo ?? '');
+  let github = $state(was?.github ?? '');
+  let base = $state(was?.base ?? '');
+  let chosen = $state<string[]>(was ? [...was.executors] : []);
+  let commands = $state(was?.commands.join('\n') ?? '');
+  let network = $state(was?.network ?? false);
+  let personal = $state(was?.delegate_personal ?? false);
+  let more = $state(!!was && (was.network || was.delegate_personal));
   let busy = $state(false);
   let error = $state('');
 
   // Every executor is ticked to start with; untick the ones that may not see it.
-  $effect(() => { chosen = executors.map((e) => e.name); });
+  $effect(() => { if (!was) chosen = executors.map((e) => e.name); });
 
   // The name follows the repository's folder until typed in by hand.
-  let nameTouched = $state(false);
+  let nameTouched = $state(!!was);
   const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
   $effect(() => {
     if (nameTouched) return;
@@ -36,7 +42,7 @@
   });
   const nameOk = $derived(/^[a-z0-9][a-z0-9-]{0,47}$/.test(name));
   const githubOk = $derived(!github.trim() || /^[\w.-]+\/[\w.-]+$/.test(github.trim()));
-  const isTaken = $derived(taken.includes(name));
+  const isTaken = $derived(!was && taken.includes(name));
 
   // The base branch is picked from the repository's own local branches:
   // work starts from a local branch, and many repositories have no `main`.
@@ -66,6 +72,8 @@
     timer = setTimeout(lookUp, 600);
   }
   $effect(() => () => { if (timer) clearTimeout(timer); });
+  // A project being changed has its branches looked up at once.
+  if (was) lookUp();
 
   function toggle(n: string, on: boolean) {
     chosen = on ? [...chosen.filter((x) => x !== n), n] : chosen.filter((x) => x !== n);
@@ -82,10 +90,10 @@
           github: github.trim() || null, base,
           executors: chosen,
           commands: commands.split('\n').map((c) => c.trim()).filter(Boolean),
-          network, delegate_personal: personal, bundle_cap_mb: 20,
+          network, delegate_personal: personal, bundle_cap_mb: was?.bundle_cap_mb ?? 20,
         },
       });
-      name = ''; repo = ''; github = ''; base = ''; branches = null; asked = ''; commands = ''; network = false; personal = false; nameTouched = false;
+      if (!was) { name = ''; repo = ''; github = ''; base = ''; branches = null; asked = ''; commands = ''; network = false; personal = false; nameTouched = false; }
       onfiled(r.name);
     } catch (err: any) { error = err.message; }
     busy = false;
@@ -110,8 +118,8 @@
     <span class="field-note">{githubOk ? t('projectform.github.note') : t('projectform.github.bad')}</span>
   </label>
   <label>{t('projectform.name')}
-    <input bind:value={name} oninput={() => (nameTouched = true)} maxlength="48" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="my-app" />
-    <span class="field-note">{isTaken ? t('projectform.name.taken') : t('spaceform.name.note')}</span>
+    <input bind:value={name} oninput={() => (nameTouched = true)} readonly={!!was} maxlength="48" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="my-app" />
+    <span class="field-note">{was ? t('projectform.name.fixed') : isTaken ? t('projectform.name.taken') : t('spaceform.name.note')}</span>
   </label>
 
   <div class="field">
@@ -143,6 +151,6 @@
 
   {#if error}<p class="note error">{error}</p>{/if}
   <div class="chooser">
-    <button type="submit" class="choose primary" disabled={busy || !repo.trim() || !base || !nameOk || isTaken || !githubOk || !chosen.length}>{busy ? t('spaceform.saving') : t('projectform.add')}</button>
+    <button type="submit" class="choose primary" disabled={busy || !repo.trim() || !base || !nameOk || isTaken || !githubOk || !chosen.length}>{busy ? t('spaceform.saving') : was ? t('projectform.save') : t('projectform.add')}</button>
   </div>
 </form>

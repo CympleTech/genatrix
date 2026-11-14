@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { get, post, type Action, type TaskDetail, type WorkProject, type WorkRecipe } from '../lib/api';
+  import { get, post, type Action, type IssueSource, type TaskDetail, type WorkProject, type WorkRecipe } from '../lib/api';
   import { t } from '../lib/i18n';
   import { go } from '../lib/router';
   import ActionCard from './ActionCard.svelte';
@@ -9,10 +9,12 @@
   // offered are this space's only. Drafting makes a pending action like
   // any other: the card below the form is the one the approvals page shows.
   // Work from a task carries the task along, and the core checks its
-  // account is in this space, when drafted and again when it starts.
-  let { projects, recipes, executors = [], fromTask = null, here }: {
+  // account is in this space, when drafted and again when it starts. Work
+  // from a GitHub issue (design 13 v0.7) is the same: the issue goes as
+  // written, and the core checks its repository is this space's.
+  let { projects, recipes, executors = [], fromTask = null, fromIssue = null, here }: {
     projects: WorkProject[]; recipes: WorkRecipe[]; executors?: { name: string; vendor: string }[];
-    fromTask?: string | null; here: string;
+    fromTask?: string | null; fromIssue?: IssueSource | null; here: string;
   } = $props();
 
   let project = $state('');
@@ -26,7 +28,19 @@
   let source = $state<TaskDetail | null>(null);
   // From a task, the task itself goes as written and you only add to it.
   let extra = $state('');
-  const fromSource = $derived(source ? [source.name, source.description, source.url ?? ''].filter((x) => x.trim()).join('\n\n') : '');
+  // What the work comes from, quoted: a task, or an issue.
+  const quote = $derived(fromIssue
+    ? { name: `#${fromIssue.number} ${fromIssue.title}`, description: fromIssue.body, url: fromIssue.url, open: t('work.issue.open') }
+    : source ? { name: source.name, description: source.description, url: source.url ?? '', open: t('work.task.open') } : null);
+  const from = $derived(!!fromTask || !!fromIssue);
+  const sourceId = $derived(fromIssue?.source ?? fromTask);
+  const fromSource = $derived(quote ? [quote.name, quote.description, quote.url].filter((x) => x.trim()).join('\n\n') : '');
+  // An issue starts on its own project.
+  $effect(() => {
+    const p = fromIssue?.project;
+    extra = '';
+    if (p && untrack(() => projects.some((x) => x.name === p))) project = p;
+  });
 
   $effect(() => {
     if (!projects.some((p) => p.name === project)) project = projects[0]?.name ?? '';
@@ -65,17 +79,17 @@
   const stepWord = (id: string) => { const k = `work.step.${id}`; const w = t(k); return w === k ? id : w; };
 
   // What goes to the executor: the task, then what you added, under a heading.
-  const text = $derived(fromTask
+  const text = $derived(from
     ? [fromSource, extra.trim() ? `${t('work.extra.heading')}\n${extra.trim()}` : ''].filter(Boolean).join('\n\n')
     : task);
 
   async function draft() {
     drafting = true; error = ''; notice = ''; drafted = null;
     try {
-      drafted = await post<Action>('/api/work/draft', { project, recipe, task: text, public: isPublic, source: fromTask, assign });
+      drafted = await post<Action>('/api/work/draft', { project, recipe, task: text, public: isPublic, source: sourceId, assign });
       notice = t('work.drafted');
       task = ''; extra = '';
-      if (fromTask) go(here, true);
+      if (from) go(here, true);
     } catch (e: any) { error = e.message; }
     drafting = false;
   }
@@ -93,9 +107,9 @@
   }
 </script>
 
-{#if fromTask}
+{#if from}
   <p class="note">
-    {#if source}{t('work.fromtask', { title: source.name })}{:else}{t('loading')}{/if}
+    {#if quote}{t('work.fromtask', { title: quote.name })}{:else}{t('loading')}{/if}
     · <button type="button" class="linkish" onclick={() => go(here, true)}>{t('work.fromtask.clear')}</button>
   </p>
 {/if}
@@ -138,14 +152,14 @@
         <p class="field-note">{t('work.step.note')}{chosenRecipe.rounds ? ` ${t('work.step.rounds', { n: chosenRecipe.rounds })}` : ''}</p>
       {/if}
     </div>
-    {#if fromTask}
+    {#if from}
       <div class="field">
-        <span class="field-label">{t('work.task.from')}</span>
-        {#if source}
+        <span class="field-label">{fromIssue ? t('work.issue.from') : t('work.task.from')}</span>
+        {#if quote}
           <div class="task-quote">
-            <p class="task-quote-title">{source.name}</p>
-            {#if source.description.trim()}<p class="task-quote-body">{source.description}</p>{/if}
-            {#if source.url}<a href={source.url} target="_blank" rel="noopener noreferrer">{t('work.task.open')}</a>{/if}
+            <p class="task-quote-title">{quote.name}</p>
+            {#if quote.description.trim()}<p class="task-quote-body">{quote.description}</p>{/if}
+            {#if quote.url}<a href={quote.url} target="_blank" rel="noopener noreferrer">{quote.open}</a>{/if}
           </div>
         {:else}<p class="field-note">{t('loading')}</p>{/if}
       </div>
@@ -159,8 +173,8 @@
     {/if}
     <label class="quiet-toggle"><input type="checkbox" bind:checked={isPublic} /> {t('work.public')}</label>
     <div class="chooser">
-      <button type="button" class="choose primary" disabled={drafting || !text.trim() || !project || (!!fromTask && !source)} onclick={draft}>{drafting ? t('work.drafting') : t('work.draft')}</button>
-      {#if !fromTask}<button type="button" class="choose" disabled={suggesting || !task.trim()} onclick={suggest}>{suggesting ? t('work.suggesting') : t('work.suggest')}</button>{/if}
+      <button type="button" class="choose primary" disabled={drafting || !text.trim() || !project || (from && !quote)} onclick={draft}>{drafting ? t('work.drafting') : t('work.draft')}</button>
+      {#if !from}<button type="button" class="choose" disabled={suggesting || !task.trim()} onclick={suggest}>{suggesting ? t('work.suggesting') : t('work.suggest')}</button>{/if}
     </div>
     <!-- What pressing a button did shows here, beside the button. -->
     <div aria-live="polite">

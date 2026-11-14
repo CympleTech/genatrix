@@ -8,8 +8,9 @@
 //! network's address, where paired devices reach it: see [`access`] and
 //! [`devices`].
 //!
-//! The page is built from `web/` with Svelte and Vite into `dist/`, and the
-//! four files there are compiled into the binary. The build output is
+//! The page is built from `web/` with Svelte and Vite into `dist/`: the
+//! shell (`dist/shell/`) and the built-in interface (`dist/ui/`), both
+//! compiled into the binary (design 15; see [`ui`]). The build output is
 //! committed with the source, so a Rust toolchain alone builds the core; see
 //! `web/README.md` for the front-end side.
 
@@ -18,11 +19,14 @@ mod admin;
 mod agents;
 mod api;
 mod devices;
+mod github;
 mod junk;
 pub mod local;
 mod quiet;
 mod setup;
 mod spaces;
+mod ui;
+mod v1;
 mod work;
 
 use std::future::IntoFuture as _;
@@ -30,24 +34,19 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use axum::Router;
-use axum::http::header;
-use axum::response::IntoResponse;
 use axum::routing::get;
 
 pub use admin::AdminGate;
 pub use devices::Pairing;
 pub use local::Local;
 
-use crate::system::System;
+/// The interface API's contract (design 15), for an interface's source.
+#[must_use]
+pub fn interface_schema() -> &'static str {
+    v1::SCHEMA
+}
 
-const INDEX_HTML: &str = include_str!("dist/index.html");
-const APP_JS: &str = include_str!("dist/app.js");
-const APP_CSS: &str = include_str!("dist/app.css");
-const MANIFEST: &str = include_str!("dist/manifest.webmanifest");
-const ICON_SVG: &str = include_str!("dist/favicon.svg");
-const ICON_32: &[u8] = include_bytes!("dist/favicon-32.png");
-const ICON_180: &[u8] = include_bytes!("dist/icon-180.png");
-const ICON_512: &[u8] = include_bytes!("dist/icon-512.png");
+use crate::system::System;
 
 /// Where to listen.
 #[derive(Clone, Debug)]
@@ -61,13 +60,7 @@ pub struct Serving {
 /// Serve the interface until the process is stopped.
 pub async fn serve(system: Arc<System>, serving: &Serving) -> anyhow::Result<()> {
     let app = Router::new()
-        .route("/app.js", get(script))
-        .route("/app.css", get(style))
-        .route("/manifest.webmanifest", get(manifest))
-        .route("/favicon.svg", get(icon))
-        .route("/favicon.ico", get(icon_32))
-        .route("/icon-180.png", get(icon_180))
-        .route("/icon-512.png", get(icon_512))
+        .merge(ui::routes())
         .merge(api::routes())
         .merge(devices::routes())
         .merge(admin::routes())
@@ -78,9 +71,12 @@ pub async fn serve(system: Arc<System>, serving: &Serving) -> anyhow::Result<()>
         .merge(local::routes())
         .merge(work::routes())
         .merge(spaces::routes())
-        // Every other path is the page: the app routes on the client side,
-        // so a link to /approvals or /pair?code=... opens on the right screen.
-        .fallback(get(index))
+        .merge(github::routes())
+        .merge(v1::routes())
+        // Every other path is the shell: the interface routes on the client
+        // side, so a link to /approvals or /pair?code=... opens on the right
+        // screen.
+        .fallback(get(ui::shell))
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&system),
             access::guard,
@@ -200,65 +196,6 @@ fn address_of(interface: &str) -> Option<String> {
         .ok()?;
     let address = String::from_utf8(output.stdout).ok()?.trim().to_owned();
     (!address.is_empty()).then_some(address)
-}
-
-async fn index() -> impl IntoResponse {
-    (
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-cache"),
-        ],
-        INDEX_HTML,
-    )
-}
-
-async fn script() -> impl IntoResponse {
-    (
-        [
-            (
-                header::CONTENT_TYPE,
-                "application/javascript; charset=utf-8",
-            ),
-            (header::CACHE_CONTROL, "no-cache"),
-        ],
-        APP_JS,
-    )
-}
-
-async fn style() -> impl IntoResponse {
-    (
-        [
-            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-cache"),
-        ],
-        APP_CSS,
-    )
-}
-
-async fn manifest() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "application/manifest+json")],
-        MANIFEST,
-    )
-}
-
-async fn icon() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "image/svg+xml")], ICON_SVG)
-}
-
-/// For browsers that ask for `/favicon.ico` on their own. A PNG under that
-/// name is read the same.
-async fn icon_32() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "image/png")], ICON_32)
-}
-
-/// For a phone's home screen, which wants a picture, not a drawing.
-async fn icon_180() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "image/png")], ICON_180)
-}
-
-async fn icon_512() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "image/png")], ICON_512)
 }
 
 #[cfg(test)]

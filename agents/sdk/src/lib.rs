@@ -32,7 +32,7 @@ mod bindings {
 }
 
 pub use bindings::Guest;
-pub use bindings::genatrix::agent::{actions, blobs, host, items, model, space, types};
+pub use bindings::genatrix::agent::{actions, blobs, host, items, model, space, types, views};
 #[doc(hidden)]
 pub use bindings::*;
 

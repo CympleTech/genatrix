@@ -27,7 +27,9 @@ pub enum Ingested {
     /// It was already here, byte for byte.
     AlreadyHad,
     /// It is from, or only to, something the user marked as junk, and is
-    /// dropped before it is stored (design 01, "垃圾").
+    /// dropped before it is stored (design 01, "垃圾"); or it is from a
+    /// conversation the user deleted, dated before they deleted it, and is
+    /// not brought back (design 01 v0.7, "删除对话").
     Ignored,
 }
 
@@ -55,6 +57,77 @@ fn junk_mail(store: &Store, mail: &genatrix_connector_imap::Mail) -> anyhow::Res
         to_others = true;
     }
     Ok(to_others)
+}
+
+/// Whether a message dated `date` was there when its conversation was
+/// deleted at `cleared`. A date that cannot be read is not held against it.
+fn before_cleared(cleared: Option<String>, date: Option<chrono::DateTime<Utc>>) -> bool {
+    let (Some(cleared), Some(date)) = (cleared, date) else {
+        return false;
+    };
+    chrono::DateTime::parse_from_rfc3339(&cleared).is_ok_and(|c| date <= c)
+}
+
+/// Whether a mail belongs to a conversation the user deleted after it was
+/// sent: from someone whose conversation was deleted, or from the user to
+/// them alone. The same mails deleting removed (design 01 v0.7).
+fn cleared_mail(store: &Store, mail: &genatrix_connector_imap::Mail) -> anyhow::Result<bool> {
+    let date = mail.date.map(|d| d.with_timezone(&Utc));
+    if date.is_none() {
+        return Ok(false);
+    }
+    let me = store.self_person()?.map(|p| p.id);
+    let is_me = |address: &str| -> anyhow::Result<bool> {
+        Ok(me.is_some()
+            && store
+                .find_handle(HandleKind::Email, address)?
+                .is_some_and(|h| Some(h.person_id) == me))
+    };
+    let Some(from) = &mail.from else {
+        return Ok(false);
+    };
+    if !is_me(&from.address)? {
+        return Ok(before_cleared(
+            store.cleared_handle(HandleKind::Email, &from.address)?,
+            date,
+        ));
+    }
+    let mut others = Vec::new();
+    for mailbox in mail.to.iter().chain(&mail.cc) {
+        if !is_me(&mailbox.address)? {
+            others.push(mailbox.address.clone());
+        }
+    }
+    match others.as_slice() {
+        [one] => Ok(before_cleared(
+            store.cleared_handle(HandleKind::Email, one)?,
+            date,
+        )),
+        _ => Ok(false),
+    }
+}
+
+/// Whether a chat message was in a conversation the user deleted after it
+/// was sent: the group or channel, or the direct chat with that person.
+fn cleared_chat(
+    store: &Store,
+    account: &str,
+    message: &genatrix_connector::protocol::ChatMessage,
+) -> anyhow::Result<bool> {
+    let date = chrono::DateTime::parse_from_rfc3339(&message.date)
+        .ok()
+        .map(|d| d.with_timezone(&Utc));
+    let thread = Source::new(Connector::Telegram, account, message.thread_key.clone());
+    if before_cleared(store.cleared_thread(&thread)?, date) {
+        return Ok(true);
+    }
+    match message.thread_key.strip_prefix("chat:") {
+        Some(id) if !id.starts_with('-') => Ok(before_cleared(
+            store.cleared_handle(HandleKind::TelegramId, id)?,
+            date,
+        )),
+        _ => Ok(false),
+    }
 }
 
 /// Whether a chat message is in a junk group or channel, or in a direct
@@ -103,7 +176,7 @@ pub fn mail(
     {
         return Ok(Ingested::AlreadyHad);
     }
-    if junk_mail(store, &incoming.mail)? {
+    if junk_mail(store, &incoming.mail)? || cleared_mail(store, &incoming.mail)? {
         return Ok(Ingested::Ignored);
     }
     let raw = Raw::describe(source.clone(), "message/rfc822", &incoming.raw);
@@ -136,7 +209,7 @@ pub fn chat(
 ) -> anyhow::Result<Ingested> {
     use genatrix_model::PersonId;
 
-    if junk_chat(store, account, message)? {
+    if junk_chat(store, account, message)? || cleared_chat(store, account, message)? {
         return Ok(Ingested::Ignored);
     }
     let source = Source::new(Connector::Telegram, account, message.external_id.clone());
@@ -877,6 +950,116 @@ Friday?\r\n";
             Ingested::Added(_)
         ));
         assert_eq!(system.store.all_items().unwrap().len(), 1);
+
+        // Taken off the list for good (design 01 v0.7): off the list, not
+        // kept out, and what was there does not come back when fetched again.
+        crate::junk::forget(&system, "thread", &group.to_string()).unwrap();
+        assert!(system.store.junk().unwrap().is_empty());
+        assert_eq!(
+            store(&msg(5, "chat:-100", "group", (22, "Bob"))),
+            Ingested::Ignored,
+            "dropped while marked, fetched again: not brought back"
+        );
+        let later = (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+        let mut new = msg(7, "chat:-100", "group", (22, "Bob"));
+        new.date = later;
+        assert!(matches!(store(&new), Ingested::Added(_)));
+    }
+
+    /// Design 01 v0.7, "删除对话": deleting removes what is there, like
+    /// junk, but marks nothing: what is sent later is kept, and what was
+    /// there and is fetched again is not brought back.
+    #[test]
+    fn a_deleted_conversation_stays_deleted_and_new_messages_come_in() {
+        use genatrix_connector::protocol::{ChatMessage, ChatSender};
+        use genatrix_model::HandleKind;
+        let (_dir, system) = crate::system::test_system();
+        let later = (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+        let msg = |n: u32, thread: &str, kind: &str, date: &str| ChatMessage {
+            external_id: format!("{thread}/msg:{n}"),
+            thread_key: thread.to_owned(),
+            thread_kind: kind.to_owned(),
+            thread_title: "Friends".to_owned(),
+            sender: Some(ChatSender {
+                id: 11,
+                username: None,
+                name: "Ann".to_owned(),
+            }),
+            outgoing: false,
+            date: date.to_owned(),
+            text: format!("message {n}"),
+            raw: format!("raw-{thread}-{n}").into_bytes(),
+            ..ChatMessage::default()
+        };
+        let store = |m: &ChatMessage| chat(&system.store, &system.raw_files, "+100", m).unwrap();
+        let old = "2026-09-21T10:00:00+00:00";
+        store(&msg(1, "chat:11", "direct", old));
+        store(&msg(2, "chat:-100", "group", old));
+
+        let person = system
+            .store
+            .find_handle(HandleKind::TelegramId, "11")
+            .unwrap()
+            .unwrap()
+            .person_id;
+        assert_eq!(
+            crate::junk::delete_person(&system, person).unwrap().items,
+            1
+        );
+        assert_eq!(
+            system.store.all_items().unwrap().len(),
+            1,
+            "the group's stays"
+        );
+        // Fetched again, as a history backfill would: not brought back.
+        assert_eq!(store(&msg(1, "chat:11", "direct", old)), Ingested::Ignored);
+        // Sent after: kept.
+        assert!(matches!(
+            store(&msg(3, "chat:11", "direct", &later)),
+            Ingested::Added(_)
+        ));
+
+        let group = system
+            .store
+            .all_items()
+            .unwrap()
+            .into_iter()
+            .find(|i| i.text == "message 2")
+            .unwrap()
+            .thread_id;
+        assert_eq!(crate::junk::delete_thread(&system, group).unwrap().items, 1);
+        assert_eq!(store(&msg(2, "chat:-100", "group", old)), Ingested::Ignored);
+        assert!(matches!(
+            store(&msg(4, "chat:-100", "group", &later)),
+            Ingested::Added(_)
+        ));
+        assert!(system.store.junk().unwrap().is_empty(), "nothing is marked");
+        assert_eq!(system.store.all_items().unwrap().len(), 2);
+    }
+
+    /// Design 01 v0.7 for mail: a mail sent before Ann's conversation was
+    /// deleted is not brought back; one sent after it is kept.
+    #[test]
+    fn mail_from_before_a_deletion_is_not_brought_back() {
+        use genatrix_model::HandleKind;
+        let (_dir, store, raw_files, blob_files) = stores();
+        let ann = store
+            .person_for_handle(HandleKind::Email, "ann@example.com", "Ann")
+            .unwrap();
+        store
+            .set_person_cleared(ann, "2999-01-01T00:00:00Z")
+            .unwrap();
+        assert_eq!(
+            mail(&store, &raw_files, &blob_files, &incoming("Friday?")).unwrap(),
+            Ingested::Ignored
+        );
+        store
+            .set_person_cleared(ann, "2000-01-01T00:00:00Z")
+            .unwrap();
+        assert!(matches!(
+            mail(&store, &raw_files, &blob_files, &incoming("Friday?")).unwrap(),
+            Ingested::Added(_)
+        ));
     }
 
     #[test]

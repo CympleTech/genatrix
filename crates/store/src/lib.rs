@@ -40,6 +40,7 @@ mod space;
 mod store;
 mod thread;
 mod time;
+mod ui;
 mod vector;
 
 pub use action::{ActionColumns, StoredAction};
@@ -60,6 +61,7 @@ pub use purge::Purged;
 pub use relationship::{PersonOverview, Relationship, RelationshipStats};
 pub use space::{Space, SpaceValue};
 pub use store::Store;
+pub use ui::{AgentView, Ui, UiVersion};
 pub use vector::EMBEDDING_DIMS;
 
 /// Current schema version. Bump with every new migration file.

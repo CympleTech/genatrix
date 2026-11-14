@@ -6,7 +6,9 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 
 use genatrix_host::manifest::Purpose;
-use genatrix_host::wit::{BlobRef, Card, Filter, Item, Level as WitLevel, Message, Value};
+use genatrix_host::wit::{
+    BlobRef, Card, Cell, Filter, Item, Level as WitLevel, Message, Value, View,
+};
 use genatrix_host::{Doors, Invocation, Package, Run, RunError, Runner};
 use genatrix_model::Level;
 
@@ -43,6 +45,7 @@ struct Seen {
     model_levels: Vec<Level>,
     proposals: Vec<(String, Level)>,
     statements: Vec<String>,
+    views: Vec<(String, View, Level)>,
 }
 
 struct Fake {
@@ -107,6 +110,14 @@ impl Doors for Fake {
         let mut seen = self.seen.lock().unwrap();
         seen.proposals.push((kind.to_owned(), level));
         Ok(format!("action-{}", seen.proposals.len()))
+    }
+    fn publish_view(&mut self, name: &str, view: View, level: Level) -> Result<(), String> {
+        self.seen
+            .lock()
+            .unwrap()
+            .views
+            .push((name.to_owned(), view, level));
+        Ok(())
     }
 }
 
@@ -335,6 +346,15 @@ fn hello_notes_mail_and_proposes() {
     assert!(o.result.is_ok(), "{:?}", o.result);
     assert_eq!(o.log, vec!["seen subject m1", "seen subject m2"]);
     assert_eq!(o.taint, Level::Personal);
+    // Design 11 v0.2: it published its view, at the level of what it read.
+    {
+        let seen = seen.lock().unwrap();
+        let (name, view, level) = seen.views.last().expect("a view");
+        assert_eq!(name, "seen");
+        assert_eq!(view.title, "Mail seen");
+        assert!(matches!(view.figures[0].value, Cell::Number(n) if (n - 2.0).abs() < f64::EPSILON));
+        assert_eq!(*level, Level::Personal);
+    }
 
     // The same doors again, as the daemon would hand them over.
     let doors = Box::new(Fake {

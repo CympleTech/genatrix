@@ -56,6 +56,10 @@ async fn run(
         // Nothing of the core's environment: the host needs none of it.
         .env_clear()
         .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        // A group of its own: a terminal's Ctrl-C for the core does not
+        // cut it off before it has ended what it started. It sees the core
+        // go when the pipe closes (design 13 v0.10).
+        .process_group(0)
         .kill_on_drop(true)
         .spawn()?;
     let mut stdin = child

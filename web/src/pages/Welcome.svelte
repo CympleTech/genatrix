@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { setItem } from '../lib/storage';
   import { get } from '../lib/api';
   import { t } from '../lib/i18n';
   import { go } from '../lib/router';
@@ -35,11 +36,11 @@
   const index = $derived(steps.indexOf(step));
 
   function skip() {
-    try { localStorage.setItem('genatrix.welcome.skipped', '1'); } catch {}
+    setItem('genatrix.welcome.skipped', '1');
     go('/', true);
   }
   function finish() {
-    try { localStorage.setItem('genatrix.welcome.skipped', '1'); } catch {}
+    setItem('genatrix.welcome.skipped', '1');
     go('/', true);
   }
 </script>

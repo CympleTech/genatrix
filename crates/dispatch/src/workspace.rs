@@ -17,6 +17,14 @@ use crate::{DefinitionError, check_name};
 /// comes built in, with no accounts.
 pub const PERSONAL: &str = "personal";
 
+/// The workspace of the interfaces' own projects (design 15). It comes
+/// built in, with no accounts: nothing from the user's accounts can be put
+/// to an interface's executors (invariant 31, invariant 38).
+pub const GENATRIX: &str = "genatrix";
+
+/// The prefix of an interface's project name: `ui-<interface>`.
+pub const UI_PROJECT: &str = "ui-";
+
 /// The kinds of account a workspace may name, as Settings names them.
 pub const ACCOUNT_KINDS: &[&str] = &["mail", "telegram", "lark"];
 

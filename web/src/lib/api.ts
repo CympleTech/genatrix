@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import { lang } from './i18n';
+import { framed, request } from './bridge';
 
 // The core's JSON interface. Every call goes to the same origin; a paired
 // device carries its cookie, loopback needs nothing.
@@ -38,9 +39,24 @@ function askPassphrase(why: string): Promise<string | null> {
 }
 const PASSPHRASE_HEADER = 'x-genatrix-passphrase';
 
+// Inside the shell's frame (design 15), every request goes through the
+// shell; it asks for the passphrase, or for your word, itself.
+async function viaShell<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const a = await request(method, path, body);
+  if (!a.ok) {
+    const message = (a.body && a.body.error) || `HTTP ${a.status}`;
+    throw new ApiError(a.status, message, a.body);
+  }
+  return a.body as T;
+}
+
 // A request that may be high-privilege: sent as it is, and again with the
 // passphrase while the core asks for one and you give one.
 export async function send<T = any>(path: string, init: RequestInit): Promise<T> {
+  if (framed) {
+    const body = typeof init.body === 'string' && init.body ? JSON.parse(init.body) : undefined;
+    return viaShell<T>(init.method ?? 'GET', path, body);
+  }
   const headers = new Headers(init.headers);
   for (let i = 0; ; i++) {
     try {
@@ -59,6 +75,7 @@ export async function send<T = any>(path: string, init: RequestInit): Promise<T>
 export const langHeader = { 'accept-language': lang };
 
 export async function get<T = any>(path: string): Promise<T> {
+  if (framed) return viaShell<T>('GET', path);
   return read(await fetch(path, { credentials: 'same-origin', headers: langHeader }));
 }
 
@@ -107,8 +124,8 @@ export interface Action {
   level: string | null;
 }
 export interface WorkProject {
-  name: string; workspace: string; github: string | null; base: string; executors: string[];
-  commands: string[]; network: boolean; delegate_personal: boolean;
+  name: string; workspace: string; repo: string; github: string | null; base: string; executors: string[];
+  commands: string[]; network: boolean; delegate_personal: boolean; bundle_cap_mb: number;
 }
 export interface WorkRecipe {
   name: string; title: string; rounds: number | null;
@@ -232,3 +249,15 @@ export interface GroupDetail {
   id: string; name: string; kind: 'group' | 'channel'; voices: number; messages: number; mine: number;
   first_at: string | null; last_at: string | null; speakers: Speaker[];
 }
+
+// Design 13 v0.7: a space's projects' GitHub issues and pull requests, read
+// only, kept in the core's memory.
+export interface GhIssue { number: number; title: string; body: string; url: string; author: string; labels: string[]; assignees: string[]; comments: number; created: string; updated: string }
+export interface GhPull { number: number; title: string; url: string; author: string; state: 'open' | 'closed' | 'merged'; draft: boolean; head: string; from_fork: boolean; base: string; updated: string; dispatch: string | null }
+export interface GhRepo { project: string; repo: string; source_prefix: string; issues: GhIssue[]; pulls: GhPull[]; more_issues: boolean; more_pulls: boolean; read_ms: number | null; error: string | null }
+// An issue that work is drafted from.
+export interface IssueSource { source: string; project: string; number: number; title: string; body: string; url: string }
+
+// Design 06 v0.21: who each GitHub token belongs to. `null` is no token.
+export interface GhAccount { login: string | null; error?: string }
+export interface GithubOverview { default: GhAccount | null; spaces: Record<string, GhAccount | null>; manage: boolean }

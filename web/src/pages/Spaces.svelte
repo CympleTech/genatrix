@@ -1,9 +1,10 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { get, post, type Dispatch, type Party, type WorkOverview, type WorkProject } from '../lib/api';
+  import { get, post, type Dispatch, type GhRepo, type GithubOverview, type IssueSource, type Party, type WorkOverview, type WorkProject } from '../lib/api';
   import { t } from '../lib/i18n';
   import { go, route } from '../lib/router';
   import Empty from '../components/Empty.svelte';
+  import GithubToken from '../components/GithubToken.svelte';
   import WorkForm from '../components/WorkForm.svelte';
   import SpaceForm from '../components/SpaceForm.svelte';
   import ProjectForm from '../components/ProjectForm.svelte';
@@ -29,7 +30,8 @@
   let error = $state('');
   let notice = $state('');
   // Which form is open: adding a space, adding a project, changing this space.
-  let open = $state<'' | 'space' | 'project' | 'edit'>('');
+  // `project:<name>` is changing that project.
+  let open = $state<string>('');
 
   async function load() {
     error = '';
@@ -55,9 +57,65 @@
   // and asks again, so the counts are fresh.
   $effect(() => {
     name; tab;
-    untrack(() => { if (home?.name !== name) home = null; open = ''; });
+    untrack(() => { if (home?.name !== name) { home = null; gh = null; } open = ''; });
     load();
+    loadGithub();
+    loadAccounts();
   });
+
+  // Design 06 v0.21: which GitHub account the default and each space use.
+  let ghAccounts = $state<GithubOverview | null>(null);
+  async function loadAccounts() {
+    if (name && tab !== 'setup') return;
+    try { ghAccounts = await get<GithubOverview>('/api/github'); } catch (e: any) { error = e.message; }
+  }
+  async function ghSaved(login: string) {
+    open = ''; notice = t('github.saved', { login }); gh = null;
+    await Promise.all([loadAccounts(), load(), loadGithub()]);
+  }
+  async function ghForget(workspace: string | null) {
+    error = '';
+    try {
+      await post('/api/github/forget', { workspace });
+      notice = t(workspace ? 'github.forgot.space' : 'github.forgot.default'); gh = null;
+      await Promise.all([loadAccounts(), load(), loadGithub()]);
+    } catch (e: any) { error = e.message; }
+  }
+  const acct = (a: { login: string | null; error?: string } | null | undefined) =>
+    !a ? null : a.login ? '@' + a.login : t('github.unknown', { why: a.error ?? '' });
+
+  // Design 13 v0.7: the projects' GitHub issues and pull requests, asked
+  // for apart from the rest, since GitHub may be slow or say no.
+  let gh = $state<GhRepo[] | null>(null);
+  let ghError = $state('');
+  async function loadGithub() {
+    if (!name) return;
+    const which = name;
+    try {
+      const r = await get<{ repos: GhRepo[] }>(`/api/spaces/${which}/github`);
+      if (name !== which) return;
+      gh = r.repos; ghError = '';
+    } catch (e: any) { if (name === which) ghError = e.message; }
+  }
+  const openPulls = (r: GhRepo) => r.pulls.filter((p) => p.state === 'open');
+  const ghIssues = $derived(gh?.reduce((n, r) => n + r.issues.length, 0) ?? 0);
+  const ghPulls = $derived(gh?.reduce((n, r) => n + openPulls(r).length, 0) ?? 0);
+  // The pull request a dispatch opened, if GitHub lists it.
+  const pullOf = (id: string) => gh?.flatMap((r) => r.pulls).find((p) => p.dispatch === id) ?? null;
+  // Work from an issue: `?issue=github:owner/name#12`.
+  const fromIssue = $derived.by((): IssueSource | null => {
+    const want = $route.query.get('issue');
+    if (!want || !gh) return null;
+    for (const r of gh) {
+      if (!want.startsWith(r.source_prefix)) continue;
+      const i = r.issues.find((x) => r.source_prefix + x.number === want);
+      if (i) return { source: want, project: r.project, number: i.number, title: i.title, body: i.body, url: i.url };
+    }
+    return null;
+  });
+  function dispatchIssue(r: GhRepo, number: number) {
+    if (home) go(`/spaces/${home.name}/new?issue=${encodeURIComponent(r.source_prefix + number)}`);
+  }
 
   const fromTask = $derived($route.query.get('task'));
   // Stop work from the list, without opening it first. It winds down in a
@@ -79,9 +137,10 @@
     if (home) go(`/spaces/${home.name}/new?task=${id}`);
   }
 
-  async function filed(what: 'space' | 'project' | 'edit', saved: string) {
+  async function filed(what: 'space' | 'project' | 'edit' | 'edit-project', saved: string, warning?: string) {
     open = ''; error = '';
-    notice = t(what === 'project' ? 'projectform.added' : what === 'space' ? 'spaceform.added' : 'work.filed', { name: saved });
+    notice = t(what === 'project' ? 'projectform.added' : what === 'edit-project' ? 'projectform.saved' : what === 'space' ? 'spaceform.added' : 'work.filed', { name: saved });
+    if (warning) error = warning;
     if (what === 'space') { go('/spaces/' + saved); return; }
     await load();
   }
@@ -102,6 +161,8 @@
     if (h.approvals) out.push({ key: 'approvals', text: t('spaces.needs.approvals', { n: h.approvals }), bad: false, go: () => go('/approvals') });
     for (const a of h.accounts.filter((a) => live(a.state) === 'bad'))
       out.push({ key: 'a' + a.key, text: t('spaces.needs.account', { id: a.id, text: a.text }), bad: true, go: () => goTab('setup') });
+    for (const r of gh ?? []) if (r.error)
+      out.push({ key: 'gh' + r.repo, text: t('spaces.gh.error', { repo: r.repo, why: r.error }), bad: true, go: () => goTab('todo') });
     if (!h.projects.length) out.push({ key: 'noproject', text: t('spaces.needs.noproject'), bad: true, go: () => goTab('setup') });
     else if (h.github === 'none' && h.projects.some((p) => p.github)) out.push({ key: 'github', text: t('spaces.needs.github'), bad: true, go: () => goTab('setup') });
     return out;
@@ -142,12 +203,29 @@
         {#if open === 'space'}
           <h2 class="group-title">{t('spaces.add')}</h2>
           <p class="note">{t('work.add_space.note')}</p>
-          <SpaceForm spaces={work.workspaces} onfiled={(n) => filed('space', n)} />
+          <SpaceForm spaces={work.workspaces} onfiled={(n, w) => filed('space', n, w)} />
           <div class="chooser"><button type="button" class="choose lowers" onclick={() => (open = '')}>{t('accounts.cancel')}</button></div>
         {:else}
           <div class="chooser"><button type="button" class="choose primary" onclick={() => { open = 'space'; notice = ''; }}>+ {t('spaces.add')}</button></div>
         {/if}
       {/if}
+
+      <h2 class="group-title">GitHub</h2>
+      <div class="gh-account">
+        <p class="note">{t('github.default.lede')}</p>
+        <p><span class="field-label">{t('github.default')}</span>
+          {#if !ghAccounts}{t('loading')}{:else}{acct(ghAccounts.default) ?? t('github.none')}{/if}</p>
+        {#if ghAccounts?.manage}
+          {#if open === 'gh:'}
+            <GithubToken onsaved={ghSaved} oncancel={() => (open = '')} />
+          {:else}
+            <div class="chooser">
+              <button type="button" class="choose" class:primary={!ghAccounts.default} onclick={() => { open = 'gh:'; notice = ''; }}>{ghAccounts.default ? t('github.replace') : t('github.add')}</button>
+              {#if ghAccounts.default}<button type="button" class="choose lowers" onclick={() => ghForget(null)}>{t('github.remove')}</button>{/if}
+            </div>
+          {/if}
+        {/if}
+      </div>
     {/if}
 
   {:else}
@@ -185,6 +263,13 @@
           </ul>
         {/if}
 
+        {#if gh?.length}
+          <p class="note gh-line">GitHub ·
+            <button type="button" class="linkish" onclick={() => goTab('todo')}>{t('spaces.gh.issues.n', { n: ghIssues })}</button> ·
+            <button type="button" class="linkish" onclick={() => goTab('work')}>{t('spaces.gh.pulls.n', { n: ghPulls })}</button>
+          </p>
+        {/if}
+
         {#if home.active.length}
           <h3 class="group-title">{t('spaces.active')}</h3>
           <ol class="rows">{#each home.active as d (d.id)}{@render activeRow(d)}{/each}</ol>
@@ -207,16 +292,20 @@
         {/if}
 
       {:else if tab === 'todo'}
-        {#if !home.accounts.length}<p class="note">{t('work.spaces.noaccounts')}</p>
+        {#if !home.accounts.length}{#if !home.projects.some((p) => p.github)}<p class="note">{t('work.spaces.noaccounts')}</p>{/if}
         {:else if !home.todo.length}<p class="note">{t('spaces.todo.none')}</p>
         {:else}
           {#if !home.projects.length}<p class="note">{t('spaces.needs.noproject')}</p>{/if}
           <ol class="rows">{#each home.todo as p (p.id)}{@render todoRow(p)}{/each}</ol>
         {/if}
+        {@render githubBlock('issues')}
 
       {:else if tab === 'new'}
         {#if work}
-          <WorkForm projects={home.projects} recipes={work.recipes} executors={work.executors} {fromTask} here={'/spaces/' + home.name + '/new'} />
+          {#if $route.query.get('issue') && !fromIssue}<p class="note">{gh ? t('spaces.gh.issue.gone') : t('loading')}</p>
+          {:else}
+            <WorkForm projects={home.projects} recipes={work.recipes} executors={work.executors} fromTask={fromIssue ? null : fromTask} {fromIssue} here={'/spaces/' + home.name + '/new'} />
+          {/if}
         {/if}
 
       {:else if tab === 'work'}
@@ -226,6 +315,7 @@
         <h3 class="group-title">{t('spaces.record')}</h3>
         {#if !home.record.length}<p class="note">{t('work.empty')}</p>
         {:else}<ol class="rows">{#each home.record as d (d.id)}{@render doneRow(d)}{/each}</ol>{/if}
+        {@render githubBlock('pulls')}
 
       {:else if tab === 'setup'}
         <div class="space-made">
@@ -244,12 +334,39 @@
           {:else}
             <ul class="rows">
               {#each home.projects as p (p.name)}
-                <li class="row"><span class="who">{p.name}</span> <span class="faint">{p.github ?? '—'} · {p.executors.join(', ')}</span></li>
+                <li class="row project-row">
+                  <div class="project-line">
+                    <span><span class="who">{p.name}</span> <span class="faint">{p.github ?? '—'} · {p.base} · {p.executors.join(', ')}</span></span>
+                    {#if home.manage && work && open !== 'project:' + p.name}<button type="button" class="choose" onclick={() => { open = 'project:' + p.name; notice = ''; }}>{t('projectform.edit')}</button>{/if}
+                  </div>
+                  {#if p.commands.length}<p class="faint">{t('projectform.commands')}: {p.commands.join(' · ')}</p>{/if}
+                  {#if open === 'project:' + p.name && work}
+                    <ProjectForm space={home.name} executors={work.executors} taken={[]} existing={p} onfiled={(n) => filed('edit-project', n)} />
+                    <div class="chooser"><button type="button" class="choose lowers" onclick={() => (open = '')}>{t('accounts.cancel')}</button></div>
+                  {/if}
+                </li>
               {/each}
             </ul>
           {/if}
           <p class="field-label">GitHub</p>
-          <p class="note">{t('spaces.github.' + home.github)}</p>
+          {#if ghAccounts}
+            {@const own = ghAccounts.spaces[home.name]}
+            <p class="note">
+              {#if own}{t('github.space.own', { who: acct(own) ?? '' })}
+              {:else if ghAccounts.default}{t('github.space.default', { who: acct(ghAccounts.default) ?? '' })}
+              {:else}{t('github.space.none')}{/if}
+            </p>
+            {#if ghAccounts.manage}
+              {#if open === 'gh:' + home.name}
+                <GithubToken workspace={home.name} onsaved={ghSaved} oncancel={() => (open = '')} />
+              {:else}
+                <div class="chooser">
+                  <button type="button" class="choose" onclick={() => { open = 'gh:' + home!.name; notice = ''; }}>{own ? t('github.replace') : t('github.space.give')}</button>
+                  {#if own}<button type="button" class="choose lowers" onclick={() => ghForget(home!.name)}>{t('github.space.back')}</button>{/if}
+                </div>
+              {/if}
+            {/if}
+          {:else}<p class="note">{t('spaces.github.' + home.github)}</p>{/if}
         </div>
 
         {#if home.manage && work}
@@ -301,5 +418,48 @@
     <button type="button" class="linkish" onclick={() => go('/work/' + d.id)}><span class="who">{d.project} · {d.recipe}</span></button>
     <span class="faint"> · <span class="state {d.state}">{stateWord(d.state)}</span> · {when(d.started_ms)}</span>
     <p class="faint">{d.sent ? t('spaces.sent', { n: d.sent, to: d.to.join(', ') }) : t('spaces.sent.none')}</p>
+    {#if pullOf(d.id)}{@const pr = pullOf(d.id)!}
+      <p class="faint"><a href={pr.url} target="_blank" rel="noopener noreferrer">PR #{pr.number}</a> · <span class="pr-state {pr.state}">{t('spaces.gh.pr.' + pr.state)}</span></p>
+    {/if}
   </li>
+{/snippet}
+
+{#snippet githubBlock(what: 'issues' | 'pulls')}
+  {#if ghError}<p class="note error">GitHub: {ghError}</p>{/if}
+  {#each gh ?? [] as r (r.repo)}
+    {@const list = what === 'issues' ? r.issues : openPulls(r)}
+    <h3 class="group-title">{r.project} · {what === 'issues' ? t('spaces.gh.issues') : t('spaces.gh.pulls')}{#if list.length} <span class="faint">({list.length})</span>{/if}</h3>
+    <p class="field-note"><a href={'https://github.com/' + r.repo + (what === 'issues' ? '/issues' : '/pulls')} target="_blank" rel="noopener noreferrer">{r.repo}</a>{#if r.read_ms} · {t('spaces.gh.read', { when: new Date(r.read_ms).toLocaleTimeString() })}{/if}</p>
+    {#if r.error}<p class="note error">{r.error}</p>{/if}
+    {#if !list.length}{#if !r.error}<p class="note">{what === 'issues' ? t('spaces.gh.issues.none') : t('spaces.gh.pulls.none')}</p>{/if}
+    {:else if what === 'issues'}
+      <ol class="rows">
+        {#each r.issues as i (i.number)}
+          <li class="row todo-row">
+            <button type="button" class="choose todo-go" onclick={() => dispatchIssue(r, i.number)}>{t('task.dispatch')}</button>
+            <a class="who" href={i.url} target="_blank" rel="noopener noreferrer">#{i.number} {i.title}</a>
+            <span class="faint">
+              {#each i.labels as l (l)} <span class="badge-soft">{l}</span>{/each}
+              · {i.author}{#if i.assignees.length} → {i.assignees.join(', ')}{/if}{#if i.comments} · {t('spaces.gh.comments', { n: i.comments })}{/if}
+            </span>
+          </li>
+        {/each}
+      </ol>
+      {#if r.more_issues}<p class="field-note">{t('spaces.gh.more', { n: r.issues.length })}</p>{/if}
+    {:else}
+      <ol class="rows">
+        {#each openPulls(r) as p (p.number)}
+          <li class="row">
+            <a class="who" href={p.url} target="_blank" rel="noopener noreferrer">#{p.number} {p.title}</a>
+            <span class="faint">
+              {#if p.draft} <span class="badge-soft">{t('spaces.gh.draft')}</span>{/if}
+              · {p.author} · {p.head} → {p.base}
+            </span>
+            {#if p.dispatch}<p class="faint"><button type="button" class="linkish" onclick={() => go('/work/' + p.dispatch)}>{t('spaces.gh.from_work')} →</button></p>{/if}
+          </li>
+        {/each}
+      </ol>
+      {#if r.more_pulls}<p class="field-note">{t('spaces.gh.more', { n: list.length })}</p>{/if}
+    {/if}
+  {/each}
 {/snippet}

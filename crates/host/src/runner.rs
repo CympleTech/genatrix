@@ -96,6 +96,64 @@ pub trait Doors: Send {
         payload: String,
         level: Level,
     ) -> Result<String, String>;
+    /// A view, kept as the latest under its name, at the run's level
+    /// (design 11 v0.2). The host has checked its name and its size.
+    fn publish_view(&mut self, name: &str, view: wit::View, level: Level) -> Result<(), String> {
+        let _ = (name, view, level);
+        Err("views are not kept here".into())
+    }
+}
+
+/// How big a view may be (design 11 v0.2).
+pub mod view_limits {
+    /// Columns in its table.
+    pub const COLUMNS: usize = 20;
+    /// Rows in its table.
+    pub const ROWS: usize = 2000;
+    /// Figures, and points in its series.
+    pub const ITEMS: usize = 2000;
+    /// Characters in any one piece of text.
+    pub const TEXT: usize = 2000;
+}
+
+/// Whether a view is within the limits: what is wrong, if anything.
+pub fn check_view(view: &wit::View) -> Result<(), String> {
+    use view_limits::{COLUMNS, ITEMS, ROWS, TEXT};
+    let long = |s: &str| s.chars().count() > TEXT;
+    let cell_long = |c: &wit::Cell| match c {
+        wit::Cell::Text(t) | wit::Cell::Date(t) => long(t),
+        wit::Cell::Money(m) => long(&m.currency),
+        wit::Cell::Number(n) => !n.is_finite(),
+    };
+    if long(&view.title) || long(&view.note) {
+        return Err("a view's title and note are at most 2000 characters".into());
+    }
+    if view.columns.len() > COLUMNS || view.rows.len() > ROWS {
+        return Err(format!(
+            "a view's table is at most {COLUMNS} columns and {ROWS} rows"
+        ));
+    }
+    if view.figures.len() > ITEMS || view.series.len() > ITEMS {
+        return Err(format!(
+            "a view has at most {ITEMS} figures and {ITEMS} points"
+        ));
+    }
+    if view.columns.iter().any(|c| long(&c.key) || long(&c.label)) {
+        return Err("a column's key and label are at most 2000 characters".into());
+    }
+    if view.rows.iter().any(|r| r.len() != view.columns.len()) {
+        return Err("every row of a view's table has one cell per column".into());
+    }
+    if view.rows.iter().flatten().any(cell_long)
+        || view
+            .figures
+            .iter()
+            .any(|f| long(&f.label) || cell_long(&f.value))
+        || view.series.iter().any(|p| long(&p.x) || !p.y.is_finite())
+    {
+        return Err("a view's text is at most 2000 characters, and its numbers are finite".into());
+    }
+    Ok(())
 }
 
 /// Why the agent is being run.
@@ -623,6 +681,20 @@ impl doors::actions::Host for RunState {
     }
 }
 
+impl doors::views::Host for RunState {
+    fn publish(&mut self, name: String, view: wit::View) -> Result<(), String> {
+        if self.applying {
+            return Err("not while applying".into());
+        }
+        if self.manifest.view(&name).is_none() {
+            return Err(format!("view `{name}` is not declared in the manifest"));
+        }
+        check_view(&view)?;
+        let level = self.taint;
+        self.doors.publish_view(&name, view, level)
+    }
+}
+
 impl doors::host::Host for RunState {
     fn now_ms(&mut self) -> i64 {
         self.now_ms
@@ -713,5 +785,48 @@ impl Doors for NoDoors {
         _l: Level,
     ) -> Result<String, String> {
         Err("no doors".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view() -> wit::View {
+        wit::View {
+            title: "T".into(),
+            note: String::new(),
+            figures: Vec::new(),
+            columns: vec![wit::Column {
+                key: "a".into(),
+                label: "A".into(),
+            }],
+            rows: vec![vec![wit::Cell::Number(1.0)]],
+            series: Vec::new(),
+        }
+    }
+
+    /// Design 11 v0.2: a view is data of a fixed shape and a bounded size.
+    #[test]
+    fn a_view_is_bounded_and_square() {
+        assert!(check_view(&view()).is_ok());
+        let mut v = view();
+        v.rows.push(Vec::new());
+        assert!(check_view(&v).is_err(), "a row short of a cell");
+        let mut v = view();
+        v.rows = vec![vec![wit::Cell::Number(f64::NAN)]];
+        assert!(check_view(&v).is_err(), "not a number");
+        let mut v = view();
+        v.title = "x".repeat(view_limits::TEXT + 1);
+        assert!(check_view(&v).is_err(), "too long");
+        let mut v = view();
+        v.columns = (0..=view_limits::COLUMNS)
+            .map(|i| wit::Column {
+                key: i.to_string(),
+                label: String::new(),
+            })
+            .collect();
+        v.rows.clear();
+        assert!(check_view(&v).is_err(), "too wide");
     }
 }

@@ -43,6 +43,9 @@ pub struct Manifest {
     /// What it may propose.
     #[serde(default)]
     pub proposes: Vec<Proposal>,
+    /// The views it may publish (design 11 v0.2).
+    #[serde(default)]
+    pub views: Vec<ViewDecl>,
     /// When it runs.
     #[serde(default)]
     pub triggers: Vec<Trigger>,
@@ -105,6 +108,16 @@ pub enum Purpose {
     Draft,
     /// Into another language.
     Translate,
+}
+
+/// A view the agent may publish.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ViewDecl {
+    /// Its name: lowercase letters, digits and dashes.
+    pub name: String,
+    /// What it is called.
+    pub title: String,
 }
 
 /// One kind of effect the agent may propose.
@@ -219,6 +232,12 @@ impl Manifest {
         Ok(manifest)
     }
 
+    /// The view of this name, if declared.
+    #[must_use]
+    pub fn view(&self, name: &str) -> Option<&ViewDecl> {
+        self.views.iter().find(|v| v.name == name)
+    }
+
     /// The proposal of this kind, if declared.
     #[must_use]
     pub fn proposal(&self, kind: &str) -> Option<&Proposal> {
@@ -229,6 +248,35 @@ impl Manifest {
     #[must_use]
     pub fn may_call(&self, purpose: Purpose) -> bool {
         self.model.contains(&purpose)
+    }
+
+    /// The views it declares: plain names, titles, none twice.
+    fn check_views(&self) -> Result<(), HostError> {
+        let bad = |why: String| Err(HostError::Manifest(why));
+        let mut views = std::collections::BTreeSet::new();
+        for v in &self.views {
+            let plain = !v.name.is_empty()
+                && v.name.len() <= 40
+                && v.name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+            if !plain {
+                return bad(format!(
+                    "view `{}` must be lowercase letters, digits, `-`",
+                    v.name
+                ));
+            }
+            if v.title.trim().is_empty() || v.title.chars().count() > 80 {
+                return bad(format!(
+                    "view `{}` needs a title of at most 80 characters",
+                    v.name
+                ));
+            }
+            if !views.insert(v.name.as_str()) {
+                return bad(format!("view `{}` declared twice", v.name));
+            }
+        }
+        Ok(())
     }
 
     fn check(&self) -> Result<(), HostError> {
@@ -256,6 +304,7 @@ impl Manifest {
             return bad("attachment text without anything to read".into());
         }
         let mut kinds = std::collections::HashSet::new();
+        self.check_views()?;
         for p in &self.proposes {
             if p.kind.is_empty()
                 || !p

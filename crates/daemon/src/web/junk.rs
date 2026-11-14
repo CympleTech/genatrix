@@ -1,6 +1,7 @@
 //! Marking a party as junk from the page (design 06, "标为垃圾"). A paired
 //! phone may do it too: it removes what the user does not want and opens
-//! nothing to anyone.
+//! nothing to anyone. Deleting a conversation without the mark is the same
+//! (design 01 v0.7).
 
 use std::sync::Arc;
 
@@ -50,6 +51,20 @@ async fn group_mark(State(system): State<Arc<System>>, Path(id): Path<String>) -
     })())
 }
 
+async fn person_delete(State(system): State<Arc<System>>, Path(id): Path<String>) -> Response {
+    answer((|| {
+        let done = crate::junk::delete_person(&system, id.parse()?)?;
+        Ok(serde_json::json!({ "removed": done.items }))
+    })())
+}
+
+async fn group_delete(State(system): State<Arc<System>>, Path(id): Path<String>) -> Response {
+    answer((|| {
+        let done = crate::junk::delete_thread(&system, id.parse()?)?;
+        Ok(serde_json::json!({ "removed": done.items }))
+    })())
+}
+
 async fn list(State(system): State<Arc<System>>) -> Response {
     answer((|| {
         let rows: Vec<serde_json::Value> = system
@@ -69,12 +84,22 @@ async fn restore(
     answer(crate::junk::restore(&system, &kind, &id).map(|()| serde_json::json!({ "ok": true })))
 }
 
+async fn forget(
+    State(system): State<Arc<System>>,
+    Path((kind, id)): Path<(String, String)>,
+) -> Response {
+    answer(crate::junk::forget(&system, &kind, &id).map(|()| serde_json::json!({ "ok": true })))
+}
+
 /// The routes.
 pub fn routes() -> axum::Router<Arc<System>> {
     use axum::routing::{get, post};
     axum::Router::new()
         .route("/api/person/{id}/junk", get(person_count).post(person_mark))
         .route("/api/group/{id}/junk", get(group_count).post(group_mark))
+        .route("/api/person/{id}/delete", post(person_delete))
+        .route("/api/group/{id}/delete", post(group_delete))
         .route("/api/junk", get(list))
         .route("/api/junk/{kind}/{id}/restore", post(restore))
+        .route("/api/junk/{kind}/{id}/forget", post(forget))
 }

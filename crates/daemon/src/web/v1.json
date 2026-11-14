@@ -1,0 +1,116 @@
+{
+  "name": "Genatrix interface API",
+  "version": 1,
+  "design": "docs/design/15-custom-interface.md, 数据接口",
+  "rules": [
+    "An interface runs in the shell's sandboxed frame and reaches the core only through the shell: post {t: 'call', id, method, path, body} to the parent window and wait for {t: 'result', id, ok, status, body}.",
+    "Everything here is read with GET and changes nothing. What a device reads here it could read before.",
+    "Lists answer {rows, next}. When next is not null, pass it back as the parameter the endpoint names (before or after) for the next page.",
+    "Fields and endpoints are added, never changed or removed. Ignore fields you do not know.",
+    "Times are RFC 3339. Ids are opaque strings.",
+    "Writing is through the endpoints the built-in interface uses; the shell decides about each (web/src/lib/gate.ts): reading and drafting pass, lasting changes are confirmed in the shell, approvals happen only in the shell."
+  ],
+  "shell": {
+    "messages_to_shell": {
+      "call": "{t:'call', id, method, path, body}: a request to the core, answered with {t:'result', id, ok, status, body}",
+      "review": "{t:'review', id, action}: open an action for the user's decision in the shell; answered with the action as it stands after",
+      "nav": "{t:'nav', path, replace}: the interface moved to path; the shell puts it in the address bar",
+      "open": "{t:'open', url, download}: open a link elsewhere, or download from the core; the shell shows where first",
+      "panel": "{t:'panel', panel}: open the shell's own panel: security, interface or pair",
+      "store": "{t:'store', key, value}: keep a small string for this device (value null forgets it); handed back in the frame address as ?s=<base64 JSON>",
+      "reload": "{t:'reload'}: load the interface again"
+    },
+    "messages_from_shell": {
+      "result": "the answer to a call or review",
+      "route": "{t:'route', path}: the user went back or forward; show path"
+    },
+    "start": "The frame's address is /ui/<hash>/index.html?s=<kept strings>#<path>; start on <path>."
+  },
+  "endpoints": [
+    {
+      "path": "/api/meta",
+      "returns": "{core: string, api: [number], interface_api: number, schema: string, capabilities: {model: bool, search_by_meaning: bool, github: bool, views: [agent id]}}"
+    },
+    {
+      "path": "/api/v1/schema",
+      "returns": "this document"
+    },
+    {
+      "path": "/api/v1/items",
+      "params": {
+        "since": "RFC 3339: at or after",
+        "before": "RFC 3339: before; the next page",
+        "thread": "a thread id",
+        "person": "a person id: by or to them",
+        "connector": "imap, telegram or lark",
+        "direction": "inbound, outbound, internal or neutral",
+        "level": "at most this sensitive: public, personal or secret",
+        "q": "words in the text",
+        "quiet": "true to include newsletters and promotions",
+        "limit": "1 to 500, default 50"
+      },
+      "returns": "{rows: [Item], next}, newest first",
+      "shapes": {
+        "Item": "{id, at, connector, account, direction: inbound|outbound|internal|neutral, author: Who|null, recipients: [Who], thread: {id, title, kind}, subject: string|null, text, level, category, attachments: number, tombstoned: bool}",
+        "Who": "{id, name, me: bool}"
+      }
+    },
+    {
+      "path": "/api/v1/items/{id}",
+      "returns": "Item"
+    },
+    {
+      "path": "/api/v1/threads",
+      "params": { "kind": "mail_thread, direct_chat, group_chat, channel, task, calendar, notebook or folder", "limit": "1 to 500" },
+      "returns": "{rows: [{id, kind, title, connector, account, first_at, last_at, junk: bool}], next: null}, latest first"
+    },
+    {
+      "path": "/api/v1/people",
+      "params": { "limit": "1 to 500, default 500" },
+      "returns": "{rows: [{id, name, me: bool, handles: [{kind, value}]}], next: null}"
+    },
+    {
+      "path": "/api/v1/tasks",
+      "params": { "space": "a space's name" },
+      "returns": "{rows: [{kind: 'task', id, name, status: 'todo'|'done', due, from, from_me, lists, space, last_at, last_ms, last_text, messages}], next: null}"
+    },
+    {
+      "path": "/api/v1/commitments",
+      "params": { "limit": "1 to 500" },
+      "returns": "{rows: [{id, what, from, to, due, status, standing, evidence: [item id], created_at}], next: null}: open ones"
+    },
+    {
+      "path": "/api/v1/work",
+      "params": { "project": "a project's name", "state": "running, waiting, answered, finished, stopped or failed", "limit": "1 to 500" },
+      "returns": "{rows: [{id, project, recipe, state, level, branch, base, tip, review_passed, detail, started_ms, ended_ms}], next: null}, newest first"
+    },
+    {
+      "path": "/api/v1/actions",
+      "params": { "status": "pending, approved, executed, declined, failed, expired or unknown", "limit": "1 to 500" },
+      "returns": "{rows: [Action], next: null}: as /api/actions, without the nonce; deciding is the shell's (message review)"
+    },
+    {
+      "path": "/api/v1/projects",
+      "params": { "space": "a space's name" },
+      "returns": "{rows: [{name, workspace, repo, github, base, executors, commands, network, delegate_personal, bundle_cap_mb}], next: null}"
+    },
+    {
+      "path": "/api/v1/spaces",
+      "returns": "{rows: [{name, title, accounts: [kind:id]}], next: null}"
+    },
+    {
+      "path": "/api/v1/records",
+      "params": { "kind": "a record kind, such as egress, action or junk", "after": "a sequence number; the next page", "limit": "1 to 500" },
+      "returns": "{rows: [{seq, at, kind, subject, body}], next}, oldest first: the ledger"
+    },
+    {
+      "path": "/api/v1/views",
+      "returns": "{rows: [{agent, name, title, at}], next: null}: what agents have published (design 11 v0.2)"
+    },
+    {
+      "path": "/api/v1/views/{agent}/{name}",
+      "returns": "{agent, name, title, at, view: {title, note, figures: [{label, value: Cell}], columns: [{key, label}], rows: [[Cell]], series: [{x, y}]}}",
+      "shapes": { "Cell": "{text: string} | {number: number} | {money: {cents, currency}} | {date: 'YYYY-MM-DD'}" }
+    }
+  ]
+}

@@ -4,6 +4,7 @@
   import { t } from '../lib/i18n';
   import SourceChip from './SourceChip.svelte';
   import { refreshPending } from '../lib/status';
+  import { framed, review } from '../lib/bridge';
 
   let { action, ondone, onsettled }: {
     action: Action;
@@ -66,6 +67,22 @@
   // svelte-ignore state_referenced_locally
   if (action.status === 'approved') follow();
 
+  // Design 15: inside the shell's frame the card is only shown. Deciding is
+  // the shell's: it fetches this action itself and draws its own card, so
+  // what you approve is what the core holds, whatever this page drew.
+  async function decide() {
+    busy = true; error = '';
+    try {
+      const a = await review(action.id);
+      if (a) {
+        current = a; draft = a.draft; refreshPending();
+        if (a.status !== 'pending') ondone?.();
+        if (a.status === 'approved') follow();
+      }
+    } catch (e: any) { error = e.message; }
+    busy = false;
+  }
+
   async function decline() {
     if (!askingReason) { askingReason = true; return; }
     busy = true; error = '';
@@ -81,7 +98,7 @@
       current = done; settled = t('action.withdrawn'); ondone?.();
     } catch (e: any) { error = e.message; busy = false; }
   }
-  const editable = $derived(current.status === 'pending' && !settled);
+  const editable = $derived(current.status === 'pending' && !settled && !framed);
   // A dispatch's task is personal unless the user says otherwise; saying so
   // is a new version, so an earlier approval does not carry over (design 13).
   async function setPublic(e: Event) {
@@ -149,6 +166,11 @@
   {/if}
   {#if settled}
     <p class="note">{settled}</p>
+  {:else if current.status === 'pending' && framed}
+    <div class="chooser">
+      <button type="button" class="choose primary" disabled={busy} onclick={decide}>{t('action.review')}</button>
+      {#if error}<span class="error">{error}</span>{/if}
+    </div>
   {:else if current.status === 'pending'}
     <div class="chooser">
       <button type="button" class="choose primary" disabled={busy} onclick={approve}>{current.card ? t('action.approve_agent') : t('action.approve')}</button>
@@ -164,7 +186,7 @@
     <div class="chooser">
       <span class="note sending">{current.card ? t('action.approved_agent') : t('action.approved')}</span>
       {#if current.can_withdraw}
-        <button type="button" class="choose lowers" disabled={busy} onclick={withdraw}>{t('action.withdraw')}</button>
+        <button type="button" class="choose lowers" disabled={busy} onclick={framed ? decide : withdraw}>{t('action.withdraw')}</button>
       {/if}
       {#if error}<span class="error">{error}</span>{/if}
     </div>

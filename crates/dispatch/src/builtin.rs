@@ -31,6 +31,10 @@ pub const RECIPE_FILES: &[(&str, &str)] = &[
     ("implement", include_str!("../builtin/implement.toml")),
     ("review-only", include_str!("../builtin/review-only.toml")),
     ("change-plan", include_str!("../builtin/change-plan.toml")),
+    (
+        "change-interface",
+        include_str!("../builtin/change-interface.toml"),
+    ),
 ];
 
 /// Earlier built-in files, by kind, name and hash, that a newer built-in
@@ -45,11 +49,19 @@ pub const SUPERSEDED: &[(&str, &str, &str)] = &[(
 )];
 
 /// The built-in workspace files, by name (design 14): `personal`, with no
-/// accounts, where a project goes unless it says otherwise.
-pub const WORKSPACE_FILES: &[(&str, &str)] = &[(
-    crate::workspace::PERSONAL,
-    "name = \"personal\"\ntitle = \"Personal\"\n",
-)];
+/// accounts, where a project goes unless it says otherwise; and `genatrix`,
+/// with no accounts either, where each interface's source is a project
+/// (design 15, "让 AI 改界面").
+pub const WORKSPACE_FILES: &[(&str, &str)] = &[
+    (
+        crate::workspace::PERSONAL,
+        "name = \"personal\"\ntitle = \"Personal\"\n",
+    ),
+    (
+        crate::workspace::GENATRIX,
+        "name = \"genatrix\"\ntitle = \"Genatrix\"\n",
+    ),
+];
 
 /// The built-in roles.
 ///

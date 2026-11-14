@@ -875,6 +875,65 @@ fn work_from_a_task_goes_only_to_its_own_workspace() {
     assert_eq!(source.as_deref(), Some(thread.as_str()));
 }
 
+/// Invariant 31 for GitHub issues (design 14 v0.3): work from an issue goes
+/// only to a project in the workspace of a project whose repository the
+/// issue is in.
+#[test]
+fn work_from_an_issue_goes_only_to_its_repositorys_workspace() {
+    let f = fixture(false);
+    let from = |source: String| super::draft::Request {
+        source: Some(source),
+        ..request("implement", "Login 500s", true)
+    };
+    // Demo's own repository.
+    super::draft::draft(
+        &f.system,
+        &from(format!("{}12", super::issue_prefix("o/r"))),
+    )
+    .unwrap();
+    // A repository no project has.
+    let Err(super::draft::DraftError::Refused(why)) =
+        super::draft::draft(&f.system, &from(format!("{}1", super::issue_prefix("x/y"))))
+    else {
+        panic!("an issue from nowhere of ours")
+    };
+    assert!(why.contains("x/y#1"), "{why}");
+    for bad in ["github:o/r", "github:o/r#x", "github:../r#1"] {
+        assert!(
+            super::draft::draft(&f.system, &from(bad.to_owned())).is_err(),
+            "{bad}"
+        );
+    }
+
+    // Another project in the same workspace: its issues may go to demo.
+    let text = f.system.store.active_definitions("project").unwrap()[0]
+        .text
+        .replace("name = \"demo\"", "name = \"site\"")
+        .replace("github = \"o/r\"", "github = \"o/site\"");
+    super::file_definition(&f.system.store, "project", &text).unwrap();
+    super::draft::draft(
+        &f.system,
+        &from(format!("{}3", super::issue_prefix("O/Site"))),
+    )
+    .unwrap();
+
+    // Demo moves away; site's issues stay in personal.
+    super::file_definition(&f.system.store, "workspace", "name = \"dpt\"\n").unwrap();
+    move_demo(&f, "dpt");
+    let Err(super::draft::DraftError::Refused(why)) = super::draft::draft(
+        &f.system,
+        &from(format!("{}3", super::issue_prefix("o/site"))),
+    ) else {
+        panic!("site is in personal, demo in dpt")
+    };
+    assert!(why.contains("dpt"), "{why}");
+    super::draft::draft(
+        &f.system,
+        &from(format!("{}12", super::issue_prefix("o/r"))),
+    )
+    .unwrap();
+}
+
 /// Invariant 31, when the work starts: the account left the workspace
 /// after the card was approved, so the work does not run.
 #[tokio::test]
@@ -1184,4 +1243,154 @@ fn an_older_built_in_is_replaced_but_never_the_users_own() {
         "Mine"
     );
     drop(dir);
+}
+
+/// Design 15, "让 AI 改界面", and invariant 38: an interface's source is a
+/// project in the `genatrix` space, which has no accounts, so nothing from
+/// the user's accounts can be handed to its executors; work on it ends as a
+/// new version of the interface, waiting for approval, and nothing is
+/// proposed to go anywhere.
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // one change's whole life, in order
+async fn an_interface_is_changed_by_work_and_waits_for_approval() {
+    let f = fixture(false);
+    let system = &f.system;
+    system
+        .store
+        .create_ui("phone", "Phone", "local", "2026-11-14T00:00:00Z")
+        .unwrap();
+    let source: std::collections::BTreeMap<String, String> = [
+        ("index.html".to_owned(), "<p>old</p>".to_owned()),
+        ("GENATRIX.md".to_owned(), "rules".to_owned()),
+        (".gitignore".to_owned(), "node_modules\n".to_owned()),
+    ]
+    .into();
+    crate::ui::make_project(system, "phone", &crate::ui::Start::Builtin(&source)).unwrap();
+    let dir = crate::ui::source_dir(system, "phone");
+    assert!(
+        dir.join("API.json").exists(),
+        "the interface API goes with the source"
+    );
+    let defs = super::definitions(&system.store).unwrap();
+    let (project, _) = defs
+        .projects
+        .iter()
+        .find(|(p, _)| p.name == "ui-phone")
+        .unwrap();
+    assert_eq!(project.workspace, genatrix_dispatch::workspace::GENATRIX);
+    let (space, _) = defs
+        .workspaces
+        .iter()
+        .find(|(w, _)| w.name == genatrix_dispatch::workspace::GENATRIX)
+        .unwrap();
+    assert!(
+        space.accounts.is_empty(),
+        "no account's content can reach it"
+    );
+    assert!(crate::ui::has_project(system, "phone"));
+
+    // Work from a task in some account is refused outright.
+    let thread = lark_task(system);
+    let from_task = super::draft::Request {
+        project: "ui-phone".into(),
+        recipe: "change-interface".into(),
+        task: "Make it bigger".into(),
+        public: true,
+        source: Some(thread),
+        assign: std::collections::BTreeMap::new(),
+    };
+    assert!(super::draft::draft(system, &from_task).is_err());
+
+    // In the user's own words, it runs; the build it leaves comes back.
+    *f.host.turns.lock().unwrap() = VecDeque::from(vec![Turn {
+        write: Some(("dist/index.html".into(), "<p>new</p>".into())),
+        answer: "{\"genatrix\": \"done\", \"title\": \"Bigger numbers\", \"summary\": \"built\"}"
+            .into(),
+        hang: false,
+    }]);
+    let a = super::draft::draft(
+        system,
+        &super::draft::Request {
+            source: None,
+            public: false,
+            ..from_task
+        },
+    )
+    .unwrap();
+    approve(system, &a.id);
+    super::run::start_approved(system).unwrap();
+    let d = until_done(system, &a.id).await;
+    assert_eq!(d.state, "finished", "{d:?}");
+    assert!(
+        d.detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("waits for your approval"),
+        "{d:?}"
+    );
+    let versions = system.store.ui_versions("phone").unwrap();
+    assert_eq!(versions.len(), 1);
+    assert!(
+        versions[0].approved_at.is_none(),
+        "not run before it is approved"
+    );
+    assert!(
+        versions[0].note.starts_with("Bigger numbers"),
+        "{}",
+        versions[0].note
+    );
+    let manifest: crate::ui::Manifest = serde_json::from_str(&versions[0].manifest).unwrap();
+    assert_eq!(manifest.files.keys().collect::<Vec<_>>(), ["index.html"]);
+    assert_eq!(
+        crate::ui::file(system, &versions[0].hash, "index.html")
+            .unwrap()
+            .unwrap(),
+        b"<p>new</p>"
+    );
+    let pending = system
+        .actions
+        .list(&system.store, Some("pending"), 10)
+        .unwrap();
+    assert!(
+        pending
+            .iter()
+            .all(|p| !matches!(p.effect, Effect::PushBranch { .. })),
+        "nothing goes to GitHub"
+    );
+    // Design 15 v0.6: a source made by an earlier core is brought up to
+    // date before the next change: the guide, and a build that writes
+    // nothing beside the shared, read-only packages.
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{"name":"x","scripts":{"build":"vite build","check":"old","dev":"vite"}}"#,
+    )
+    .unwrap();
+    git(&dir, &["add", "package.json"]);
+    git(&dir, &["commit", "--quiet", "-m", "an older core's"]);
+    assert!(crate::ui::refresh_source(system, "phone").unwrap());
+    let pkg: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("package.json")).unwrap()).unwrap();
+    assert_eq!(pkg["scripts"]["build"], "vite build --configLoader runner");
+    assert_eq!(
+        pkg["scripts"]["dev"], "vite",
+        "the interface's own scripts stay"
+    );
+    assert!(
+        std::fs::read_to_string(dir.join("GENATRIX.md"))
+            .unwrap()
+            .contains("read only")
+    );
+    assert!(
+        !crate::ui::refresh_source(system, "phone").unwrap(),
+        "once is enough"
+    );
+    git(&dir, &["reset", "--quiet", "--hard", "HEAD~2"]);
+
+    // Design 15 v0.4: the source moved on, so the next change starts here.
+    assert_eq!(versions[0].source_commit.as_deref(), d.tip.as_deref());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("dist/index.html")).unwrap(),
+        "<p>new</p>"
+    );
+    assert_eq!(git(&dir, &["rev-parse", "HEAD"]), d.tip.clone().unwrap());
 }

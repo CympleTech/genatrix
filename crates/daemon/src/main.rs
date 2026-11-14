@@ -35,6 +35,7 @@ mod service;
 mod setup;
 mod syncing;
 mod system;
+mod ui;
 mod web;
 
 use std::path::PathBuf;
@@ -178,6 +179,12 @@ enum Command {
     Work {
         #[command(subcommand)]
         action: executors::terminal::WorkAction,
+    },
+    /// Interfaces (design 15): file a built interface as a new version,
+    /// or list them.
+    Ui {
+        #[command(subcommand)]
+        action: ui::UiAction,
     },
     /// The GitHub token pushes and pull requests use.
     Github {
@@ -324,6 +331,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Work { action } => {
             let system = System::open(config.clone(), ticket_key(&config, false)?)?;
             executors::terminal::work(&system, action)
+        }
+        Command::Ui { action } => {
+            let system = System::open(config.clone(), ticket_key(&config, false)?)?;
+            ui::terminal(&system, action)
         }
         Command::Github { action } => {
             let system = System::open(config.clone(), ticket_key(&config, false)?)?;

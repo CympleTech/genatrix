@@ -202,6 +202,53 @@ pub fn prepare(
     ok(isolation, &["rev-parse", "HEAD"], Some(workspace))
 }
 
+/// Build an interface in the workspace, as the executor's user, with its
+/// search path and no network (design 15 v0.5): the host makes sure there
+/// is a build, whether or not the executor ran one. Nothing to do when the
+/// workspace has no `package.json`. On failure, the last lines of what the
+/// build said.
+pub fn build_interface(
+    isolation: &Isolation,
+    workspace: &Path,
+    path: &str,
+) -> Result<(), GitError> {
+    if !workspace.join("package.json").exists() {
+        return Ok(());
+    }
+    let line = vec![
+        "/usr/bin/env".to_owned(),
+        format!("PATH={path}"),
+        "npm_config_offline=true".to_owned(),
+        "npm_config_update_notifier=false".to_owned(),
+        "npm".to_owned(),
+        "run".to_owned(),
+        "build".to_owned(),
+    ];
+    let argv = isolation.wrap(&line);
+    let (program, rest) = argv
+        .split_first()
+        .ok_or_else(|| GitError("nothing to run".into()))?;
+    let out = Command::new(program)
+        .args(rest)
+        .current_dir(workspace)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| GitError(format!("the build could not start: {e}")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let tail: Vec<&str> = said.lines().rev().take(12).collect();
+    Err(GitError(format!(
+        "the build failed:\n{}",
+        tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+    )))
+}
+
 /// Commit whatever the executor left in the workspace. `None` when it left
 /// nothing.
 pub fn commit_all(
@@ -477,6 +524,38 @@ mod tests {
                 .unwrap()
                 .contains("made by the executor")
         );
+    }
+
+    /// Design 15 v0.5: the host builds an interface itself; a failed build
+    /// says what went wrong; a workspace that is not an interface is left
+    /// alone.
+    #[test]
+    fn an_interface_is_built_by_the_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = std::env::var("PATH").unwrap_or_default();
+        let me = Isolation::SameUserForTests;
+        build_interface(&me, dir.path(), &path).unwrap();
+        assert!(
+            !dir.path().join("dist").exists(),
+            "not an interface: nothing run"
+        );
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"x","scripts":{"build":"mkdir -p dist && echo built > dist/index.html"}}"#,
+        )
+        .unwrap();
+        build_interface(&me, dir.path(), &path).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("dist/index.html")).unwrap(),
+            "built\n"
+        );
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"x","scripts":{"build":"echo something broke && exit 3"}}"#,
+        )
+        .unwrap();
+        let e = build_interface(&me, dir.path(), &path).unwrap_err();
+        assert!(e.0.contains("something broke"), "{e}");
     }
 
     /// A document step: the core writes the answer into the repository as

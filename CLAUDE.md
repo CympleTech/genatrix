@@ -56,11 +56,20 @@ The core's side is `crates/daemon/src/executors/`. Workspaces (design 14) group 
 says which file goes where. The page's icons in `web/public/` and the app
 icon in packaging are copies of these.
 
-`web/` is the interface (design 06): Svelte and Vite, phone first. Its build
-lands in `crates/daemon/src/web/dist/` under fixed names and is compiled into
-the core; the built files are committed, so changing `web/` means running
-`npm run build` there and committing `dist/` in the same change. The core
-serves the page and a JSON API; the page holds no state the core does not.
+`web/` is the interface (design 06) and the shell around it (design 15):
+Svelte and Vite, phone first. It builds twice, into
+`crates/daemon/src/web/dist/shell/` (the trusted top-level page) and
+`dist/ui/` (the built-in interface, run in the shell's sandboxed frame), under
+fixed names, both compiled into the core; the built files are committed, so
+changing `web/` means running `npm run build` there and committing `dist/` in
+the same change. The core serves the shell, interfaces by hash under
+`/ui/<hash>/`, and a JSON API; the page holds no state the core does not.
+`crates/daemon/src/ui.rs` keeps the user's interfaces and their versions,
+and each one's source as a `ui-<name>` project in the built-in `genatrix`
+space; the web build also packs the built-in interface's source into
+`dist/ui-source.json` for that (`web/scripts/pack-source.mjs`,
+`web/ui-project/`). The interface API's contract is
+`crates/daemon/src/web/v1.json`; add to it, never change it.
 
 ## Checks
 
@@ -74,7 +83,7 @@ All three must be clean. The first build compiles SQLCipher, OpenSSL, and the
 MLX Swift package, which takes several minutes. When `web/` changes:
 
 ```sh
-cd web && npm ci && npm run check && npm run build
+cd web && npm ci && npm run check && npm test && npm run build
 ```
 
 When `agents/` or `wit/` changes:

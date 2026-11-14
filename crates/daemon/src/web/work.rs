@@ -50,12 +50,15 @@ pub fn routes() -> axum::Router<Arc<System>> {
 pub(crate) struct ProjectView {
     name: String,
     workspace: String,
+    /// Where the code is, as written in the file; for the edit form.
+    repo: String,
     github: Option<String>,
     base: String,
     executors: Vec<String>,
     commands: Vec<String>,
     network: bool,
     delegate_personal: bool,
+    bundle_cap_mb: u32,
 }
 
 #[derive(Serialize)]
@@ -111,12 +114,14 @@ impl From<genatrix_dispatch::project::Project> for ProjectView {
         Self {
             workspace: p.workspace,
             name: p.name,
+            repo: p.repo,
             github: p.github,
             base: p.base,
             executors: p.executors,
             commands: p.commands,
             network: p.network,
             delegate_personal: p.delegate_personal,
+            bundle_cap_mb: p.bundle_cap_mb,
         }
     }
 }

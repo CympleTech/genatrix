@@ -380,6 +380,7 @@ pub fn uninstall(system: &System, id: &str) -> anyhow::Result<()> {
         std::fs::remove_dir_all(&dir)?;
     }
     system.store.delete_agent(id)?;
+    system.store.delete_agent_views(id)?;
     system
         .ledger
         .append("agent_uninstall", id, &serde_json::json!({}))?;

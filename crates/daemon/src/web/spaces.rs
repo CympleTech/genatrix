@@ -5,6 +5,9 @@
 //! work is the same dispatches, its record is the same ledger. What it
 //! adds is the cut: only what this workspace's accounts brought and its
 //! projects did.
+//!
+//! Its projects' GitHub issues and pull requests are read when the page
+//! asks, through the GitHub connector, and kept in memory (design 13 v0.7).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -29,6 +32,7 @@ pub fn routes() -> axum::Router<Arc<System>> {
     axum::Router::new()
         .route("/api/spaces", get(list))
         .route("/api/spaces/{name}", get(one))
+        .route("/api/spaces/{name}/github", get(github))
 }
 
 /// A dispatch is going on: running, waiting for your answer, or answered
@@ -282,5 +286,151 @@ fn github_sign_in(space: &str) -> &'static str {
         "default"
     } else {
         "none"
+    }
+}
+
+/// A pull request, with the work it came from when Genatrix opened it.
+#[derive(Debug, Serialize)]
+pub(crate) struct PullView {
+    #[serde(flatten)]
+    pull: genatrix_connector_github::list::Pull,
+    /// The dispatch whose branch it is, if any.
+    dispatch: Option<String>,
+}
+
+/// Which dispatch each pull request came from: one whose branch it is, in
+/// the repository itself, not a fork.
+pub(crate) fn link_pulls(
+    pulls: Vec<genatrix_connector_github::list::Pull>,
+    dispatches: &[(String, String)],
+) -> Vec<PullView> {
+    pulls
+        .into_iter()
+        .map(|pull| {
+            let dispatch = (!pull.from_fork)
+                .then(|| {
+                    dispatches
+                        .iter()
+                        .find(|(_, branch)| *branch == pull.head)
+                        .map(|(id, _)| id.clone())
+                })
+                .flatten();
+            PullView { pull, dispatch }
+        })
+        .collect()
+}
+
+#[derive(Serialize)]
+struct RepoView {
+    project: String,
+    repo: String,
+    /// What the work on an issue is said to come from.
+    source_prefix: String,
+    issues: Vec<genatrix_connector_github::list::Issue>,
+    pulls: Vec<PullView>,
+    more_issues: bool,
+    more_pulls: bool,
+    read_ms: Option<i64>,
+    error: Option<String>,
+}
+
+/// A space's projects' open issues and pull requests, read again when
+/// older than two minutes.
+async fn github(State(system): Shared, Path(name): Path<String>) -> Result<Response, ApiError> {
+    let defs = crate::executors::definitions(&system.store)?;
+    if !defs.workspaces.iter().any(|(w, _)| w.name == name) {
+        return Ok((
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "no such space" })),
+        )
+            .into_response());
+    }
+    let projects: Vec<(String, String)> = defs
+        .projects
+        .iter()
+        .filter(|(p, _)| p.workspace == name)
+        .filter_map(|(p, _)| p.github.clone().map(|g| (p.name.clone(), g)))
+        .collect();
+    let names: BTreeSet<&str> = projects.iter().map(|(p, _)| p.as_str()).collect();
+    let dispatches: Vec<(String, String)> = system
+        .store
+        .list_dispatches(None, 500)?
+        .into_iter()
+        .filter(|d| names.contains(d.project.as_str()))
+        .map(|d| (d.id, d.branch))
+        .collect();
+    // Each repository read at once; a slow one does not hold the others.
+    let mut reads = tokio::task::JoinSet::new();
+    for (i, (_, repo)) in projects.iter().enumerate() {
+        let (system, space, repo) = (Arc::clone(&system), name.clone(), repo.clone());
+        reads.spawn(async move {
+            (
+                i,
+                crate::executors::github::listing(&system, &space, &repo).await,
+            )
+        });
+    }
+    let mut snaps = vec![crate::executors::github::Snapshot::default(); projects.len()];
+    while let Some(done) = reads.join_next().await {
+        if let Ok((i, snap)) = done {
+            snaps[i] = snap;
+        }
+    }
+    let out: Vec<RepoView> = projects
+        .into_iter()
+        .zip(snaps)
+        .map(|((project, repo), snap)| {
+            let listing = snap.listing.unwrap_or_default();
+            RepoView {
+                source_prefix: crate::executors::issue_prefix(&repo),
+                project,
+                repo,
+                issues: listing.issues,
+                pulls: link_pulls(listing.pulls, &dispatches),
+                more_issues: listing.more_issues,
+                more_pulls: listing.more_pulls,
+                read_ms: snap.read_ms,
+                error: snap.error,
+            }
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "repos": out })).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use genatrix_connector_github::list::Pull;
+
+    use super::*;
+
+    fn pull(head: &str, from_fork: bool) -> Pull {
+        Pull {
+            number: 1,
+            title: "t".into(),
+            url: "u".into(),
+            author: "a".into(),
+            state: "open".into(),
+            draft: false,
+            head: head.into(),
+            from_fork,
+            base: "main".into(),
+            updated: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_pull_request_on_a_dispatchs_branch_is_that_dispatchs_and_a_forks_is_not() {
+        let dispatches = vec![("01ABC".to_owned(), "genatrix/01abc".to_owned())];
+        let linked = link_pulls(
+            vec![
+                pull("genatrix/01abc", false),
+                pull("genatrix/01abc", true),
+                pull("feature", false),
+            ],
+            &dispatches,
+        );
+        assert_eq!(linked[0].dispatch.as_deref(), Some("01ABC"));
+        assert_eq!(linked[1].dispatch, None, "a fork may name any branch");
+        assert_eq!(linked[2].dispatch, None);
     }
 }

@@ -681,11 +681,38 @@ async fn work(
         match step.produces {
             Produces::Commits => {
                 let message = commit_message(&report, &step.id, task);
+                // Design 15 v0.5: an interface's work is built by the host
+                // before it is committed, so there is always a build to
+                // look at, whether or not the executor ran one.
+                let build = if crate::ui::ui_of_project(&pins.project.workspace, &pins.project.name)
+                    .is_some()
+                {
+                    let path = config
+                        .executor(&step.executor)
+                        .map(|e| e.path.clone())
+                        .unwrap_or_default();
+                    let (iso, ws) = (iso.clone(), ws.clone());
+                    tokio::task::spawn_blocking(move || {
+                        genatrix_exec::workspace::build_interface(&iso, &ws, &path)
+                    })
+                    .await?
+                } else {
+                    Ok(())
+                };
                 let (iso, ws) = (iso.clone(), ws.clone());
                 let commit = tokio::task::spawn_blocking(move || {
                     genatrix_exec::workspace::commit_all(&iso, &ws, &message)
                 })
                 .await?;
+                if let Err(e) = build {
+                    record.state = "failed".into();
+                    record.error = Some(e.to_string());
+                    if let Ok(c) = &commit {
+                        record.commit_id.clone_from(c);
+                    }
+                    system.store.put_dispatch_step(&record)?;
+                    return Ok(Ending::Failed(format!("step `{}`: {e}", step.id)));
+                }
                 match commit {
                     Ok(c) => record.commit_id = c,
                     Err(e) => {
@@ -782,6 +809,36 @@ async fn work(
     row.tip = Some(received.tip.clone());
     system.store.update_dispatch(row)?;
 
+    // Design 15: work on an interface's source ends as a new version of the
+    // interface, waiting for the user's approval in the shell; nothing is
+    // pushed anywhere.
+    if let Some(ui) = crate::ui::ui_of_project(&pins.project.workspace, &pins.project.name) {
+        let note = received
+            .commits
+            .first()
+            .map(|(_, subject)| subject.clone())
+            .unwrap_or_default();
+        let note = format!("{note} (work {})", row.id);
+        return Ok(Ending::Finished(Some(
+            match crate::ui::file_from_commit(
+                system,
+                ui,
+                &mirror,
+                &format!("refs/genatrix/{}", row.id.to_lowercase()),
+                &received.tip,
+                &note,
+            ) {
+                Ok(hash) => format!(
+                    "a new version of interface `{ui}` ({}) waits for your approval: Settings → Interface",
+                    &hash[..12]
+                ),
+                Err(e) => format!(
+                    "committed as {}, but it is not an interface version yet: {e}",
+                    &received.tip[..received.tip.len().min(10)]
+                ),
+            },
+        )));
+    }
     let Some(github) = pins.project.github.clone() else {
         return Ok(Ending::Finished(Some(format!(
             "this project names no GitHub repository; the commits are kept in the mirror as \

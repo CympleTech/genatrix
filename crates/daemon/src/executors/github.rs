@@ -7,6 +7,10 @@
 //! A pull request waits, approved, until its branch has been pushed; it is
 //! not taken before, so its approval is not spent on a branch that is not
 //! there.
+//!
+//! It also reads each project's open issues and pull requests, through the
+//! same connector, when a space's page asks (design 13 v0.7, "读 issue 和
+//! PR"). What comes back is kept in memory only.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -200,7 +204,7 @@ pub async fn execute_approved(system: &Arc<System>) -> anyhow::Result<usize> {
             },
         };
         let status = match &reply {
-            Reply::Done { .. } => Status::Executed { result: None },
+            Reply::Done { .. } | Reply::Listed { .. } => Status::Executed { result: None },
             Reply::Refused { detail } | Reply::Failed { detail } => Status::Failed {
                 detail: detail.clone(),
             },
@@ -313,10 +317,194 @@ pub async fn whoami(system: &System, token: &str) -> anyhow::Result<String> {
     .await?
     {
         Reply::Done { detail } => Ok(detail),
+        Reply::Listed { .. } => anyhow::bail!("GitHub answered out of turn"),
         Reply::Refused { detail } | Reply::Failed { detail } | Reply::Unknown { detail } => {
             anyhow::bail!(detail)
         }
     }
+}
+
+/// Who each stored token belongs to, by keychain account, as GitHub last
+/// said; asked once and kept, and forgotten when the token changes.
+#[derive(Default)]
+pub struct Logins {
+    known: std::sync::Mutex<std::collections::HashMap<String, Result<String, String>>>,
+}
+
+impl Logins {
+    fn get(&self, account: &str) -> Option<Result<String, String>> {
+        self.known
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(account)
+            .cloned()
+    }
+
+    fn set(&self, account: &str, login: Option<Result<String, String>>) {
+        let mut map = self
+            .known
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match login {
+            Some(l) => map.insert(account.to_owned(), l),
+            None => map.remove(account),
+        };
+    }
+}
+
+/// Whose token a keychain account holds: `None` when there is none, else
+/// the login, or why it could not be told.
+pub async fn login_of(system: &System, account: &str) -> Option<Result<String, String>> {
+    let token = match Keychain::named(SERVICE).read(account) {
+        Ok(Some(t)) => t,
+        Ok(None) => return None,
+        Err(e) => {
+            return Some(Err(format!(
+                "the keychain would not give the token to this process ({e})"
+            )));
+        }
+    };
+    if let Some(known) = system.exec.logins.get(account) {
+        return Some(known);
+    }
+    let said = whoami(system, &token).await.map_err(|e| e.to_string());
+    system.exec.logins.set(account, Some(said.clone()));
+    Some(said)
+}
+
+/// Whether a token is plain enough to be one: GitHub's are letters, digits
+/// and underscores.
+#[must_use]
+pub fn token_is_plain(token: &str) -> bool {
+    (20..=255).contains(&token.len())
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
+/// Keep a token for a workspace, or as the default with `None`, once GitHub
+/// has said whose it is; the login.
+pub async fn sign_in(
+    system: &System,
+    workspace: Option<&str>,
+    token: &str,
+) -> anyhow::Result<String> {
+    let token = token.trim();
+    if !token_is_plain(token) {
+        anyhow::bail!("that does not look like a GitHub token");
+    }
+    let login = whoami(system, token).await?;
+    let account = account_for(workspace);
+    Keychain::named(SERVICE).store(&account, token)?;
+    system.exec.logins.set(&account, Some(Ok(login.clone())));
+    system.exec.repos.forget(workspace);
+    Ok(login)
+}
+
+/// Take a workspace's own token away, or the default with `None`. Whether
+/// there was one.
+pub fn sign_out(system: &System, workspace: Option<&str>) -> anyhow::Result<bool> {
+    let account = account_for(workspace);
+    let had = Keychain::named(SERVICE).forget(&account)?;
+    system.exec.logins.set(&account, None);
+    system.exec.repos.forget(workspace);
+    Ok(had)
+}
+
+/// How long what was read stays fresh: a page opened sooner shows it again
+/// rather than asking GitHub.
+pub const FRESH: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// What was last read from one repository, for one workspace's token.
+#[derive(Clone, Debug, Default)]
+pub struct Snapshot {
+    /// The last listing that came back, kept when a later read fails.
+    pub listing: Option<genatrix_connector_github::list::Listing>,
+    /// When it came back, in milliseconds.
+    pub read_ms: Option<i64>,
+    /// Why the last read did not work, if it did not.
+    pub error: Option<String>,
+    tried: Option<std::time::Instant>,
+}
+
+/// Each repository's last read, by workspace and repository. One read of a
+/// repository at a time; different repositories at once.
+#[derive(Default)]
+pub struct Repos {
+    entries: std::sync::Mutex<std::collections::HashMap<(String, String), Entry>>,
+}
+
+/// One repository's last read, locked while it is read again.
+type Entry = Arc<tokio::sync::Mutex<Snapshot>>;
+
+impl Repos {
+    /// Forget what was read with a workspace's token, or with every token
+    /// for `None`, so the next look reads with the new one.
+    fn forget(&self, workspace: Option<&str>) {
+        let mut map = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        map.retain(|(w, _), _| workspace.is_some_and(|ws| ws != w));
+    }
+
+    fn entry(&self, workspace: &str, repo: &str) -> Entry {
+        let mut map = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Arc::clone(
+            map.entry((workspace.to_owned(), repo.to_lowercase()))
+                .or_default(),
+        )
+    }
+}
+
+/// A repository's open issues and pull requests, read again when what is
+/// kept is older than [`FRESH`]. With the workspace's own token or the
+/// default one (invariant 32); a read that fails keeps the last listing and
+/// says why.
+pub async fn listing(system: &System, workspace: &str, repo: &str) -> Snapshot {
+    let entry = system.exec.repos.entry(workspace, repo);
+    let mut snap = entry.lock().await;
+    if snap.tried.is_some_and(|t| t.elapsed() < FRESH) {
+        return snap.clone();
+    }
+    snap.tried = Some(std::time::Instant::now());
+    let token = match token_for(workspace) {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            snap.error = Some(format!(
+                "no GitHub token; run `genatrix github login --workspace {workspace}`"
+            ));
+            return snap.clone();
+        }
+        Err(e) => {
+            snap.error = Some(format!(
+                "the GitHub token is in the keychain but this process may not read it ({e}); \
+                 start the core from a terminal on the desktop"
+            ));
+            return snap.clone();
+        }
+    };
+    let mirrors = system.exec.config().root.join("mirrors");
+    let request = Request::List {
+        token,
+        repo: repo.to_owned(),
+    };
+    match run(system, &mirrors, &request).await {
+        Ok(Reply::Listed { listing }) => {
+            snap.listing = Some(listing);
+            snap.read_ms = Some(chrono::Utc::now().timestamp_millis());
+            snap.error = None;
+        }
+        Ok(Reply::Refused { detail } | Reply::Failed { detail } | Reply::Unknown { detail }) => {
+            snap.error = Some(detail);
+        }
+        Ok(Reply::Done { .. }) => snap.error = Some("GitHub answered out of turn".into()),
+        Err(e) => snap.error = Some(format!("the GitHub connector could not run: {e}")),
+    }
+    snap.clone()
 }
 
 async fn run(system: &System, mirrors: &Path, request: &Request) -> anyhow::Result<Reply> {
@@ -420,6 +608,32 @@ fn quoted(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_something_shaped_like_a_github_token_is_kept() {
+        assert!(token_is_plain(
+            "github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz"
+        ));
+        assert!(token_is_plain("ghp_0123456789abcdefghijABCDEFGHIJ012345"));
+        assert!(!token_is_plain(""));
+        assert!(!token_is_plain("short"));
+        assert!(!token_is_plain("ghp_0123456789abcdefghij ABCDEFGHIJ012345"));
+        assert!(!token_is_plain("ghp_0123456789abcdefghij;ABCDEFGHIJ012345"));
+    }
+
+    #[test]
+    fn a_new_token_is_read_with_at_once() {
+        let repos = Repos::default();
+        let _ = repos.entry("dpt", "o/r");
+        let _ = repos.entry("mine", "o/s");
+        repos.forget(Some("dpt"));
+        assert_eq!(repos.entries.lock().unwrap().len(), 1, "only dpt's");
+        repos.forget(None);
+        assert!(
+            repos.entries.lock().unwrap().is_empty(),
+            "the default may be anyone's"
+        );
+    }
 
     #[test]
     fn the_connector_reaches_https_and_nothing_of_ours() {

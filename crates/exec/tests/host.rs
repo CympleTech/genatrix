@@ -337,3 +337,90 @@ async fn a_token_in_the_executors_home_reaches_the_executor() {
         host_with_home(start(&ws, "@fake env FAKE_TOKEN"), None, Some(empty.path())).await;
     assert!(end.answer.contains("FAKE_TOKEN=\n"), "{}", end.answer);
 }
+
+/// Processes whose command line is exactly this.
+fn running(command: &str) -> usize {
+    let out = std::process::Command::new("/bin/ps")
+        .args(["-A", "-o", "pid=,command="])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| {
+            l.trim()
+                .split_once(' ')
+                .is_some_and(|(_, c)| c.trim() == command)
+        })
+        .count()
+}
+
+/// An executor that never answers and starts a child and a grandchild,
+/// run by the host binary, which is then cut off as `how` says.
+async fn cut_off(how: &str, n: u32) {
+    let (_dir, ws) = workspace();
+    let (child_one, grandchild, child_two) = (
+        format!("sleep {}", 3720 + n * 3),
+        format!("sleep {}", 3721 + n * 3),
+        format!("sleep {}", 3722 + n * 3),
+    );
+    let script = format!("{child_one} & ({grandchild} &) ; {child_two}");
+    let s = Start {
+        executor: Executor {
+            name: "fake".into(),
+            command: vec!["/bin/sh".into(), "-c".into(), script],
+            path: Some("/usr/bin:/bin".into()),
+            sign_in: None,
+        },
+        ..start(&ws, "hello")
+    };
+    let mut child = Command::new(HOST)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    wire::write(&mut stdin, &ToHost::Start(Box::new(s)))
+        .await
+        .unwrap();
+    for _ in 0..100 {
+        if running(&grandchild) == 1 && running(&child_two) == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(running(&grandchild), 1, "the grandchild started");
+    if how == "core" {
+        // The core is gone: both ends of its pipes close at once.
+        drop(stdin);
+        drop(stdout);
+    } else {
+        // The host is told to stop, as a service manager would.
+        let pid = child.id().unwrap().to_string();
+        std::process::Command::new("/bin/kill")
+            .args(["-TERM", &pid])
+            .status()
+            .unwrap();
+        std::mem::forget(stdin);
+        std::mem::forget(stdout);
+    }
+    let exited = tokio::time::timeout(std::time::Duration::from_secs(15), child.wait()).await;
+    assert!(exited.is_ok(), "the host did not leave ({how})");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    for p in [&child_one, &grandchild, &child_two] {
+        assert_eq!(running(p), 0, "{p} was left behind ({how})");
+    }
+}
+
+/// Design 13 v0.10: when the core goes away, even while the executor is
+/// still starting, the host ends it and everything it started, and leaves.
+#[tokio::test]
+async fn when_the_core_goes_the_executor_and_what_it_started_go_too() {
+    cut_off("core", 1).await;
+}
+
+/// The same when the host itself is told to stop.
+#[tokio::test]
+async fn a_host_told_to_stop_ends_what_it_started_first() {
+    cut_off("term", 2).await;
+}

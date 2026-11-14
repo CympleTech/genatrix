@@ -12,6 +12,10 @@ days = 7
 kind = "note"
 label = "Keep a note"
 
+[[views]]
+name = "seen"
+title = "Mail seen"
+
 [[triggers]]
 on = "items"
 

@@ -181,6 +181,10 @@ pub struct Exec {
     host: RwLock<Arc<dyn host::Host>>,
     isolation: RwLock<Isolation>,
     running: Mutex<HashMap<String, Running>>,
+    /// What was last read from each project's GitHub repository.
+    pub repos: github::Repos,
+    /// Who each GitHub token belongs to.
+    pub logins: github::Logins,
 }
 
 /// A dispatch in progress.
@@ -198,6 +202,8 @@ impl Exec {
             host: RwLock::new(Arc::new(host::ProcessHost)),
             isolation: RwLock::new(Isolation::exec_user()),
             running: Mutex::new(HashMap::new()),
+            repos: github::Repos::default(),
+            logins: github::Logins::default(),
         })
     }
 
@@ -447,6 +453,9 @@ pub fn check_source(
     project: &Project,
     thread: &str,
 ) -> Result<(), String> {
+    if let Some(issue) = thread.strip_prefix("github:") {
+        return check_issue(store, project, issue);
+    }
     let id: genatrix_model::ThreadId = thread
         .parse()
         .map_err(|_| "the work's source is not a thread".to_owned())?;
@@ -462,6 +471,45 @@ pub fn check_source(
     );
     genatrix_dispatch::workspace::may_delegate(&workspaces, project, &key)
         .map_err(|e| e.to_string())
+}
+
+/// What the source of work from one of a repository's issues starts
+/// with: the source is `github:owner/name#number`.
+#[must_use]
+pub fn issue_prefix(repo: &str) -> String {
+    format!("github:{repo}#")
+}
+
+/// Invariant 31 for an issue (design 14 v0.3): its repository must be the
+/// repository of a project in the same workspace as the project the work
+/// goes to.
+fn check_issue(
+    store: &genatrix_store::Store,
+    project: &Project,
+    issue: &str,
+) -> Result<(), String> {
+    let Some((repo, number)) = issue.rsplit_once('#') else {
+        return Err("the work's source is not an issue".to_owned());
+    };
+    if number.parse::<u64>().is_err() || !genatrix_connector_github::valid_repo(repo) {
+        return Err("the work's source is not an issue".to_owned());
+    }
+    let defs = definitions(store).map_err(|e| e.to_string())?;
+    let home = defs.projects.iter().map(|(p, _)| p).find(|p| {
+        p.workspace == project.workspace
+            && p.github
+                .as_deref()
+                .is_some_and(|g| g.eq_ignore_ascii_case(repo))
+    });
+    if home.is_some() {
+        Ok(())
+    } else {
+        Err(format!(
+            "issue {repo}#{number} is not from a project in workspace `{}`, so it does not go \
+             to this project's executors",
+            project.workspace
+        ))
+    }
 }
 
 /// The workspace a source account belongs to, by its connector and

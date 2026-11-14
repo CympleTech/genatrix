@@ -165,7 +165,9 @@ mod tests {
             .merge(super::super::quiet::routes())
             .merge(super::super::local::routes())
             .merge(super::super::work::routes())
-            .fallback(axum::routing::get(|| async { "page" }))
+            .merge(super::super::ui::routes())
+            .merge(super::super::v1::routes())
+            .fallback(axum::routing::get(super::super::ui::shell))
             .layer(axum::middleware::from_fn_with_state(
                 Arc::clone(system),
                 guard,
@@ -410,6 +412,258 @@ mod tests {
             .next()
             .unwrap()
             .to_owned()
+    }
+
+    /// Design 15, invariants 35 and 37: the shell is the page and frames
+    /// only this core; an interface's files are served to anyone, sandboxed
+    /// even when opened alone, with no connection anywhere; a version runs
+    /// only once approved, only while its files are what was approved; and
+    /// approving a version other devices run needs more than a device.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // one interface's whole life, in order
+    async fn an_interface_runs_sandboxed_and_only_as_approved() {
+        let (_dir, system) = crate::system::test_system();
+        let app = app(&system);
+        let csp = |r: &axum::response::Response| {
+            r.headers()
+                .get(header::CONTENT_SECURITY_POLICY)
+                .map(|v| v.to_str().unwrap().to_owned())
+                .unwrap_or_default()
+        };
+
+        let page = call(&app, LAN, "GET", "/chats", None, None).await;
+        assert_eq!(page.status(), StatusCode::OK);
+        let policy = csp(&page);
+        assert!(policy.contains("frame-ancestors 'none'"), "{policy}");
+        assert!(policy.contains("frame-src 'self'"), "{policy}");
+        assert!(policy.contains("connect-src 'self'"), "{policy}");
+
+        let builtin = crate::ui::default_hash();
+        let index = call(
+            &app,
+            LAN,
+            "GET",
+            &format!("/ui/{builtin}/index.html"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(
+            index.status(),
+            StatusCode::OK,
+            "code, not data: open to all"
+        );
+        let policy = csp(&index);
+        assert!(
+            policy.contains("sandbox allow-scripts allow-forms"),
+            "{policy}"
+        );
+        assert!(!policy.contains("allow-same-origin"), "{policy}");
+        assert!(!policy.contains("allow-popups"), "{policy}");
+        assert!(!policy.contains("allow-top-navigation"), "{policy}");
+        assert!(policy.contains("connect-src 'none'"), "{policy}");
+        assert!(policy.contains("form-action 'none'"), "{policy}");
+        assert!(policy.contains("frame-src 'none'"), "{policy}");
+        assert_eq!(
+            index
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "*"
+        );
+        for missing in [
+            format!("/ui/{builtin}/secret.js"),
+            format!("/ui/{builtin}/../data.db"),
+            "/ui/abc/index.html".to_owned(),
+        ] {
+            assert_eq!(
+                call(&app, LAN, "GET", &missing, None, None).await.status(),
+                StatusCode::NOT_FOUND,
+                "{missing}"
+            );
+        }
+        assert_eq!(
+            call(&app, LAN, "GET", "/api/ui", None, None).await.status(),
+            StatusCode::UNAUTHORIZED,
+            "which interface a device runs is a device's to know"
+        );
+
+        // A version filed is not run until approved.
+        system
+            .store
+            .create_ui("mine", "Mine", "local", "2026-11-14T00:00:00Z")
+            .unwrap();
+        let files = vec![
+            ("index.html".to_owned(), b"<p>mine</p>".to_vec()),
+            ("app.js".to_owned(), b"1".to_vec()),
+        ];
+        let hash = crate::ui::file_version(&system, "mine", &files, "first").unwrap();
+        let pick = serde_json::json!({"ui": "mine"});
+        assert_eq!(
+            call(
+                &app,
+                HERE,
+                "POST",
+                "/api/ui/choose",
+                None,
+                Some(pick.clone())
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+        let state = json(call(&app, HERE, "GET", "/api/ui", None, None).await).await;
+        assert_eq!(state["load"], builtin, "the built-in one until then");
+        let ok = call(
+            &app,
+            HERE,
+            "POST",
+            "/api/ui/approve",
+            None,
+            Some(serde_json::json!({"ui": "mine", "hash": hash})),
+        )
+        .await;
+        assert_eq!(ok.status(), StatusCode::OK, "only this machine uses it");
+        assert_eq!(
+            call(&app, HERE, "POST", "/api/ui/choose", None, Some(pick))
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let state = json(call(&app, HERE, "GET", "/api/ui", None, None).await).await;
+        assert_eq!(state["load"], hash.as_str());
+        let path = format!("/ui/{hash}/index.html");
+        assert_eq!(
+            call(&app, LAN, "GET", &path, None, None).await.status(),
+            StatusCode::OK
+        );
+
+        // Changed on disk, it is not what was approved: not served.
+        std::fs::write(
+            system
+                .config
+                .data_dir
+                .join("ui")
+                .join(&hash)
+                .join("index.html"),
+            b"<p>changed</p>",
+        )
+        .unwrap();
+        assert_eq!(
+            call(&app, LAN, "GET", &path, None, None).await.status(),
+            StatusCode::NOT_FOUND
+        );
+
+        // This machine uses `mine`: a device approving a new version of it
+        // would change what runs here, so a device alone cannot.
+        let cookie = paired_cookie(&app).await;
+        let next = vec![("index.html".to_owned(), b"<p>two</p>".to_vec())];
+        let second = crate::ui::file_version(&system, "mine", &next, "second").unwrap();
+        let r = call(
+            &app,
+            LAN,
+            "POST",
+            "/api/ui/approve",
+            Some(&cookie),
+            Some(serde_json::json!({"ui": "mine", "hash": second})),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            system.store.ui("mine").unwrap().unwrap().current.as_deref(),
+            Some(hash.as_str())
+        );
+        // Its own copy it may approve.
+        let copied = crate::ui::copy(&system, "default", "Phone", "d").unwrap();
+        let mine = system.store.ui(&copied).unwrap().unwrap();
+        assert_eq!(
+            mine.current.as_deref(),
+            Some(builtin),
+            "a copy starts approved"
+        );
+    }
+
+    /// Design 15, "数据接口": every endpoint of version 1 is in its schema and
+    /// the schema names nothing that is not served; each answers a device and
+    /// refuses a stranger; and an agent's view reads back as it was kept.
+    #[tokio::test]
+    async fn the_interface_api_is_what_its_schema_says() {
+        let (_dir, system) = crate::system::test_system();
+        let app = app(&system);
+        let schema: serde_json::Value = serde_json::from_str(super::super::v1::SCHEMA).unwrap();
+        let named: Vec<&str> = schema["endpoints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            named,
+            super::super::v1::PATHS,
+            "the schema and the routes agree"
+        );
+        system
+            .store
+            .put_agent_view(&genatrix_store::AgentView {
+                agent: "a1".into(),
+                name: "seen".into(),
+                title: "Mail seen".into(),
+                data: r#"{"title":"Mail seen","figures":[{"label":"Seen","value":{"number":2}}]}"#
+                    .into(),
+                level: "personal".into(),
+                at: "2026-11-14T00:00:00Z".into(),
+            })
+            .unwrap();
+        let cookie = paired_cookie(&app).await;
+        for path in super::super::v1::PATHS {
+            let path = path
+                .replace("{agent}", "a1")
+                .replace("{name}", "seen")
+                .replace("{id}", &genatrix_model::ItemId::new().to_string());
+            let mine = call(&app, LAN, "GET", &path, Some(&cookie), None)
+                .await
+                .status();
+            if path.starts_with("/api/v1/items/") {
+                assert_eq!(
+                    mine,
+                    StatusCode::NOT_FOUND,
+                    "{path}: no such item, said plainly"
+                );
+            } else {
+                assert_eq!(mine, StatusCode::OK, "{path}");
+            }
+            assert_eq!(
+                call(&app, LAN, "GET", &path, None, None).await.status(),
+                StatusCode::UNAUTHORIZED,
+                "{path}: a stranger"
+            );
+        }
+        let view = json(
+            call(
+                &app,
+                LAN,
+                "GET",
+                "/api/v1/views/a1/seen",
+                Some(&cookie),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(view["view"]["figures"][0]["value"]["number"], 2);
+        let bad = call(
+            &app,
+            LAN,
+            "GET",
+            "/api/v1/items?since=yesterday",
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+        let meta = json(call(&app, LAN, "GET", "/api/meta", Some(&cookie), None).await).await;
+        assert_eq!(meta["api"][0], 1);
+        assert_eq!(meta["capabilities"]["views"][0], "a1");
     }
 
     /// Design 02, invariant 18: agents are installed and removed on this

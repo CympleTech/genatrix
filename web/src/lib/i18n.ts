@@ -1,3 +1,4 @@
+import { getItem, removeItem, reload, setItem } from './storage';
 // Two languages, following the system (design 06, "语言"). The data shows in
 // whatever language it is in; these are only the words the interface itself
 // says.
@@ -8,7 +9,7 @@ const en: Dict = {
   'work': 'Work',
   'action.kind.dispatch': 'Hand to executors', 'action.kind.push_branch': 'Push a branch', 'action.kind.open_pull_request': 'Open a pull request',
   'work.public': 'This text is not private: send it as written',
-  'work.card_note': 'Approving sends these words, and the project\'s code, to the services named above. Nothing leaves GitHub-ward until you approve the push.',
+  'work.card_note': 'Approving sends these words, and the project\'s code, to the services named above. Anything the work then wants to send elsewhere, such as a push to GitHub, waits for your approval again.',
   'work.add_project': 'Add a project', 'work.add_project.note': 'A project is one repository on the computer Genatrix runs on, and the executors that may see it. Adding one needs that computer, or an admin device with the passphrase.',
   'spaces': 'Spaces', 'spaces.personal': 'Personal', 'spaces.lede': 'Each space is one area of your work: its accounts, its projects, and the executors that work on them. What one space’s accounts bring goes to its own executors only.',
   'spaces.all': 'All spaces', 'spaces.add': 'Add a space', 'spaces.edit': 'Change this space',
@@ -20,6 +21,40 @@ const en: Dict = {
   'spaces.tab.overview': 'Overview', 'spaces.tab.todo': 'To do', 'spaces.tab.new': 'New work', 'spaces.tab.work': 'Work', 'spaces.tab.setup': 'Setup',
   'spaces.stat.todo': 'To do', 'spaces.stat.active': 'Going on', 'spaces.stat.approvals': 'To approve', 'spaces.stat.done': 'Done',
   'spaces.needs': 'Needs you', 'spaces.needs.none': 'Nothing needs you right now.', 'spaces.needs.answer': '{what} is waiting for your answer', 'spaces.needs.approvals': '{n} waiting for your approval', 'spaces.needs.account': 'Account {id}: {text}', 'spaces.needs.noproject': 'No projects yet, so nothing can be handed out', 'spaces.needs.github': 'No GitHub token, so finished work cannot be pushed',
+  'spaces.gh.issues': 'GitHub issues', 'spaces.gh.pulls': 'Pull requests', 'spaces.gh.issues.n': '{n} open issues', 'spaces.gh.pulls.n': '{n} open pull requests', 'spaces.gh.issues.none': 'No open issues.', 'spaces.gh.pulls.none': 'No open pull requests.', 'spaces.gh.read': 'read at {when}', 'spaces.gh.error': 'GitHub {repo}: {why}', 'spaces.gh.comments': '{n} comments', 'spaces.gh.more': 'Only the first {n} are listed; the rest are on GitHub.', 'spaces.gh.draft': 'draft', 'spaces.gh.from_work': 'Opened by Genatrix, from this work', 'spaces.gh.pr.open': 'open', 'spaces.gh.pr.merged': 'merged', 'spaces.gh.pr.closed': 'closed', 'spaces.gh.issue.gone': 'That issue is not open on GitHub any more, or could not be read.',
+  'work.issue.from': 'The issue', 'work.issue.open': 'Open on GitHub',
+  'github.token': 'GitHub token', 'github.token.note': 'A fine-grained token: Contents and Pull requests read and write, Issues read, on the repositories this is for. For an organisation, pick it as the owner; it may need approving there.', 'github.token.make': 'Make one on GitHub',
+  'github.checking': 'Asking GitHub…', 'github.save': 'Save', 'github.saved': 'Saved: GitHub says this token is @{login}. It is in the keychain.',
+  'github.default': 'Default account:', 'github.default.lede': 'Spaces without an account of their own push, open pull requests and read issues with the default one.', 'github.none': 'none yet',
+  'github.add': 'Add the default account', 'github.replace': 'Change the token', 'github.remove': 'Remove', 'github.unknown': 'a token GitHub did not answer about ({why})',
+  'github.forgot.default': 'The default token is gone from the keychain.', 'github.forgot.space': 'This space uses the default account again.',
+  'github.space.own': 'This space has its own account: {who}.', 'github.space.default': 'This space uses the default account: {who}.', 'github.space.none': 'No GitHub account yet: give this space its own, or add a default one on the spaces list.',
+  'github.space.give': 'Give it its own account', 'github.space.back': 'Use the default again',
+  'spaceform.github': 'GitHub account', 'spaceform.github.default': 'The default one', 'spaceform.github.nodefault': 'there is no default yet; add one on the spaces list', 'spaceform.github.own': 'Its own account', 'spaceform.github.own.note': 'for a company repository, say: a token only this space uses',
+  'spaceform.github.failed': 'The space is added, but the GitHub token was not kept: {why}. Give it again on the space’s Setup page.',
+  'admin.act.github_sign_in': 'give a GitHub token {s}', 'admin.act.github_sign_out': 'take away a GitHub token {s}',
+  'action.review': 'Review and decide',
+  'shell.security.title': 'Devices and security', 'shell.security.open': 'Open devices and security', 'shell.security.note': 'Pairing, devices, the admin passphrase, export and erase are kept apart from the interface: they open in a panel the interface cannot draw or reach.',
+  'shell.interface.title': 'Interface', 'shell.interface.open': 'Interface', 'shell.close': 'Close', 'shell.retry': 'Try again', 'shell.leave': 'Leave',
+  'shell.safe': 'Safe mode: the built-in interface, whatever this device has picked.', 'shell.preview': 'Preview: a version not approved yet, on this device only.',
+  'shell.refused': 'That is done in devices and security, not from the interface.', 'shell.declined': 'Not sent: you said no.',
+  'shell.ask.title': 'The interface asks', 'shell.ask.note': 'This is the shell, not the interface: it shows the request exactly as it will go. Passwords and tokens show only that they were given.', 'shell.ask.request': 'Request', 'shell.ask.yes': 'Send it',
+  'shell.ask.unknown': 'A request the shell does not know', 'shell.ask.add_mailbox': 'Add a mailbox', 'shell.ask.start_telegram': 'Sign in to Telegram', 'shell.ask.start_lark': 'Sign in to Lark', 'shell.ask.remove_account': 'Remove an account and what it brought',
+  'shell.ask.install_agent': 'Install an agent', 'shell.ask.uninstall_agent': 'Uninstall an agent and delete its space', 'shell.ask.file_definition': 'File a space, project, recipe or role', 'shell.ask.github_sign_in': 'Keep a GitHub token', 'shell.ask.github_sign_out': 'Remove a GitHub token', 'shell.ask.download_model': 'Download a model',
+  'shell.ask.delete_person': 'Delete a conversation with a person, for good', 'shell.ask.delete_group': 'Delete a group’s messages, for good', 'shell.ask.junk_person': 'Delete a person’s messages and keep theirs out', 'shell.ask.junk_group': 'Delete a group’s messages and keep them out', 'shell.ask.junk_forget': 'Take something off the junk list for good', 'shell.ask.stop_work': 'Stop a piece of work', 'shell.ask.item_level': 'Change how sensitive a message is',
+  'shell.review.title': 'Decide', 'shell.review.note': 'This card is drawn by the shell from what the core holds, not by the interface.',
+  'shell.open.title': 'Open a page elsewhere', 'shell.open.download': 'Download from Genatrix', 'shell.open.note': 'The interface cannot open anything itself. This is where it would take you; anything in the address goes with it.', 'shell.open.go': 'Open',
+  'chat.bubble.title': 'Talk to AI', 'chat.bubble.ask': 'Ask', 'chat.bubble.change': 'Change this page', 'chat.bubble.where': 'On {page}', 'chat.bubble.context': 'I am looking at {page}. You cannot change this interface; if I ask for a change to the page, say plainly that you cannot, and that “Change this page” in this chat does it',
+  'chat.bubble.empty.ask': 'Ask about your mail, messages and work, or how this page works. The model on this computer answers; nothing leaves it.', 'chat.bubble.empty.change': 'Say how this page should change. It becomes work for an executor on this interface’s source, with the page you are on; you approve the card first, and the new version waits for you to preview and use.',
+  'chat.bubble.placeholder.ask': 'Ask something…', 'chat.bubble.placeholder.change': 'e.g. Put the to-do list above the digest', 'chat.bubble.answer.placeholder': 'Answer the executor, or pick an option above', 'chat.bubble.send': 'Send', 'chat.bubble.sounds': 'That sounds like a change to this page. The model that answers questions cannot change anything; shall an executor change it?', 'chat.bubble.justask': 'Just asking', 'chat.bubble.thinking': 'Working on it…',
+  'chat.bubble.proposed': 'It proposed something: it waits on Approvals.', 'chat.bubble.nosource': 'The built-in interface has no source here to change. Copy it for this device, and then it can be changed.', 'chat.bubble.copy': 'Copy it and use it here', 'chat.bubble.mine': 'Mine', 'chat.bubble.copied': 'This device now uses its own copy. Say again what should change.',
+  'chat.bubble.drafted': 'Drafted the work. Decide on the card.', 'chat.bubble.waiting': 'The card waits for your decision.', 'chat.bubble.declined': 'Not sent.', 'chat.bubble.working': 'The executor is changing the page… ({min} min)', 'chat.bubble.watch': 'Watch the work',
+  'chat.bubble.answer.own': 'Pick one, or type your own answer below.', 'chat.bubble.ended': 'The work {state}. {detail}', 'chat.bubble.nobuild': 'The work finished but left no new version: {detail}', 'chat.bubble.ready': 'Done: {note}. The page now shows it, as a preview on this device; use it if it is right.', 'chat.bubble.use': 'Use it', 'chat.bubble.discard': 'Not this', 'chat.bubble.discarded': 'Back to the version in use. Say what should be different, and it changes again from there.', 'chat.bubble.fix': 'Have it fixed', 'chat.bubble.fix.why': 'The last try did not work: {why}', 'chat.bubble.used': 'In use on the devices that use this interface.',
+  'ui.change': 'Ask AI to change it', 'ui.change.what': 'What should change', 'ui.change.eg': 'e.g. On Today, put the to-do list above the digest, and make the numbers larger on a phone', 'ui.change.go': 'Draft the work', 'ui.change.note': 'An executor gets this interface’s source and the interface API, none of your data. It builds the change; the new version waits here for you to preview and approve.', 'ui.change.deps': 'The packages it builds with are not set up yet. On the computer Genatrix runs on, run', 'ui.change.nosource': 'This one was filed from a folder and has no source here, so it cannot be changed by asking. Copy the built-in one to have one that can.',
+  'ui.lede': 'Each device uses one interface. Several may use the same one: change it, and all of them change. Copy one to change it for this device alone.', 'ui.first': 'This device has not picked an interface yet. Use the built-in one, the one another device uses, or a copy to make your own.',
+  'ui.default': 'Built-in', 'ui.here': 'this device', 'ui.usedby': 'used by {who}', 'ui.unused': 'used by no device', 'ui.use': 'Use it', 'ui.follow': 'Use the same', 'ui.copy': 'Copy', 'ui.copy.title': 'Name of the copy', 'ui.copy.eg': 'e.g. Phone', 'ui.copy.go': 'Copy and use it here', 'ui.copy.note': 'The copy starts the same as the one it came from, and from then on changes on its own.',
+  'ui.current': 'in use', 'ui.pending': 'waiting for approval', 'ui.preview': 'Preview', 'ui.approve': 'Approve', 'ui.rollback': 'Go back to this one', 'ui.approved': 'Approved: devices using it get it the next time they open.', 'ui.approve.others': 'Other devices use this interface, so a new version needs this machine or an admin device with the passphrase.', 'ui.thismachine': 'this machine', 'ui.safe.note': 'If an interface stops working, open',
+  'agents.view.at': 'As of {at}',
   'spaces.recent.done': 'Recently done', 'spaces.more': 'All {n}', 'spaces.active.none': 'Nothing going on.',
   'spaces.github.own': 'Pushes with this space’s own token.', 'spaces.github.default': 'Pushes with the default token; `genatrix github login --workspace <name>` gives it its own.', 'spaces.github.none': 'No GitHub token yet: `genatrix github login`.',
   'work.fromtask': 'From the task “{title}”', 'work.fromtask.clear': 'not from a task', 'work.spaces.noaccounts': 'no accounts',
@@ -31,7 +66,7 @@ const en: Dict = {
   'spaceform.add': 'Add space', 'spaceform.save': 'Save', 'spaceform.saving': 'Saving…', 'spaceform.added': 'Space {name} added.',
   'projectform.repo': 'Where the code is, on the computer Genatrix runs on', 'projectform.repo.note': 'A folder that is a git repository. Executors never get this path; they work on a copy.',
   'projectform.github': 'GitHub repository (optional)', 'projectform.github.note': 'owner/name: where pushes and pull requests go.', 'projectform.github.bad': 'Write it as owner/name.',
-  'projectform.name': 'Project name', 'projectform.name.taken': 'There is already a project by this name.',
+  'projectform.name': 'Project name', 'projectform.name.taken': 'There is already a project by this name.', 'projectform.name.fixed': 'A project keeps its name.', 'projectform.edit': 'Change', 'projectform.save': 'Save changes', 'projectform.saved': 'Project {name} changed. Work drafted from now on uses the new settings; cards already drafted keep the old ones.',
   'projectform.executors': 'Who may see the code', 'projectform.executors.none': 'No executors are set up yet.', 'projectform.executors.note': 'Only these executors get a copy of the repository.',
   'projectform.commands': 'Commands they may run', 'projectform.commands.note': 'One per line, exactly as written, such as tests. Leave empty for none.',
   'projectform.more': 'More options', 'projectform.less': 'Fewer options', 'projectform.base': 'Base branch', 'projectform.base.current': 'checked out now', 'projectform.base.note': 'Work starts from this branch, and pull requests go to it. Only local branches are listed.', 'projectform.branches.none': 'This repository has no local branch with a commit yet.',
@@ -118,10 +153,13 @@ const en: Dict = {
   'category.newsletter': 'newsletter', 'category.promotion': 'advertising', 'category.byyou': 'You said so; it applies to what they send later too.',
   'category.byrules': 'Sorted by rules. Pick another and it applies to everything they send.', 'timeline.quiet': 'Newsletters and ads',
   'junk.mark': 'Mark as junk', 'junk.yes': 'Delete and mark as junk',
+  'delete.mark': 'Delete conversation', 'delete.yes': 'Delete for good',
+  'delete.confirm.person': 'This deletes the {n} messages between you and {name}, for good. What they send from now on is still kept; to stop that, mark them as junk instead.',
+  'delete.confirm.group': 'This deletes the {n} messages in {name}, for good. New messages there are still kept; to stop that, mark it as junk instead.',
   'junk.confirm.person': 'This deletes the {n} messages between you and {name}, and from now on their messages are not kept. Deleted messages cannot be brought back.',
   'junk.confirm.group': 'This deletes the {n} messages in {name}, and from now on its messages are not kept. Deleted messages cannot be brought back.',
   'junk.title': 'Junk', 'junk.note': 'People, groups and channels you marked as junk. Their new messages are dropped before they are kept. Restoring lets new messages in again; what was deleted stays deleted.',
-  'junk.none': 'Nothing marked as junk.', 'junk.restore': 'Restore', 'junk.kind.person': 'person', 'junk.kind.thread': 'group or channel',
+  'junk.none': 'Nothing marked as junk.', 'junk.restore': 'Restore', 'junk.forget': 'Delete for good', 'junk.forget.yes': 'Delete for good', 'junk.forget.confirm': 'It leaves this list for good. What was deleted stays deleted; new messages from now on are kept.', 'junk.kind.person': 'person', 'junk.kind.thread': 'group or channel',
   'junk.someone': 'someone', 'junk.agroup': 'a group',
   'chat.agent': 'agent',
   'agents.title': 'Agents', 'agents.note': 'Installed agents run in a sandbox: they read only what their manifest names, reach no network, and everything they would do comes to Approvals first.',
@@ -270,7 +308,7 @@ const zh: Dict = {
   'work': '工作',
   'action.kind.dispatch': '交给执行器', 'action.kind.push_branch': '推送分支', 'action.kind.open_pull_request': '开 Pull Request',
   'work.public': '这段文字不涉及隐私：原样发送',
-  'work.card_note': '批准后，这段文字和项目的代码会交给上面列出的服务。推送到 GitHub 要你另外批准。',
+  'work.card_note': '批准后，这段文字和项目的代码会交给上面列出的服务。之后它要再往别处送东西，比如推送到 GitHub，要你另外批准。',
   'work.add_project': '添加项目', 'work.add_project.note': '项目就是运行 Genatrix 的电脑上的一个代码仓库，加上允许看到它的执行器。只能在那台电脑上，或者在管理设备上输入管理口令添加。',
   'spaces': '空间', 'spaces.personal': '个人', 'spaces.lede': '每个空间是你的一摊事：它的账号、它的项目、给它干活的执行器。一个空间的账号带来的内容，只交给它自己的执行器。',
   'spaces.all': '全部空间', 'spaces.add': '添加空间', 'spaces.edit': '修改这个空间',
@@ -282,6 +320,40 @@ const zh: Dict = {
   'spaces.tab.overview': '概览', 'spaces.tab.todo': '待办', 'spaces.tab.new': '新工作', 'spaces.tab.work': '派单', 'spaces.tab.setup': '组成',
   'spaces.stat.todo': '待办', 'spaces.stat.active': '进行中', 'spaces.stat.approvals': '等你批准', 'spaces.stat.done': '已结束',
   'spaces.needs': '需要你', 'spaces.needs.none': '现在没有要你处理的事。', 'spaces.needs.answer': '{what} 在等你回答', 'spaces.needs.approvals': '{n} 项在等你批准', 'spaces.needs.account': '账号 {id}：{text}', 'spaces.needs.noproject': '还没有项目，派不了单', 'spaces.needs.github': '还没有 GitHub 令牌，做完的工作推不上去',
+  'spaces.gh.issues': 'GitHub issue', 'spaces.gh.pulls': 'Pull request', 'spaces.gh.issues.n': '{n} 个 open issue', 'spaces.gh.pulls.n': '{n} 个 open PR', 'spaces.gh.issues.none': '没有 open 的 issue。', 'spaces.gh.pulls.none': '没有 open 的 PR。', 'spaces.gh.read': '{when} 读取', 'spaces.gh.error': 'GitHub {repo}：{why}', 'spaces.gh.comments': '{n} 条评论', 'spaces.gh.more': '只列了前 {n} 个，其余的在 GitHub 上看。', 'spaces.gh.draft': '草稿', 'spaces.gh.from_work': 'Genatrix 开的，来自这次派单', 'spaces.gh.pr.open': '未合并', 'spaces.gh.pr.merged': '已合并', 'spaces.gh.pr.closed': '已关闭', 'spaces.gh.issue.gone': '这个 issue 在 GitHub 上已经不是 open 了，或者读不到。',
+  'work.issue.from': 'Issue', 'work.issue.open': '在 GitHub 打开',
+  'github.token': 'GitHub 令牌', 'github.token.note': '用 fine-grained token：对要用的仓库给 Contents 和 Pull requests 读写、Issues 只读。组织的仓库要把 owner 选成那个组织，可能还要组织管理员批准。', 'github.token.make': '去 GitHub 生成',
+  'github.checking': '正在问 GitHub…', 'github.save': '保存', 'github.saved': '已保存：GitHub 说这个令牌是 @{login} 的。令牌存在钥匙串里。',
+  'github.default': '默认账号：', 'github.default.lede': '没有自己账号的空间，推送、开 PR、读 issue 都用默认账号。', 'github.none': '还没有',
+  'github.add': '添加默认账号', 'github.replace': '更换令牌', 'github.remove': '移除', 'github.unknown': '有令牌，但 GitHub 没答上来是谁的（{why}）',
+  'github.forgot.default': '默认令牌已从钥匙串删除。', 'github.forgot.space': '这个空间改回用默认账号。',
+  'github.space.own': '这个空间用自己的账号：{who}。', 'github.space.default': '这个空间用默认账号：{who}。', 'github.space.none': '还没有 GitHub 账号：给这个空间单独一个，或者在空间列表页添加默认账号。',
+  'github.space.give': '给它单独一个账号', 'github.space.back': '改回默认账号',
+  'spaceform.github': 'GitHub 账号', 'spaceform.github.default': '用默认账号', 'spaceform.github.nodefault': '还没有默认账号，可以在空间列表页添加', 'spaceform.github.own': '用它自己的账号', 'spaceform.github.own.note': '比如公司的仓库：一个只给这个空间用的令牌',
+  'spaceform.github.failed': '空间已添加，但 GitHub 令牌没存上：{why}。可以在空间的"组成"页再填一次。',
+  'admin.act.github_sign_in': '填入 GitHub 令牌 {s}', 'admin.act.github_sign_out': '移除 GitHub 令牌 {s}',
+  'action.review': '审批',
+  'shell.security.title': '设备与安全', 'shell.security.open': '打开设备与安全', 'shell.security.note': '配对、设备、管理口令、导出和删除全部，和界面分开：它们在一个界面画不了、也碰不到的面板里打开。',
+  'shell.interface.title': '界面', 'shell.interface.open': '界面', 'shell.close': '关闭', 'shell.retry': '再试一次', 'shell.leave': '退出',
+  'shell.safe': '安全模式：用的是内置界面，不管这台设备选了哪个。', 'shell.preview': '预览：一个还没批准的版本，只在这台设备上。',
+  'shell.refused': '这件事在"设备与安全"里做，不能从界面里做。', 'shell.declined': '没有发出：你选了取消。',
+  'shell.ask.title': '界面请求', 'shell.ask.note': '这是外壳，不是界面：下面就是将要发出的请求原样。密码和令牌只显示"已填"。', 'shell.ask.request': '请求', 'shell.ask.yes': '发出',
+  'shell.ask.unknown': '一个外壳不认识的请求', 'shell.ask.add_mailbox': '添加邮箱', 'shell.ask.start_telegram': '登录 Telegram', 'shell.ask.start_lark': '登录飞书', 'shell.ask.remove_account': '移除账号和它带来的内容',
+  'shell.ask.install_agent': '安装 agent', 'shell.ask.uninstall_agent': '卸载 agent 并删除它的空间', 'shell.ask.file_definition': '登记空间、项目、流程或角色', 'shell.ask.github_sign_in': '保存 GitHub 令牌', 'shell.ask.github_sign_out': '移除 GitHub 令牌', 'shell.ask.download_model': '下载模型',
+  'shell.ask.delete_person': '永久删除和一个人的对话', 'shell.ask.delete_group': '永久删除一个群的消息', 'shell.ask.junk_person': '删除一个人的消息并不再接收', 'shell.ask.junk_group': '删除一个群的消息并不再接收', 'shell.ask.junk_forget': '从垃圾清单里彻底删除', 'shell.ask.stop_work': '停止一次派单', 'shell.ask.item_level': '改一条消息的敏感级别',
+  'shell.review.title': '审批', 'shell.review.note': '这张卡片由外壳按 core 里的内容画出，不是界面画的。',
+  'shell.open.title': '打开外部页面', 'shell.open.download': '从 Genatrix 下载', 'shell.open.note': '界面自己打不开任何东西。下面是它要带你去的地址，地址里的内容会一起带过去。', 'shell.open.go': '打开',
+  'chat.bubble.title': '和 AI 说', 'chat.bubble.ask': '问', 'chat.bubble.change': '改这一页', 'chat.bubble.where': '在：{page}', 'chat.bubble.context': '我正在看：{page}。你改不了这个界面；如果我是想改这个页面，请直接说你改不了，并告诉我用这个对话框里的“改这一页”',
+  'chat.bubble.empty.ask': '问你的邮件、消息、工作，或者这一页怎么用。由这台电脑上的模型回答，什么都不出去。', 'chat.bubble.empty.change': '说这一页想怎么改。它会变成一次派单，交给执行器改这个界面的源码，并带上你当前所在的页面；先批准卡片，改好的新版本等你预览、启用。',
+  'chat.bubble.placeholder.ask': '问点什么…', 'chat.bubble.placeholder.change': '比如：把待办放在摘要上面', 'chat.bubble.answer.placeholder': '回答执行器，或者点上面的选项', 'chat.bubble.send': '发送', 'chat.bubble.sounds': '这句话像是要改这一页。回答问题的模型改不了页面；要交给执行器来改吗？', 'chat.bubble.justask': '只是问问', 'chat.bubble.thinking': '处理中…',
+  'chat.bubble.proposed': '它提了一个动作，在审批里等你。', 'chat.bubble.nosource': '内置界面在这里没有源码可改。复制一份给这台设备用，就能改了。', 'chat.bubble.copy': '复制并在这台设备上用', 'chat.bubble.mine': '我的', 'chat.bubble.copied': '这台设备现在用自己的一份了。再说一次想怎么改。',
+  'chat.bubble.drafted': '已起草派单，请在卡片上决定。', 'chat.bubble.waiting': '卡片在等你决定。', 'chat.bubble.declined': '没有发出。', 'chat.bubble.working': '执行器正在改这一页…（{min} 分钟）', 'chat.bubble.watch': '看过程',
+  'chat.bubble.answer.own': '点一个，或者在下面写你自己的回答。', 'chat.bubble.ended': '派单{state}。{detail}', 'chat.bubble.nobuild': '派单做完了，但没有留下新版本：{detail}', 'chat.bubble.ready': '改好了：{note}。页面上就是改好的样子（只在这台设备上预览），没问题就启用。', 'chat.bubble.use': '启用', 'chat.bubble.discard': '不要', 'chat.bubble.discarded': '回到了正在用的版本。说说哪里不对，就从这里接着改。', 'chat.bubble.fix': '让它修好', 'chat.bubble.fix.why': '上一次没成功：{why}', 'chat.bubble.used': '已启用，用这个界面的设备都会换上。',
+  'ui.change': '让 AI 改', 'ui.change.what': '想怎么改', 'ui.change.eg': '比如：今天页把待办放在摘要上面，手机上数字再大一点', 'ui.change.go': '起草派单', 'ui.change.note': '执行器拿到的是这个界面的源码和界面接口，拿不到你的任何数据。它改完会构建；新版本回到这里，你预览、批准后才生效。', 'ui.change.deps': '构建要用的依赖还没准备好。在运行 Genatrix 的电脑上运行', 'ui.change.nosource': '这个界面是从文件夹登记的，这里没有它的源码，没法让 AI 改。复制内置界面，得到一个可以改的。',
+  'ui.lede': '每台设备用一个界面，几台设备可以用同一个：改了它，用它的设备都跟着变。想只改这台设备的，就复制一份。', 'ui.first': '这台设备还没选界面。可以用内置的，用另一台设备在用的，或者复制一份改成自己的。',
+  'ui.default': '内置', 'ui.here': '这台设备', 'ui.usedby': '{who} 在用', 'ui.unused': '没有设备在用', 'ui.use': '用它', 'ui.follow': '用同一个', 'ui.copy': '复制', 'ui.copy.title': '复制出来的叫什么', 'ui.copy.eg': '比如：手机', 'ui.copy.go': '复制并在这台设备上用', 'ui.copy.note': '复制出来的一开始和原来的一样，之后各改各的。',
+  'ui.current': '在用', 'ui.pending': '待批准', 'ui.preview': '预览', 'ui.approve': '批准', 'ui.rollback': '用回这一版', 'ui.approved': '已批准：用它的设备下次打开时就是新版本。', 'ui.approve.others': '还有别的设备在用这个界面，批准新版本要在这台电脑上，或者在带口令的管理设备上。', 'ui.thismachine': '这台电脑', 'ui.safe.note': '界面坏了打不开时，打开',
+  'agents.view.at': '更新于 {at}',
   'spaces.recent.done': '最近结束的', 'spaces.more': '全部 {n} 条', 'spaces.active.none': '没有进行中的派单。',
   'spaces.github.own': '用这个空间自己的令牌推送。', 'spaces.github.default': '用默认令牌推送；`genatrix github login --workspace <名字>` 可以给它单独一个。', 'spaces.github.none': '还没有 GitHub 令牌：`genatrix github login`。',
   'work.fromtask': '来自任务「{title}」', 'work.fromtask.clear': '不从任务派', 'work.spaces.noaccounts': '没有账号',
@@ -293,7 +365,7 @@ const zh: Dict = {
   'spaceform.add': '添加空间', 'spaceform.save': '保存', 'spaceform.saving': '保存中…', 'spaceform.added': '已添加空间 {name}。',
   'projectform.repo': '代码在运行 Genatrix 的电脑上的位置', 'projectform.repo.note': '一个 git 仓库所在的文件夹。执行器拿不到这个路径，只在副本上干活。',
   'projectform.github': 'GitHub 仓库（可不填）', 'projectform.github.note': '写成 owner/name，推送和 PR 都发到这里。', 'projectform.github.bad': '请写成 owner/name 的形式。',
-  'projectform.name': '项目名', 'projectform.name.taken': '已经有同名的项目了。',
+  'projectform.name': '项目名', 'projectform.name.taken': '已经有同名的项目了。', 'projectform.name.fixed': '项目名不能改。', 'projectform.edit': '修改', 'projectform.save': '保存修改', 'projectform.saved': '项目 {name} 已修改。之后起草的派单按新设置；已经起草的卡片仍按起草时的设置。',
   'projectform.executors': '谁可以看到代码', 'projectform.executors.none': '还没有配置执行器。', 'projectform.executors.note': '只有勾选的执行器会拿到仓库的副本。',
   'projectform.commands': '允许它们运行的命令', 'projectform.commands.note': '每行一条，按原样执行，比如跑测试的命令。不填就是都不许。',
   'projectform.more': '更多选项', 'projectform.less': '收起', 'projectform.base': '基础分支', 'projectform.base.current': '当前所在', 'projectform.base.note': '工作从这个分支开始，PR 也提给它。这里只列本地分支。', 'projectform.branches.none': '这个仓库还没有带提交的本地分支。',
@@ -380,10 +452,13 @@ const zh: Dict = {
   'category.newsletter': '订阅资讯', 'category.promotion': '广告促销', 'category.byyou': '你定的，他以后的邮件也照此归类。',
   'category.byrules': '规则判断的。选另一类，他所有的邮件都照此归类。', 'timeline.quiet': '显示订阅与广告',
   'junk.mark': '标为垃圾', 'junk.yes': '删除并标为垃圾',
+  'delete.mark': '删除对话', 'delete.yes': '永久删除',
+  'delete.confirm.person': '会永久删除你和 {name} 之间的 {n} 条消息，无法恢复。TA 以后发来的消息照常接收；不想再收，就改用"标为垃圾"。',
+  'delete.confirm.group': '会永久删除 {name} 里的 {n} 条消息，无法恢复。以后这里的新消息照常接收；不想再收，就改用"标为垃圾"。',
   'junk.confirm.person': '会删除你和 {name} 之间的 {n} 条消息，以后 TA 的消息不再接收。删除后无法恢复。',
   'junk.confirm.group': '会删除 {name} 里的 {n} 条消息，以后这里的消息不再接收。删除后无法恢复。',
   'junk.title': '垃圾', 'junk.note': '你标为垃圾的人、群和频道。它们的新消息在入库前就被丢掉。恢复后重新接收新消息，已经删掉的不会回来。',
-  'junk.none': '没有标为垃圾的。', 'junk.restore': '恢复', 'junk.kind.person': '个人', 'junk.kind.thread': '群或频道',
+  'junk.none': '没有标为垃圾的。', 'junk.restore': '恢复', 'junk.forget': '彻底删除', 'junk.forget.yes': '确认彻底删除', 'junk.forget.confirm': '从清单里彻底去掉。已经删掉的不会回来；以后的新消息照常接收。', 'junk.kind.person': '个人', 'junk.kind.thread': '群或频道',
   'junk.someone': '某人', 'junk.agroup': '某个群',
   'chat.agent': 'agent',
   'agents.title': 'Agent', 'agents.note': '已安装的 agent 在沙箱里运行：只读清单写明的数据，不能联网，想做的每件事都先到审批页。',
@@ -535,19 +610,14 @@ export type LangChoice = 'auto' | 'zh' | 'en';
 const KEY = 'genatrix.lang';
 
 export function languageChoice(): LangChoice {
-  try {
-    const v = localStorage.getItem(KEY);
-    if (v === 'zh' || v === 'en') return v;
-  } catch { /* follow the system */ }
-  return 'auto';
+  const v = getItem(KEY);
+  return v === 'zh' || v === 'en' ? v : 'auto';
 }
 
 /** Remember the choice and show the page again in it. */
 export function setLanguage(choice: LangChoice) {
-  try {
-    if (choice === 'auto') localStorage.removeItem(KEY); else localStorage.setItem(KEY, choice);
-  } catch { /* nothing to remember it in */ }
-  location.reload();
+  if (choice === 'auto') removeItem(KEY); else setItem(KEY, choice);
+  reload();
 }
 
 const system: 'zh' | 'en' = typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';

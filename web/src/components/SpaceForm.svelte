@@ -1,14 +1,19 @@
 <script lang="ts">
-  import { get, post, type Workspace } from '../lib/api';
+  import { get, post, type GithubOverview, type Workspace } from '../lib/api';
   import { t } from '../lib/i18n';
 
   // Design 06 v0.16, design 14: a space is added and changed with a form.
   // Its accounts are picked from the ones connected in Settings; an account
   // already in another space is shown but cannot be picked (invariant 30).
   // The core writes the file; nobody types TOML on the page.
+  // A new space picks its GitHub account too (v0.21): the default one, or
+  // a token of its own, kept once the space is filed.
   let { existing = null, spaces, onfiled }: {
-    existing?: Workspace | null; spaces: Workspace[]; onfiled: (name: string) => void;
+    existing?: Workspace | null; spaces: Workspace[]; onfiled: (name: string, warning?: string) => void;
   } = $props();
+  let gh = $state<GithubOverview | null>(null);
+  let ghOwn = $state(false);
+  let ghToken = $state('');
 
   interface Connected { kind: string; id: string; name: string }
   let connected = $state<Connected[] | null>(null);
@@ -24,6 +29,9 @@
     name = existing?.name ?? '';
     chosen = [...(existing?.accounts ?? [])];
     nameTouched = false;
+  });
+  $effect(() => {
+    if (!existing) get<GithubOverview>('/api/github').then((g) => (gh = g)).catch(() => {});
   });
   $effect(() => {
     get<{ accounts: Connected[] }>('/api/setup')
@@ -57,7 +65,13 @@
         kind: 'workspace',
         fields: { name, title: title.trim(), accounts: chosen },
       });
-      onfiled(r.name);
+      let warning: string | undefined;
+      if (!existing && ghOwn && ghToken.trim()) {
+        try { await post('/api/github/token', { workspace: r.name, token: ghToken.trim() }); }
+        catch (err: any) { warning = t('spaceform.github.failed', { why: err.message }); }
+        ghToken = '';
+      }
+      onfiled(r.name, warning);
     } catch (err: any) { error = err.message; }
     busy = false;
   }
@@ -106,8 +120,30 @@
     <span class="field-note">{t('spaceform.accounts.note')}</span>
   </div>
 
+  {#if !existing}
+    <div class="field">
+      <span class="field-label">{t('spaceform.github')}</span>
+      <ul class="pick-list">
+        <li><label>
+          <input type="radio" name="gh" checked={!ghOwn} onchange={() => (ghOwn = false)} />
+          <span class="pick-body"><span class="pick-name">{t('spaceform.github.default')}</span>
+            <span class="faint">{gh?.default?.login ? '@' + gh.default.login : t('spaceform.github.nodefault')}</span></span>
+        </label></li>
+        <li><label>
+          <input type="radio" name="gh" checked={ghOwn} onchange={() => (ghOwn = true)} />
+          <span class="pick-body"><span class="pick-name">{t('spaceform.github.own')}</span>
+            <span class="faint">{t('spaceform.github.own.note')}</span></span>
+        </label></li>
+      </ul>
+      {#if ghOwn}
+        <input type="password" bind:value={ghToken} autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_…" aria-label={t('github.token')} />
+        <span class="field-note">{t('github.token.note')} <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">{t('github.token.make')}</a></span>
+      {/if}
+    </div>
+  {/if}
+
   {#if error}<p class="note error">{error}</p>{/if}
   <div class="chooser">
-    <button type="submit" class="choose primary" disabled={busy || !title.trim() || !nameOk || taken}>{busy ? t('spaceform.saving') : existing ? t('spaceform.save') : t('spaceform.add')}</button>
+    <button type="submit" class="choose primary" disabled={busy || !title.trim() || !nameOk || taken || (!existing && ghOwn && !ghToken.trim())}>{busy ? t('spaceform.saving') : existing ? t('spaceform.save') : t('spaceform.add')}</button>
   </div>
 </form>

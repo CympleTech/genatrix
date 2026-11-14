@@ -184,11 +184,14 @@ pub fn normalize(path: &str) -> Option<String> {
 
 /// Whether `asked` is the declared command, or the declared command with
 /// plain arguments after it. Nothing a shell would read as a second command,
-/// a substitution or a redirection is plain.
+/// a substitution or a redirection is plain, with one exception: a trailing
+/// `2>&1`, which only sends the errors where the output goes and which
+/// executors add out of habit (design 13 v0.9).
 #[must_use]
 pub fn command_allowed(declared: &str, asked: &str) -> bool {
     let declared = declared.trim();
     let asked = asked.trim();
+    let asked = asked.strip_suffix("2>&1").map_or(asked, str::trim_end);
     if asked == declared {
         return true;
     }
@@ -282,6 +285,12 @@ mod tests {
         assert_eq!(run("cargo test"), Answer::Allow);
         assert_eq!(run("cargo test -p genatrix-dispatch --lib"), Answer::Allow);
         assert_eq!(
+            run("npm run check 2>&1"),
+            Answer::Allow,
+            "errors with the output"
+        );
+        assert_eq!(run("cargo test -p x 2>&1"), Answer::Allow);
+        assert_eq!(
             run("git diff main...HEAD"),
             Answer::Allow,
             "reading git is fine"
@@ -291,6 +300,10 @@ mod tests {
             "cargo test && git push",
             "cargo test $(cat ~/.ssh/id_ed25519)",
             "cargo test > /etc/x",
+            "cargo test 2>&1 > /etc/x",
+            "cargo test 2>&1 | sh",
+            "cargo test 2> /tmp/x",
+            "cargo test 2>&1; rm -rf /",
             "cargo testx",
             "git push origin main",
             "git commit -m x",

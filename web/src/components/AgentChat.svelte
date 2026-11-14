@@ -7,6 +7,7 @@
   import { refreshPending } from '../lib/status';
   import ActionCard from './ActionCard.svelte';
   import Icon from './Icon.svelte';
+  import AgentView from './AgentView.svelte';
 
   // Design 11, "身份与记录": an agent is a party in Chats. Above, what it is
   // allowed and how it has done; below, the conversation: what you said on
@@ -41,6 +42,17 @@
     await tick();
     if (stream) stream.scrollTop = stream.scrollHeight;
   }
+  // Design 11 v0.2: what it has published, shown with its details.
+  let views = $state<{ view: any; at: string; name: string }[]>([]);
+  async function loadViews() {
+    try {
+      const list = await get<{ rows: { agent: string; name: string }[] }>('/api/v1/views');
+      views = await Promise.all(list.rows.filter((v) => v.agent === id)
+        .map((v) => get<{ view: any; at: string; name: string }>(`/api/v1/views/${encodeURIComponent(v.agent)}/${encodeURIComponent(v.name)}`)));
+    } catch { views = []; }
+  }
+  $effect(() => { if (expanded) loadViews(); });
+
   async function load() {
     try {
       detail = await get<AgentDetail>(`/api/agent/${id}`);
@@ -108,6 +120,7 @@
       <dl class="card-fields grants">
         {#each detail.lines as l}<dt>{t(`agents.grant.${l.label}`)}</dt><dd>{l.text}</dd>{/each}
       </dl>
+      {#each views as v (v.name)}<AgentView view={v.view} at={v.at} />{/each}
       <p class="note">{t('agents.by', { author: detail.card.author })} · {t('agents.version', { v: detail.card.version })}</p>
       <div class="chooser">
         <button type="button" class="choose" class:lowers={detail.card.state === 'active'} onclick={toggleState}>

@@ -191,18 +191,20 @@
     } catch (e: any) { error = e.message; }
   }
 
-  // Design 06, "标为垃圾": say what will go before anything goes.
+  // Design 06, "标为垃圾" and v0.20 "删除对话": say what will go before
+  // anything goes. Deleting keeps what comes later; junk keeps it out.
   let junkCount = $state<number | null>(null);
+  let junkMode = $state<'delete' | 'junk'>('delete');
   let junking = $state(false);
-  async function askJunk() {
-    error = '';
+  async function askJunk(mode: 'delete' | 'junk') {
+    error = ''; junkMode = mode;
     try { junkCount = (await get<{ items: number }>(`${base}/junk`)).items; }
     catch (e: any) { error = e.message; }
   }
   async function markJunk() {
     junking = true;
     try {
-      await post(`${base}/junk`, {});
+      await post(`${base}/${junkMode}`, {});
       window.dispatchEvent(new CustomEvent('genatrix:party-gone', { detail: id }));
       go('/chats');
     } catch (e: any) { error = e.message; junking = false; }
@@ -217,11 +219,14 @@
 {#snippet junkRow()}
   <div class="junk-row">
     {#if junkCount === null}
-      <button type="button" class="choose lowers" onclick={askJunk}>{t('junk.mark')}</button>
-    {:else}
-      <p class="note">{t(kind === 'group' ? 'junk.confirm.group' : 'junk.confirm.person', { n: junkCount, name })}</p>
       <div class="chooser">
-        <button type="button" class="choose danger" disabled={junking} onclick={markJunk}>{t('junk.yes')}</button>
+        <button type="button" class="choose lowers" onclick={() => askJunk('delete')}>{t('delete.mark')}</button>
+        <button type="button" class="choose lowers" onclick={() => askJunk('junk')}>{t('junk.mark')}</button>
+      </div>
+    {:else}
+      <p class="note">{t((junkMode === 'delete' ? 'delete' : 'junk') + (kind === 'group' ? '.confirm.group' : '.confirm.person'), { n: junkCount, name })}</p>
+      <div class="chooser">
+        <button type="button" class="choose danger" disabled={junking} onclick={markJunk}>{t(junkMode === 'delete' ? 'delete.yes' : 'junk.yes')}</button>
         <button type="button" class="choose lowers" onclick={() => (junkCount = null)}>{t('agents.cancel')}</button>
       </div>
     {/if}

@@ -22,6 +22,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
+use crate::isolation::Isolation;
+
 /// The protocol version this client speaks.
 pub const PROTOCOL_VERSION: u64 = 1;
 
@@ -75,15 +77,22 @@ pub struct Client {
     next: AtomicU64,
     child: Child,
     stderr: Arc<StdMutex<String>>,
+    /// Who it runs as: the one who may signal it and its descendants.
+    isolation: Isolation,
 }
 
 impl Client {
     /// Start `argv` and begin reading what it says.
+    ///
+    /// It starts in a process group of its own, so that it and everything
+    /// it starts can be ended together (design 13 v0.10), and so that a
+    /// terminal's Ctrl-C meant for the core does not cut it off unfinished.
     pub fn spawn(
         argv: &[String],
         env: &[(String, String)],
-        clear_env: bool,
+        isolation: &Isolation,
     ) -> std::io::Result<(Self, mpsc::UnboundedReceiver<Incoming>)> {
+        let clear_env = matches!(isolation, Isolation::User { .. });
         let (program, rest) = argv
             .split_first()
             .ok_or_else(|| std::io::Error::other("no command for this executor"))?;
@@ -93,6 +102,7 @@ impl Client {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .process_group(0)
             .kill_on_drop(true);
         if clear_env {
             command.env_clear();
@@ -173,6 +183,7 @@ impl Client {
                 next: AtomicU64::new(1),
                 child,
                 stderr,
+                isolation: isolation.clone(),
             },
             rx,
         ))
@@ -247,19 +258,92 @@ impl Client {
     /// End the executor: ask politely, then make sure. Through `sudo`, a
     /// terminate signal is passed on to the program; a kill would stop only
     /// `sudo` and leave the program running.
+    /// End the executor and everything it started: its process group and
+    /// every process descended from it, as the executor's own user, first
+    /// asked to stop, then, after a few seconds, made to (design 13 v0.10).
+    /// Nothing it started is left running on its own.
     pub async fn end(mut self) {
-        if let Some(pid) = self.child.id() {
-            let _ = Command::new("/bin/kill")
-                .args(["-TERM", &pid.to_string()])
-                .status()
-                .await;
-        }
+        let Some(pid) = self.child.id() else {
+            let _ = self.child.wait().await;
+            return;
+        };
+        let mut tree = family(pid).await;
+        signal(&self.isolation, "TERM", pid, &tree).await;
         let waited =
             tokio::time::timeout(std::time::Duration::from_secs(5), self.child.wait()).await;
         if waited.is_err() {
             let _ = self.child.start_kill();
             let _ = self.child.wait().await;
         }
+        // What is still there, and anything started since the first look,
+        // is made to stop.
+        for p in family(pid).await {
+            if !tree.contains(&p) {
+                tree.push(p);
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        signal(&self.isolation, "KILL", pid, &tree).await;
+    }
+}
+
+/// A process and its family: every process in its process group, and every
+/// process descended from it, by the process table as it is now.
+async fn family(root: u32) -> Vec<u32> {
+    let Ok(out) = Command::new("/bin/ps")
+        .args(["-A", "-o", "pid=,ppid=,pgid="])
+        .output()
+        .await
+    else {
+        return vec![root];
+    };
+    let rows: Vec<(u32, u32, u32)> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace().map(str::parse::<u32>);
+            Some((f.next()?.ok()?, f.next()?.ok()?, f.next()?.ok()?))
+        })
+        .collect();
+    let mut found = vec![root];
+    let mut i = 0;
+    while i < found.len() {
+        let parent = found[i];
+        for (pid, ppid, _) in &rows {
+            if *ppid == parent && !found.contains(pid) {
+                found.push(*pid);
+            }
+        }
+        i += 1;
+    }
+    for (pid, _, pgid) in &rows {
+        if *pgid == root && !found.contains(pid) {
+            found.push(*pid);
+        }
+    }
+    found
+}
+
+/// Send a signal to a process group and to processes, as the user they run
+/// as. Some may be gone already, or not be that user's (`sudo` itself): the
+/// rest still get it.
+async fn signal(isolation: &Isolation, name: &str, group: u32, pids: &[u32]) {
+    let mut line = vec![
+        "/bin/kill".to_owned(),
+        "-s".to_owned(),
+        name.to_owned(),
+        "--".to_owned(),
+        format!("-{group}"),
+    ];
+    line.extend(pids.iter().map(ToString::to_string));
+    let argv = isolation.wrap(&line);
+    if let Some((program, rest)) = argv.split_first() {
+        let _ = Command::new(program)
+            .args(rest)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
     }
 }
 
@@ -346,6 +430,71 @@ pub fn permission_outcome(options: &Value, allow: bool) -> Value {
 
 #[cfg(test)]
 mod tests {
+    /// The processes whose command line is exactly this.
+    fn running(marker: &str) -> Vec<String> {
+        let out = std::process::Command::new("/bin/ps")
+            .args(["-A", "-o", "pid=,command="])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| {
+                l.trim()
+                    .split_once(' ')
+                    .is_some_and(|(_, command)| command.trim() == marker)
+            })
+            .map(str::to_owned)
+            .collect()
+    }
+
+    async fn nothing_is_left(isolation: Isolation, a: &str, b: &str) {
+        let script = format!("sleep {a} & (sleep {b} &) ; wait");
+        let argv = isolation.wrap(&["/bin/sh".to_owned(), "-c".to_owned(), script]);
+        let (client, _incoming) = Client::spawn(&argv, &[], &isolation).unwrap();
+        for _ in 0..50 {
+            if running(&format!("sleep {a}")).len() == 1
+                && running(&format!("sleep {b}")).len() == 1
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(
+            running(&format!("sleep {b}")).len(),
+            1,
+            "the grandchild started"
+        );
+        client.end().await;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(
+            running(&format!("sleep {a}")).is_empty(),
+            "{:?}",
+            running(&format!("sleep {a}"))
+        );
+        assert!(
+            running(&format!("sleep {b}")).is_empty(),
+            "{:?}",
+            running(&format!("sleep {b}"))
+        );
+    }
+
+    /// Design 13 v0.10: ending an executor ends everything it started, its
+    /// children and theirs, even one that has left its parent; nothing is
+    /// left running on its own.
+    #[tokio::test]
+    async fn ending_an_executor_leaves_nothing_behind() {
+        nothing_is_left(Isolation::SameUserForTests, "3713", "3714").await;
+    }
+
+    /// The same, as the executor's own user through `sudo`, on a machine
+    /// set up with `genatrix exec setup`: `cargo test -p genatrix-exec --
+    /// --ignored`.
+    #[tokio::test]
+    #[ignore = "needs the executor's user and its sudo rule"]
+    async fn ending_an_executor_as_its_user_leaves_nothing_behind() {
+        nothing_is_left(Isolation::exec_user(), "3715", "3716").await;
+    }
+
     use super::*;
 
     #[test]

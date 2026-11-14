@@ -11,6 +11,12 @@
     try { junk = await get<Junk[]>('/api/junk'); } catch (e: any) { error = e.message; }
   }
   $effect(() => { load(); });
+  // Off the list for good (design 01 v0.7): asked once, on the row.
+  let asking = $state('');
+  async function forget(j: Junk) {
+    try { await post(`/api/junk/${j.kind}/${j.id}/forget`, {}); asking = ''; await load(); }
+    catch (e: any) { error = e.message; }
+  }
   async function restore(j: Junk) {
     try { await post(`/api/junk/${j.kind}/${j.id}/restore`, {}); await load(); }
     catch (e: any) { error = e.message; }
@@ -29,7 +35,20 @@
           <span class="account-name">{j.name || t(j.kind === 'person' ? 'junk.someone' : 'junk.agroup')}</span>
           <span class="account-state">{t(j.kind === 'person' ? 'junk.kind.person' : 'junk.kind.thread')} · {j.at.slice(0, 10)}</span>
         </span>
-        <button type="button" class="choose" onclick={() => restore(j)}>{t('junk.restore')}</button>
+        {#if asking === j.kind + j.id}
+          <span class="junk-ask">
+            <span class="note">{t('junk.forget.confirm')}</span>
+            <span class="chooser">
+              <button type="button" class="choose danger" onclick={() => forget(j)}>{t('junk.forget.yes')}</button>
+              <button type="button" class="choose lowers" onclick={() => (asking = '')}>{t('agents.cancel')}</button>
+            </span>
+          </span>
+        {:else}
+          <span class="chooser">
+            <button type="button" class="choose" onclick={() => restore(j)}>{t('junk.restore')}</button>
+            <button type="button" class="choose danger" onclick={() => (asking = j.kind + j.id)}>{t('junk.forget')}</button>
+          </span>
+        {/if}
       </li>
     {/each}
   </ul>

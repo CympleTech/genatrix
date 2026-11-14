@@ -15,8 +15,8 @@
   import Work from './pages/Work.svelte';
   import Spaces from './pages/Spaces.svelte';
   import { get as fetchJson } from './lib/api';
+  import { getItem, setItem } from './lib/storage';
   import Icon from './components/Icon.svelte';
-  import PassphraseDialog from './components/PassphraseDialog.svelte';
   import { adminLine } from './lib/admin';
 
   startPolling();
@@ -24,9 +24,7 @@
   // Design 09: with no account yet, on the machine itself, the page opens on
   // the wizard rather than on an empty Today. Skipping it is remembered.
   (async () => {
-    try {
-      if (localStorage.getItem('genatrix.welcome.skipped')) return;
-    } catch { /* no storage: ask every time, which is harmless */ }
+    if (getItem('genatrix.welcome.skipped')) return;
     try {
       const setup = await fetchJson<{ local: boolean; accounts: unknown[] }>('/api/setup');
       if (setup.local && setup.accounts.length === 0 && ($route.parts[0] ?? '') === '') go('/welcome', true);
@@ -73,12 +71,12 @@
   // passphrase, is shown on every device until you have seen it there.
   const SEEN = 'genatrix.admin.seen';
   let seen = $state(0);
-  try { seen = Number(localStorage.getItem(SEEN) ?? 0); } catch { /* no storage: shown once a visit */ }
+  seen = Number(getItem(SEEN) ?? 0);
   const adminNews = $derived($status?.admin_last && $status.admin_last.seq > seen ? $status.admin_last : null);
   function dismissAdmin() {
     if (!adminNews) return;
     seen = adminNews.seq;
-    try { localStorage.setItem(SEEN, String(seen)); } catch { /* the banner comes back next visit */ }
+    setItem(SEEN, String(seen));
   }
   const adminWhen = (at: string) => new Date(at).toLocaleString();
 
@@ -162,4 +160,3 @@
   {/if}
 </div>
 
-<PassphraseDialog />

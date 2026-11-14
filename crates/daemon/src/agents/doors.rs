@@ -259,6 +259,31 @@ fn wit_value(v: SpaceValue) -> wit::Value {
     }
 }
 
+/// A view's cell as the interface API gives it (design 15): a tagged value.
+fn cell_json(c: &wit::Cell) -> serde_json::Value {
+    match c {
+        wit::Cell::Text(t) => serde_json::json!({ "text": t }),
+        wit::Cell::Number(n) => serde_json::json!({ "number": n }),
+        wit::Cell::Money(m) => {
+            serde_json::json!({ "money": { "cents": m.cents, "currency": m.currency } })
+        }
+        wit::Cell::Date(d) => serde_json::json!({ "date": d }),
+    }
+}
+
+/// A view as it is kept and served.
+#[must_use]
+pub fn view_json(v: &wit::View) -> serde_json::Value {
+    serde_json::json!({
+        "title": v.title,
+        "note": v.note,
+        "figures": v.figures.iter().map(|f| serde_json::json!({ "label": f.label, "value": cell_json(&f.value) })).collect::<Vec<_>>(),
+        "columns": v.columns.iter().map(|c| serde_json::json!({ "key": c.key, "label": c.label })).collect::<Vec<_>>(),
+        "rows": v.rows.iter().map(|r| r.iter().map(cell_json).collect::<Vec<_>>()).collect::<Vec<_>>(),
+        "series": v.series.iter().map(|p| serde_json::json!({ "x": p.x, "y": p.y })).collect::<Vec<_>>(),
+    })
+}
+
 impl Doors for StoreDoors {
     fn query(&mut self, filter: &wit::Filter) -> Vec<wit::Item> {
         let Some(q) = self.scoped(filter) else {
@@ -375,6 +400,29 @@ impl Doors for StoreDoors {
                 .map(|r| r.into_iter().map(wit_value).collect())
                 .collect()
         })
+    }
+
+    /// Design 11 v0.2: kept as the latest under its name. A trial run's
+    /// views are not kept: nothing of a trial is.
+    fn publish_view(&mut self, name: &str, view: wit::View, level: Level) -> Result<(), String> {
+        let decl = self
+            .manifest
+            .view(name)
+            .ok_or_else(|| format!("view `{name}` is not declared in the manifest"))?;
+        if self.trial.is_some() {
+            return Ok(());
+        }
+        self.system
+            .store
+            .put_agent_view(&genatrix_store::AgentView {
+                agent: self.agent.id.clone(),
+                name: name.to_owned(),
+                title: decl.title.clone(),
+                data: view_json(&view).to_string(),
+                level: level.as_str().to_owned(),
+                at: chrono::Utc::now().to_rfc3339(),
+            })
+            .map_err(|e| e.to_string())
     }
 
     fn propose(

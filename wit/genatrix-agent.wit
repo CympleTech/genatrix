@@ -91,6 +91,43 @@ interface types {
         /// Item ids this proposal rests on.
         evidence: list<string>,
     }
+
+    /// One cell of a view (design 11 v0.2, "视图").
+    variant cell {
+        text(string),
+        number(f64),
+        money(money),
+        /// `YYYY-MM-DD`.
+        date(string),
+    }
+
+    /// A number worth seeing at a glance.
+    record figure {
+        label: string,
+        value: cell,
+    }
+
+    record column {
+        key: string,
+        label: string,
+    }
+
+    /// One point of a series: a label on the horizontal axis and a value.
+    record point {
+        x: string,
+        y: f64,
+    }
+
+    /// What an agent shows on an interface. Data only: the interface draws
+    /// it, and nothing the agent wrote is run. Any part may be empty.
+    record view {
+        title: string,
+        note: string,
+        figures: list<figure>,
+        columns: list<column>,
+        rows: list<list<cell>>,
+        series: list<point>,
+    }
 }
 
 interface items {
@@ -126,6 +163,13 @@ interface actions {
     propose: func(kind: string, card: card, payload: string) -> result<string, string>;
 }
 
+interface views {
+    use types.{view};
+    /// Publish a view by a name the manifest declares; it replaces the one
+    /// published before under that name.
+    publish: func(name: string, view: view) -> result<_, string>;
+}
+
 interface host {
     /// The run's time, fixed for the run and recorded.
     now-ms: func() -> s64;
@@ -139,6 +183,7 @@ world agent {
     import model;
     import space;
     import actions;
+    import views;
     import host;
 
     /// New items in scope arrived.
